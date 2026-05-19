@@ -46,7 +46,7 @@ func NewRoot(d *Deps, version string) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			d.Service = app.NewService(sqliteStore, d.Now)
+			d.Service = app.NewService(sqliteStore, d.Now, app.WithSidecarPath(app.SidecarPath(paths)))
 			return nil
 		},
 	}

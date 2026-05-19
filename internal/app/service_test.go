@@ -2,7 +2,9 @@ package app_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -30,6 +32,20 @@ func newServiceWithNow(t *testing.T, now func() time.Time) *app.Service {
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, s.Close()) })
 	return app.NewService(s, now)
+}
+
+func newServiceWithSidecar(t *testing.T) (*app.Service, string) {
+	t.Helper()
+	dir := t.TempDir()
+	sidecar := filepath.Join(dir, "rejected.jsonl")
+	s, err := store.NewSQLite(context.Background(), store.Paths{
+		SQLitePath: filepath.Join(dir, "tasks.sqlite"),
+		JSONLPath:  filepath.Join(dir, "tasks.jsonl"),
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, s.Close()) })
+	svc := app.NewService(s, func() time.Time { return fixed }, app.WithSidecarPath(sidecar))
+	return svc, sidecar
 }
 
 func TestServiceLifecycle(t *testing.T) {
@@ -564,4 +580,86 @@ func TestServiceImportStoresTasksWithSuccessAndVerifySections(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, deps, 1)
 	require.Equal(t, results[0].ID, deps[0].DependsOnID)
+}
+
+func TestServiceRecordsRejectionToSidecar(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	svc, sidecar := newServiceWithSidecar(t)
+
+	badOpts := task.AddOptions{
+		Body:   "do something vague",
+		Tags:   []string{"discovery"},
+		Source: "discovery",
+		CWD:    "/tmp",
+	}
+	_, err := svc.AddWithOptions(ctx, badOpts)
+	require.Error(t, err)
+	require.True(t, errors.Is(err, task.ErrInvalidTask))
+
+	data, readErr := os.ReadFile(sidecar)
+	require.NoError(t, readErr)
+	lines := strings.Split(strings.TrimRight(string(data), "\n"), "\n")
+	require.Len(t, lines, 1)
+
+	var rec app.RejectionRecord
+	require.NoError(t, json.Unmarshal([]byte(lines[0]), &rec))
+	require.Equal(t, err.Error(), rec.Reason)
+	require.Equal(t, badOpts.Body, rec.Body)
+	require.Equal(t, badOpts.Tags, rec.Tags)
+	require.Equal(t, badOpts.Source, rec.Source)
+	require.Equal(t, badOpts.CWD, rec.CWD)
+	require.False(t, rec.Ts.IsZero())
+}
+
+func TestServiceAccumulatesRejections(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	svc, sidecar := newServiceWithSidecar(t)
+
+	badOpts := task.AddOptions{
+		Body:   "do something vague",
+		Tags:   []string{"discovery"},
+		Source: "discovery",
+		CWD:    "/tmp",
+	}
+	for range 3 {
+		_, err := svc.AddWithOptions(ctx, badOpts)
+		require.Error(t, err)
+	}
+
+	data, err := os.ReadFile(sidecar)
+	require.NoError(t, err)
+	lines := strings.Split(strings.TrimRight(string(data), "\n"), "\n")
+	require.Len(t, lines, 3)
+	for _, line := range lines {
+		var rec app.RejectionRecord
+		require.NoError(t, json.Unmarshal([]byte(line), &rec))
+	}
+}
+
+func TestServiceWithoutSidecarDoesNotWrite(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	svc := newService(t)
+
+	badOpts := task.AddOptions{
+		Body:   "do something vague",
+		Tags:   []string{"discovery"},
+		Source: "discovery",
+		CWD:    "/tmp",
+	}
+	_, err := svc.AddWithOptions(ctx, badOpts)
+	require.Error(t, err)
+	require.True(t, errors.Is(err, task.ErrInvalidTask))
+}
+
+func TestSidecarPathDerivation(t *testing.T) {
+	t.Parallel()
+	paths := store.Paths{
+		SQLitePath: "/home/user/.claude/queue/tasks.sqlite",
+		JSONLPath:  "/home/user/.claude/queue/tasks.jsonl",
+	}
+	require.Equal(t, "/home/user/.claude/queue/rejected.jsonl", app.SidecarPath(paths))
+	require.Equal(t, "", app.SidecarPath(store.Paths{}))
 }

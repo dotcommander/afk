@@ -14,8 +14,17 @@ import (
 
 // Service coordinates task use cases across the store and task model.
 type Service struct {
-	store store.Store
-	now   func() time.Time
+	store       store.Store
+	now         func() time.Time
+	sidecarPath string // empty disables rejection sidecar
+}
+
+// Option configures a Service at construction time.
+type Option func(*Service)
+
+// WithSidecarPath enables persistence of rejected tasks to path.
+func WithSidecarPath(path string) Option {
+	return func(s *Service) { s.sidecarPath = path }
 }
 
 // ExplainData contains task state plus durable history.
@@ -40,8 +49,12 @@ type ReadinessData struct {
 }
 
 // NewService constructs a Service.
-func NewService(store store.Store, now func() time.Time) *Service {
-	return &Service{store: store, now: now}
+func NewService(store store.Store, now func() time.Time, opts ...Option) *Service {
+	s := &Service{store: store, now: now}
+	for _, opt := range opts {
+		opt(s)
+	}
+	return s
 }
 
 // Add appends a new pending task and returns its id.
@@ -52,6 +65,12 @@ func (s *Service) Add(ctx context.Context, body string) (string, error) {
 // AddWithOptions appends a new pending task with metadata and returns its id.
 func (s *Service) AddWithOptions(ctx context.Context, opts task.AddOptions) (string, error) {
 	if err := task.ValidateAddOptions(opts); err != nil {
+		// Persist rejection so discovery work is not lost. Swallow sidecar
+		// errors: the validation error is the contract; masking it would
+		// be worse than losing one sidecar line.
+		if s.sidecarPath != "" {
+			_ = RecordRejection(s.sidecarPath, opts, err, s.now())
+		}
 		return "", err
 	}
 	now := s.now()
