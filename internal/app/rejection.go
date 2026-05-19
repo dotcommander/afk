@@ -71,13 +71,16 @@ func RecordRejection(sidecarPath string, opts task.AddOptions, reason error, now
 	if err := os.MkdirAll(filepath.Dir(sidecarPath), 0o750); err != nil {
 		return fmt.Errorf("record rejection: mkdir: %w", err)
 	}
-	f, err := os.OpenFile(sidecarPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	f, err := os.OpenFile(sidecarPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
 	if err != nil {
 		return fmt.Errorf("record rejection: open %s: %w", sidecarPath, err)
 	}
-	defer f.Close()
 	if _, err := f.Write(line); err != nil {
+		_ = f.Close()
 		return fmt.Errorf("record rejection: write: %w", err)
+	}
+	if err := f.Close(); err != nil {
+		return fmt.Errorf("record rejection: close: %w", err)
 	}
 	return nil
 }
