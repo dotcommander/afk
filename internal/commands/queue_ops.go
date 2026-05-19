@@ -30,18 +30,7 @@ func newPruneCmd(d *Deps) *cobra.Command {
 				_, err = fmt.Fprintf(d.Stdout, "pruned %d tasks (tag=%s)\n", n, tag)
 				return err
 			}
-			var statuses []string
-			for _, s := range strings.Split(statusCSV, ",") {
-				s = strings.TrimSpace(s)
-				if s != "" {
-					statuses = append(statuses, s)
-				}
-			}
-			parsed := make([]task.Status, 0, len(statuses))
-			for _, status := range statuses {
-				parsed = append(parsed, task.Status(status))
-			}
-			return d.Service.Prune(cmd.Context(), parsed)
+			return d.Service.Prune(cmd.Context(), parseStatusCSV(statusCSV))
 		},
 	}
 	cmd.Flags().StringVar(&statusCSV, "status", "done,failed", "comma-separated statuses to prune")
@@ -57,13 +46,9 @@ func newPopCmd(d *Deps) *cobra.Command {
 		Use:   "pop",
 		Short: "Claim the first pending task (sets status to working)",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			var leaseDuration time.Duration
-			if lease != "" {
-				var err error
-				leaseDuration, err = time.ParseDuration(lease)
-				if err != nil {
-					return fmt.Errorf("parse lease: %w", err)
-				}
+			leaseDuration, err := parseOptionalDuration("lease", lease)
+			if err != nil {
+				return err
 			}
 			claimed, err := d.Service.PopWithLeaseForWorker(cmd.Context(), leaseDuration, workerID, "")
 			if err != nil {
@@ -72,7 +57,13 @@ func newPopCmd(d *Deps) *cobra.Command {
 			if claimed == nil {
 				return nil
 			}
-			return output.WriteJSONLine(d.Stdout, claimed, "pop")
+			if err := task.ValidateBody(claimed.Body); err != nil {
+				if failErr := d.Service.Fail(cmd.Context(), claimed.ID, err.Error()); failErr != nil {
+					return failErr
+				}
+				return fmt.Errorf("pop %s: %w", claimed.ID, err)
+			}
+			return output.WriteTaskJSONLine(d.Stdout, *claimed, "pop")
 		},
 	}
 	cmd.Flags().StringVar(&lease, "lease", "", "lease duration for the claim (for example 30m)")
@@ -118,6 +109,28 @@ func newRequeueStaleCmd(d *Deps) *cobra.Command {
 	return cmd
 }
 
+func parseStatusCSV(value string) []task.Status {
+	var statuses []task.Status
+	for _, status := range strings.Split(value, ",") {
+		status = strings.TrimSpace(status)
+		if status != "" {
+			statuses = append(statuses, task.Status(status))
+		}
+	}
+	return statuses
+}
+
+func parseOptionalDuration(name, value string) (time.Duration, error) {
+	if value == "" {
+		return 0, nil
+	}
+	dur, err := time.ParseDuration(value)
+	if err != nil {
+		return 0, fmt.Errorf("parse %s: %w", name, err)
+	}
+	return dur, nil
+}
+
 func newHeartbeatCmd(d *Deps) *cobra.Command {
 	var workerID string
 	var lease string
@@ -127,9 +140,9 @@ func newHeartbeatCmd(d *Deps) *cobra.Command {
 		Short: "Extend a worker-owned task lease",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			leaseDuration, err := time.ParseDuration(lease)
+			leaseDuration, err := parseOptionalDuration("lease", lease)
 			if err != nil {
-				return fmt.Errorf("parse lease: %w", err)
+				return err
 			}
 			return d.Service.Heartbeat(cmd.Context(), args[0], workerID, leaseDuration)
 		},

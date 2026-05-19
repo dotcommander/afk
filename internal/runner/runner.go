@@ -16,7 +16,10 @@ import (
 	"github.com/dotcommander/afk/internal/task"
 )
 
-const defaultHeartbeatMinInterval = time.Second
+const (
+	defaultHeartbeatMinInterval = time.Second
+	maxDryRunCommandRunes       = 1000
+)
 
 // Options controls one runner invocation.
 type Options struct {
@@ -79,6 +82,13 @@ func Run(ctx context.Context, service *app.Service, opts Options) error {
 }
 
 func writeDryRun(ctx context.Context, w io.Writer, service *app.Service, opts Options) error {
+	if err := writeRunnableDryRun(ctx, w, service, opts); err != nil {
+		return err
+	}
+	return writeWaitingDryRun(ctx, w, service)
+}
+
+func writeRunnableDryRun(ctx context.Context, w io.Writer, service *app.Service, opts Options) error {
 	ready, err := service.Ready(ctx)
 	if err != nil {
 		return err
@@ -93,16 +103,16 @@ func writeDryRun(ctx context.Context, w io.Writer, service *app.Service, opts Op
 		fmt.Fprintln(tw, "none\t") //nolint:errcheck // tabwriter buffers; errors surface at Flush
 	}
 	for _, t := range ready {
-		command := "(set --exec to preview command)"
-		if opts.ExecTemplate != "" {
-			command = renderCommand(opts.ExecTemplate, t, opts.QueuePath)
-		}
+		command := dryRunCommand(t, opts)
 		fmt.Fprintf(tw, "%s\t%s\n", t.ID, command) //nolint:errcheck // tabwriter buffers; errors surface at Flush
 	}
 	if err := tw.Flush(); err != nil {
 		return fmt.Errorf("runner: write dry-run: %w", err)
 	}
+	return nil
+}
 
+func writeWaitingDryRun(ctx context.Context, w io.Writer, service *app.Service) error {
 	pending, err := service.List(ctx, string(task.StatusPending))
 	if err != nil {
 		return err
@@ -131,7 +141,17 @@ func writeDryRun(ctx context.Context, w io.Writer, service *app.Service, opts Op
 	return nil
 }
 
+func dryRunCommand(t task.Task, opts Options) string {
+	if opts.ExecTemplate == "" {
+		return "(set --exec to preview command)"
+	}
+	return truncateRunes(renderCommand(opts.ExecTemplate, t, opts.QueuePath), maxDryRunCommandRunes)
+}
+
 func runTask(ctx context.Context, service *app.Service, t task.Task, opts Options) error {
+	if err := task.ValidateBody(t.Body); err != nil {
+		return failInvalidTask(ctx, service, t.ID, err)
+	}
 	commandText := renderCommand(opts.ExecTemplate, t, opts.QueuePath)
 	if _, err := fmt.Fprintf(opts.Stdout, "running %s\n", t.ID); err != nil {
 		return fmt.Errorf("runner: write start: %w", err)
@@ -174,6 +194,13 @@ func runTask(ctx context.Context, service *app.Service, t task.Task, opts Option
 		return fmt.Errorf("runner: command for %s: %w", t.ID, runErr)
 	}
 	return nil
+}
+
+func failInvalidTask(ctx context.Context, service *app.Service, taskID string, err error) error {
+	if failErr := service.Fail(ctx, taskID, err.Error()); failErr != nil {
+		return failErr
+	}
+	return fmt.Errorf("runner: %s: %w", taskID, err)
 }
 
 func startHeartbeat(ctx context.Context, service *app.Service, taskID string, opts Options, done <-chan struct{}, errs chan<- error) {
@@ -222,4 +249,12 @@ func renderCommand(template string, t task.Task, queuePath string) string {
 		"{{queue}}", queuePath,
 	)
 	return replacer.Replace(template)
+}
+
+func truncateRunes(s string, limit int) string {
+	runes := []rune(s)
+	if len(runes) <= limit {
+		return s
+	}
+	return string(runes[:limit]) + "…"
 }

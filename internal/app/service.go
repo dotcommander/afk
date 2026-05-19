@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"strconv"
@@ -50,29 +51,40 @@ func (s *Service) Add(ctx context.Context, body string) (string, error) {
 
 // AddWithOptions appends a new pending task with metadata and returns its id.
 func (s *Service) AddWithOptions(ctx context.Context, opts task.AddOptions) (string, error) {
-	tasks, err := s.store.List(ctx)
-	if err != nil {
+	if err := task.ValidateAddOptions(opts); err != nil {
 		return "", err
 	}
-	base := strconv.FormatInt(s.now().UTC().Unix(), 10)
-	t := task.Task{
-		ID:      uniqueID(tasks, base),
-		Created: formatTime(s.now()),
-		Status:  task.StatusPending,
-		Body:    opts.Body,
+	now := s.now()
+	base := strconv.FormatInt(now.UTC().Unix(), 10)
+	created := formatTime(now)
+	for range 16 {
+		tasks, err := s.store.List(ctx)
+		if err != nil {
+			return "", err
+		}
+		t := task.Task{
+			ID:      uniqueID(tasks, base),
+			Created: created,
+			Status:  task.StatusPending,
+			Body:    opts.Body,
 
-		Priority:    opts.Priority,
-		Tags:        opts.Tags,
-		CWD:         opts.CWD,
-		Source:      opts.Source,
-		Agent:       opts.Agent,
-		GroupID:     opts.GroupID,
-		ResourceKey: opts.ResourceKey,
+			Priority:    opts.Priority,
+			Tags:        opts.Tags,
+			CWD:         opts.CWD,
+			Source:      opts.Source,
+			Agent:       opts.Agent,
+			GroupID:     opts.GroupID,
+			ResourceKey: opts.ResourceKey,
+		}
+		if err := s.store.Add(ctx, t); err != nil {
+			if errors.Is(err, store.ErrDuplicateTask) {
+				continue
+			}
+			return "", err
+		}
+		return t.ID, nil
 	}
-	if err := s.store.Add(ctx, t); err != nil {
-		return "", err
-	}
-	return t.ID, nil
+	return "", fmt.Errorf("add task: %w", store.ErrDuplicateTask)
 }
 
 // List returns tasks filtered by status, or all tasks if statusFilter is empty.
@@ -125,6 +137,9 @@ func (s *Service) Next(ctx context.Context) (*task.Task, error) {
 
 // Edit replaces a task body.
 func (s *Service) Edit(ctx context.Context, id, body string) error {
+	if err := task.ValidateBody(body); err != nil {
+		return err
+	}
 	return s.store.Update(ctx, id, task.EventEdited, "", func(t *task.Task) bool {
 		t.Body = body
 		return true
@@ -175,31 +190,19 @@ func (s *Service) Pop(ctx context.Context) (*task.Task, error) {
 
 // PopWithLease atomically claims the next pending task, optionally setting a lease.
 func (s *Service) PopWithLease(ctx context.Context, lease time.Duration) (*task.Task, error) {
-	return s.PopWithLeaseForWorker(ctx, lease, defaultWorkerID(), "")
+	return s.PopWithLeaseForWorker(ctx, lease, "", "")
 }
 
 // PopWithLeaseForWorker atomically claims the next ready task for workerID.
 func (s *Service) PopWithLeaseForWorker(ctx context.Context, lease time.Duration, workerID, agent string) (*task.Task, error) {
-	if workerID == "" {
-		workerID = defaultWorkerID()
-	}
-	var expires time.Time
-	if lease > 0 {
-		expires = s.now().Add(lease)
-	}
-	return s.store.ClaimNextForWorker(ctx, s.now(), expires, workerID, agent)
+	now := s.now()
+	return s.store.ClaimNextForWorker(ctx, now, leaseExpires(now, lease), workerOrDefault(workerID), agent)
 }
 
 // Heartbeat extends a worker-owned active claim lease.
 func (s *Service) Heartbeat(ctx context.Context, taskID, workerID string, lease time.Duration) error {
-	if workerID == "" {
-		workerID = defaultWorkerID()
-	}
-	var expires time.Time
-	if lease > 0 {
-		expires = s.now().Add(lease)
-	}
-	return s.store.Heartbeat(ctx, taskID, workerID, s.now(), expires)
+	now := s.now()
+	return s.store.Heartbeat(ctx, taskID, workerOrDefault(workerID), now, leaseExpires(now, lease))
 }
 
 // AddDependency records that taskID is blocked by dependsOnID.
@@ -252,14 +255,15 @@ func (s *Service) Ready(ctx context.Context) ([]task.Task, error) {
 
 // Why returns computed readiness information for one task.
 func (s *Service) Why(ctx context.Context, id string) (ReadinessData, error) {
-	t, err := s.Show(ctx, id)
-	if err != nil {
-		return ReadinessData{}, err
-	}
 	tasks, err := s.store.List(ctx)
 	if err != nil {
 		return ReadinessData{}, err
 	}
+	idx, ok := findTask(tasks, id)
+	if !ok {
+		return ReadinessData{}, fmt.Errorf("show %s: %w", id, ErrNotFound)
+	}
+	t := tasks[idx]
 	reasons, err := s.notReadyReasons(ctx, id, tasksByID(tasks))
 	if err != nil {
 		return ReadinessData{}, err
@@ -397,6 +401,20 @@ func (s *Service) notReadyReasons(ctx context.Context, id string, tasks map[stri
 
 func formatTime(now time.Time) string {
 	return now.UTC().Format(time.RFC3339)
+}
+
+func leaseExpires(now time.Time, lease time.Duration) time.Time {
+	if lease <= 0 {
+		return time.Time{}
+	}
+	return now.Add(lease)
+}
+
+func workerOrDefault(workerID string) string {
+	if workerID != "" {
+		return workerID
+	}
+	return defaultWorkerID()
 }
 
 func defaultWorkerID() string {

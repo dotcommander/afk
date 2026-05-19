@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"slices"
@@ -65,7 +66,7 @@ func NewSQLite(ctx context.Context, paths Paths) (*SQLiteStore, error) {
 	if err := os.MkdirAll(filepath.Dir(paths.SQLitePath), 0o750); err != nil {
 		return nil, fmt.Errorf("store: mkdir sqlite dir: %w", err)
 	}
-	db, err := sql.Open("sqlite", paths.SQLitePath)
+	db, err := sql.Open("sqlite", sqliteDSN(paths.SQLitePath))
 	if err != nil {
 		return nil, fmt.Errorf("store: open sqlite %s: %w", paths.SQLitePath, err)
 	}
@@ -286,6 +287,9 @@ INSERT INTO tasks (
 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		t.ID, t.Created, string(t.Status), t.Body, t.Started, t.Finished, t.Error, ordinal,
 		t.Priority, encodeTags(t.Tags), t.CWD, t.Source, t.Agent, t.GroupID, t.ResourceKey); err != nil {
+		if isDuplicateTaskID(err) {
+			return fmt.Errorf("store: add task %s: %w", t.ID, ErrDuplicateTask)
+		}
 		return fmt.Errorf("store: add task %s: %w", t.ID, err)
 	}
 	if err := insertEvent(ctx, tx, t.ID, task.EventAdded, t.Created, ""); err != nil {
@@ -800,6 +804,16 @@ WHERE task_id = ?`, taskID)
 	return &block, nil
 }
 
+func sqliteDSN(path string) string {
+	u := url.URL{Scheme: "file", Path: path}
+	q := u.Query()
+	q.Add("_pragma", "busy_timeout(5000)")
+	q.Add("_pragma", "journal_mode(WAL)")
+	q.Set("_txlock", "immediate")
+	u.RawQuery = q.Encode()
+	return u.String()
+}
+
 func (s *SQLiteStore) init(ctx context.Context, jsonlPath string) error {
 	if _, err := s.db.ExecContext(ctx, `PRAGMA journal_mode = WAL`); err != nil {
 		return fmt.Errorf("store: enable wal: %w", err)
@@ -1048,6 +1062,10 @@ func decodeTags(raw string) []string {
 
 func isDuplicateColumn(err error) bool {
 	return strings.Contains(err.Error(), "duplicate column name")
+}
+
+func isDuplicateTaskID(err error) bool {
+	return strings.Contains(err.Error(), "UNIQUE constraint failed: tasks.id")
 }
 
 func markImported(ctx context.Context, db *sql.DB, jsonlPath string) error {

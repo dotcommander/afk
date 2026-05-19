@@ -40,8 +40,9 @@ func (s *Service) Import(ctx context.Context, doc task.ImportDoc) ([]task.Import
 		return nil, &ErrDuplicateSpec{Slug: slug}
 	}
 
-	base := strconv.FormatInt(s.now().UTC().Unix(), 10)
-	created := formatTime(s.now())
+	now := s.now()
+	base := strconv.FormatInt(now.UTC().Unix(), 10)
+	created := formatTime(now)
 	tasks := make([]task.Task, len(doc.Tasks))
 	slugToID := make(map[string]string, len(doc.Tasks))
 	accum := make([]task.Task, 0, len(existing)+len(doc.Tasks))
@@ -81,11 +82,15 @@ func validateImportBatch(items []task.ImportTask) error {
 		if it.Body == "" {
 			return fmt.Errorf("import: task %q: empty body", it.Slug)
 		}
-		if !hasBodySection(it.Body, "Success:") {
+		sections := bodySections(it.Body)
+		if !sections["Success:"] {
 			return fmt.Errorf("import: task %q: missing Success section", it.Slug)
 		}
-		if !hasBodySection(it.Body, "Verify:") {
+		if !sections["Verify:"] {
 			return fmt.Errorf("import: task %q: missing Verify section", it.Slug)
+		}
+		if err := task.ValidateImportTask(it); err != nil {
+			return fmt.Errorf("import: task %q: %w", it.Slug, err)
 		}
 		if _, dup := seen[it.Slug]; dup {
 			return fmt.Errorf("import: duplicate slug %q in batch", it.Slug)
@@ -95,13 +100,12 @@ func validateImportBatch(items []task.ImportTask) error {
 	return nil
 }
 
-func hasBodySection(body, section string) bool {
+func bodySections(body string) map[string]bool {
+	sections := make(map[string]bool)
 	for _, line := range strings.Split(body, "\n") {
-		if strings.TrimSpace(line) == section {
-			return true
-		}
+		sections[strings.TrimSpace(line)] = true
 	}
-	return false
+	return sections
 }
 
 // findSpecTagConflict scans existing tasks for any spec:<X> tag whose

@@ -87,7 +87,7 @@ func newNextCmd(d *Deps) *cobra.Command {
 				}
 				return nil
 			}
-			return output.WriteJSONLine(d.Stdout, next, "next")
+			return output.WriteTaskJSONLine(d.Stdout, *next, "next")
 		},
 	}
 	cmd.Flags().BoolVar(&asJSON, "json", false, "emit JSON output (empty queue emits {})")

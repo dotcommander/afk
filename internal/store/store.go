@@ -27,6 +27,9 @@ var ErrBlockNotFound = errors.New("block not found")
 // ErrInvalidState is returned when an operation does not apply to the current task state.
 var ErrInvalidState = errors.New("invalid state")
 
+// ErrDuplicateTask is returned when a task id already exists.
+var ErrDuplicateTask = errors.New("duplicate task")
+
 // ErrWorkerMismatch is returned when worker-owned state is modified by another worker.
 var ErrWorkerMismatch = errors.New("worker mismatch")
 

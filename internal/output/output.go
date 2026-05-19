@@ -11,23 +11,70 @@ import (
 	"github.com/dotcommander/afk/internal/task"
 )
 
-// WriteList renders a task list as either JSONL or an aligned table.
+const (
+	maxListTasks       = 100
+	maxListBodyRunes   = 500
+	maxDetailBodyRunes = 8000
+	maxHistoryItems    = 50
+	maxMessageRunes    = 1000
+)
+
+type boundedTask struct {
+	task.Task
+	BodyTruncated  bool `json:"body_truncated,omitzero"`
+	ErrorTruncated bool `json:"error_truncated,omitzero"`
+}
+
+type listSummary struct {
+	Omitted int    `json:"omitted"`
+	Limit   int    `json:"limit"`
+	Reason  string `json:"reason"`
+}
+
+type explainDoc struct {
+	Task            boundedTask    `json:"task"`
+	Events          []task.Event   `json:"events"`
+	Attempts        []task.Attempt `json:"attempts"`
+	EventsOmitted   int            `json:"events_omitted,omitzero"`
+	AttemptsOmitted int            `json:"attempts_omitted,omitzero"`
+}
+
+// WriteList renders a bounded task list as either JSONL or an aligned table.
 func WriteList(w io.Writer, tasks []task.Task, asJSON bool) error {
 	if len(tasks) == 0 {
 		return nil
 	}
+	visible, omitted := limitTasks(tasks)
 	if asJSON {
-		for _, t := range tasks {
-			if err := WriteJSONLine(w, t, "list"); err != nil {
-				return err
-			}
+		return writeListJSON(w, visible, omitted)
+	}
+	return writeListTable(w, visible, omitted)
+}
+
+func writeListJSON(w io.Writer, tasks []task.Task, omitted int) error {
+	for _, t := range tasks {
+		if err := WriteBoundTaskJSONLine(w, t, maxListBodyRunes, "list"); err != nil {
+			return err
 		}
+	}
+	if omitted == 0 {
 		return nil
 	}
+	return WriteJSONLine(w, listSummary{
+		Omitted: omitted,
+		Limit:   maxListTasks,
+		Reason:  "output limit",
+	}, "list")
+}
+
+func writeListTable(w io.Writer, tasks []task.Task, omitted int) error {
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
 	fmt.Fprintln(tw, "ID\tSTATUS\tCREATED\tBODY") //nolint:errcheck // tabwriter buffers; errors surface at Flush
 	for _, t := range tasks {
 		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", t.ID, t.Status, t.Created, truncate(t.Body, 60)) //nolint:errcheck // tabwriter buffers; errors surface at Flush
+	}
+	if omitted > 0 {
+		fmt.Fprintf(tw, "...\t...\t...\t%d more tasks omitted by output limit\n", omitted) //nolint:errcheck // tabwriter buffers; errors surface at Flush
 	}
 	return tw.Flush()
 }
@@ -35,62 +82,40 @@ func WriteList(w io.Writer, tasks []task.Task, asJSON bool) error {
 // WriteShow renders a single task.
 func WriteShow(w io.Writer, t task.Task, asJSON bool) error {
 	if asJSON {
-		return WriteJSONLine(w, t, "show")
+		return WriteTaskJSONLine(w, t, "show")
 	}
-	if _, err := fmt.Fprintf(w, "ID: %s\nStatus: %s\nCreated: %s\nBody: %s\n", t.ID, t.Status, t.Created, t.Body); err != nil {
+	if _, err := fmt.Fprintf(w, "ID: %s\nStatus: %s\nCreated: %s\nBody: %s\n", t.ID, t.Status, t.Created, truncate(t.Body, maxDetailBodyRunes)); err != nil {
 		return fmt.Errorf("show: write: %w", err)
 	}
-	if t.Priority != "" {
-		if _, err := fmt.Fprintf(w, "Priority: %s\n", t.Priority); err != nil {
-			return fmt.Errorf("show: write: %w", err)
+	for _, field := range showFields(t) {
+		if field.value == "" {
+			continue
 		}
-	}
-	if len(t.Tags) > 0 {
-		if _, err := fmt.Fprintf(w, "Tags: %s\n", strings.Join(t.Tags, ", ")); err != nil {
-			return fmt.Errorf("show: write: %w", err)
-		}
-	}
-	if t.CWD != "" {
-		if _, err := fmt.Fprintf(w, "CWD: %s\n", t.CWD); err != nil {
-			return fmt.Errorf("show: write: %w", err)
-		}
-	}
-	if t.Source != "" {
-		if _, err := fmt.Fprintf(w, "Source: %s\n", t.Source); err != nil {
-			return fmt.Errorf("show: write: %w", err)
-		}
-	}
-	if t.Agent != "" {
-		if _, err := fmt.Fprintf(w, "Agent: %s\n", t.Agent); err != nil {
-			return fmt.Errorf("show: write: %w", err)
-		}
-	}
-	if t.GroupID != "" {
-		if _, err := fmt.Fprintf(w, "Group: %s\n", t.GroupID); err != nil {
-			return fmt.Errorf("show: write: %w", err)
-		}
-	}
-	if t.ResourceKey != "" {
-		if _, err := fmt.Fprintf(w, "Resource: %s\n", t.ResourceKey); err != nil {
-			return fmt.Errorf("show: write: %w", err)
-		}
-	}
-	if t.Started != "" {
-		if _, err := fmt.Fprintf(w, "Started: %s\n", t.Started); err != nil {
-			return fmt.Errorf("show: write: %w", err)
-		}
-	}
-	if t.Finished != "" {
-		if _, err := fmt.Fprintf(w, "Finished: %s\n", t.Finished); err != nil {
-			return fmt.Errorf("show: write: %w", err)
-		}
-	}
-	if t.Error != "" {
-		if _, err := fmt.Fprintf(w, "Error: %s\n", t.Error); err != nil {
+		if _, err := fmt.Fprintf(w, "%s: %s\n", field.name, field.value); err != nil {
 			return fmt.Errorf("show: write: %w", err)
 		}
 	}
 	return nil
+}
+
+type showField struct {
+	name  string
+	value string
+}
+
+func showFields(t task.Task) []showField {
+	return []showField{
+		{name: "Priority", value: t.Priority},
+		{name: "Tags", value: strings.Join(t.Tags, ", ")},
+		{name: "CWD", value: t.CWD},
+		{name: "Source", value: t.Source},
+		{name: "Agent", value: t.Agent},
+		{name: "Group", value: t.GroupID},
+		{name: "Resource", value: t.ResourceKey},
+		{name: "Started", value: t.Started},
+		{name: "Finished", value: t.Finished},
+		{name: "Error", value: truncate(t.Error, maxMessageRunes)},
+	}
 }
 
 // WriteCount renders per-status tallies in canonical order.
@@ -139,79 +164,128 @@ func WriteDependencies(w io.Writer, deps []task.Dependency, asJSON bool) error {
 
 // WriteExplain renders a task and its durable lifecycle history.
 func WriteExplain(w io.Writer, t task.Task, events []task.Event, attempts []task.Attempt, asJSON bool) error {
+	visibleEvents, omittedEvents := limitEvents(events)
+	visibleAttempts, omittedAttempts := limitAttempts(attempts)
 	if asJSON {
-		return WriteJSONLine(w, struct {
-			Task     task.Task      `json:"task"`
-			Events   []task.Event   `json:"events"`
-			Attempts []task.Attempt `json:"attempts"`
-		}{Task: t, Events: events, Attempts: attempts}, "explain")
+		return writeExplainJSON(w, t, visibleEvents, visibleAttempts, omittedEvents, omittedAttempts)
 	}
+	return writeExplainText(w, t, visibleEvents, visibleAttempts, omittedEvents, omittedAttempts)
+}
+
+func writeExplainJSON(w io.Writer, t task.Task, events []task.Event, attempts []task.Attempt, omittedEvents, omittedAttempts int) error {
+	return WriteJSONLine(w, explainDoc{
+		Task:            boundTask(t, maxDetailBodyRunes),
+		Events:          boundEvents(events),
+		Attempts:        boundAttempts(attempts),
+		EventsOmitted:   omittedEvents,
+		AttemptsOmitted: omittedAttempts,
+	}, "explain")
+}
+
+func writeExplainText(w io.Writer, t task.Task, events []task.Event, attempts []task.Attempt, omittedEvents, omittedAttempts int) error {
 	if err := WriteShow(w, t, false); err != nil {
 		return err
 	}
-	if _, err := fmt.Fprintln(w, "\nEvents:"); err != nil {
+	if err := writeExplainEvents(w, events, omittedEvents); err != nil {
+		return err
+	}
+	return writeExplainAttempts(w, attempts, omittedAttempts)
+}
+
+func writeExplainEvents(w io.Writer, events []task.Event, omitted int) error {
+	return writeExplainSection(w, "Events:", len(events), omitted, "events", func() error {
+		for _, event := range boundEvents(events) {
+			if err := writeExplainEvent(w, event); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
+func writeExplainEvent(w io.Writer, event task.Event) error {
+	if _, err := fmt.Fprintf(w, "  %s  %s", event.At, event.Type); err != nil {
 		return fmt.Errorf("explain: write: %w", err)
 	}
-	if len(events) == 0 {
-		if _, err := fmt.Fprintln(w, "  none"); err != nil {
+	if event.Message != "" {
+		if _, err := fmt.Fprintf(w, "  %s", event.Message); err != nil {
 			return fmt.Errorf("explain: write: %w", err)
 		}
 	}
-	for _, event := range events {
-		if _, err := fmt.Fprintf(w, "  %s  %s", event.At, event.Type); err != nil {
-			return fmt.Errorf("explain: write: %w", err)
-		}
-		if event.Message != "" {
-			if _, err := fmt.Fprintf(w, "  %s", event.Message); err != nil {
-				return fmt.Errorf("explain: write: %w", err)
-			}
-		}
-		if _, err := fmt.Fprintln(w); err != nil {
-			return fmt.Errorf("explain: write: %w", err)
-		}
-	}
-	if _, err := fmt.Fprintln(w, "\nAttempts:"); err != nil {
+	if _, err := fmt.Fprintln(w); err != nil {
 		return fmt.Errorf("explain: write: %w", err)
-	}
-	if len(attempts) == 0 {
-		if _, err := fmt.Fprintln(w, "  none"); err != nil {
-			return fmt.Errorf("explain: write: %w", err)
-		}
-	}
-	for _, attempt := range attempts {
-		if _, err := fmt.Fprintf(w, "  #%d  %s", attempt.ID, attempt.Status); err != nil {
-			return fmt.Errorf("explain: write: %w", err)
-		}
-		if attempt.Started != "" {
-			if _, err := fmt.Fprintf(w, "  started=%s", attempt.Started); err != nil {
-				return fmt.Errorf("explain: write: %w", err)
-			}
-		}
-		if attempt.Finished != "" {
-			if _, err := fmt.Fprintf(w, "  finished=%s", attempt.Finished); err != nil {
-				return fmt.Errorf("explain: write: %w", err)
-			}
-		}
-		if attempt.Error != "" {
-			if _, err := fmt.Fprintf(w, "  error=%s", attempt.Error); err != nil {
-				return fmt.Errorf("explain: write: %w", err)
-			}
-		}
-		if attempt.WorkerID != "" {
-			if _, err := fmt.Fprintf(w, "  worker=%s", attempt.WorkerID); err != nil {
-				return fmt.Errorf("explain: write: %w", err)
-			}
-		}
-		if attempt.Agent != "" {
-			if _, err := fmt.Fprintf(w, "  agent=%s", attempt.Agent); err != nil {
-				return fmt.Errorf("explain: write: %w", err)
-			}
-		}
-		if _, err := fmt.Fprintln(w); err != nil {
-			return fmt.Errorf("explain: write: %w", err)
-		}
 	}
 	return nil
+}
+
+func writeExplainAttempts(w io.Writer, attempts []task.Attempt, omitted int) error {
+	return writeExplainSection(w, "Attempts:", len(attempts), omitted, "attempts", func() error {
+		for _, attempt := range boundAttempts(attempts) {
+			if err := writeExplainAttempt(w, attempt); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
+func writeExplainSection(w io.Writer, title string, count, omitted int, name string, writeRows func() error) error {
+	if _, err := fmt.Fprintf(w, "\n%s\n", title); err != nil {
+		return fmt.Errorf("explain: write: %w", err)
+	}
+	if count == 0 {
+		if _, err := fmt.Fprintln(w, "  none"); err != nil {
+			return fmt.Errorf("explain: write: %w", err)
+		}
+	}
+	if omitted > 0 {
+		if _, err := fmt.Fprintf(w, "  ... %d older %s omitted by output limit\n", omitted, name); err != nil {
+			return fmt.Errorf("explain: write: %w", err)
+		}
+	}
+	return writeRows()
+}
+
+func writeExplainAttempt(w io.Writer, attempt task.Attempt) error {
+	if _, err := fmt.Fprintf(w, "  #%d  %s", attempt.ID, attempt.Status); err != nil {
+		return fmt.Errorf("explain: write: %w", err)
+	}
+	fields := []string{
+		fieldIfSet("started", attempt.Started),
+		fieldIfSet("finished", attempt.Finished),
+		fieldIfSet("error", attempt.Error),
+		fieldIfSet("worker", attempt.WorkerID),
+		fieldIfSet("agent", attempt.Agent),
+	}
+	for _, field := range fields {
+		if field == "" {
+			continue
+		}
+		if _, err := fmt.Fprintf(w, "  %s", field); err != nil {
+			return fmt.Errorf("explain: write: %w", err)
+		}
+	}
+	if _, err := fmt.Fprintln(w); err != nil {
+		return fmt.Errorf("explain: write: %w", err)
+	}
+	return nil
+}
+
+func fieldIfSet(name, value string) string {
+	if value == "" {
+		return ""
+	}
+	return name + "=" + value
+}
+
+// WriteTaskJSONLine renders one task as bounded JSON.
+func WriteTaskJSONLine(w io.Writer, t task.Task, op string) error {
+	return WriteBoundTaskJSONLine(w, t, maxDetailBodyRunes, op)
+}
+
+// WriteBoundTaskJSONLine renders one task as JSON with bounded body/error fields.
+func WriteBoundTaskJSONLine(w io.Writer, t task.Task, bodyLimit int, op string) error {
+	return WriteJSONLine(w, boundTask(t, bodyLimit), op)
 }
 
 // WriteJSONLine renders v as one JSON line.
@@ -226,11 +300,63 @@ func WriteJSONLine(w io.Writer, v any, op string) error {
 	return nil
 }
 
+func limitTasks(tasks []task.Task) ([]task.Task, int) {
+	if len(tasks) <= maxListTasks {
+		return tasks, 0
+	}
+	return tasks[:maxListTasks], len(tasks) - maxListTasks
+}
+
+func limitEvents(events []task.Event) ([]task.Event, int) {
+	if len(events) <= maxHistoryItems {
+		return events, 0
+	}
+	return events[len(events)-maxHistoryItems:], len(events) - maxHistoryItems
+}
+
+func limitAttempts(attempts []task.Attempt) ([]task.Attempt, int) {
+	if len(attempts) <= maxHistoryItems {
+		return attempts, 0
+	}
+	return attempts[len(attempts)-maxHistoryItems:], len(attempts) - maxHistoryItems
+}
+
+func boundTask(t task.Task, bodyLimit int) boundedTask {
+	body, bodyTruncated := truncateWithStatus(t.Body, bodyLimit)
+	errorText, errorTruncated := truncateWithStatus(t.Error, maxMessageRunes)
+	t.Body = body
+	t.Error = errorText
+	return boundedTask{Task: t, BodyTruncated: bodyTruncated, ErrorTruncated: errorTruncated}
+}
+
+func boundEvents(events []task.Event) []task.Event {
+	bounded := make([]task.Event, len(events))
+	copy(bounded, events)
+	for i := range bounded {
+		bounded[i].Message = truncate(bounded[i].Message, maxMessageRunes)
+	}
+	return bounded
+}
+
+func boundAttempts(attempts []task.Attempt) []task.Attempt {
+	bounded := make([]task.Attempt, len(attempts))
+	copy(bounded, attempts)
+	for i := range bounded {
+		bounded[i].Error = truncate(bounded[i].Error, maxMessageRunes)
+	}
+	return bounded
+}
+
 // truncate shortens s to limit runes, appending "…" if truncated. UTF-8 safe.
 func truncate(s string, limit int) string {
+	truncated, _ := truncateWithStatus(s, limit)
+	return truncated
+}
+
+func truncateWithStatus(s string, limit int) (string, bool) {
 	runes := []rune(s)
 	if len(runes) <= limit {
-		return s
+		return s, false
 	}
-	return string(runes[:limit]) + "…"
+	return string(runes[:limit]) + "…", true
 }
