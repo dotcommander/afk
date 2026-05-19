@@ -4,6 +4,37 @@ CLI for CRUD operations on `~/.claude/queue/tasks.sqlite` — the SQLite queue c
 
 On first use, `afk` imports existing tasks from `~/.claude/queue/tasks.jsonl` into SQLite when the database is empty. JSONL remains an import format only; new writes go to SQLite.
 
+## Use with Claude Code
+
+`afk` is built to pair with Claude Code's `/loop` skill. Queue work from anywhere, then let Claude drain the queue on an interval:
+
+```
+/loop 15m "run ! afk prompt"
+```
+
+Every 15 minutes Claude runs `afk prompt`, which emits the current queue as instructions, and works the next pending task. Add work from any shell session:
+
+```sh
+afk add "refactor internal/store atomic claim into its own type"
+afk add --tag repo:afk --priority high "write benchmark for pop under contention"
+afk add --source roadmap.md "next roadmap checklist item"
+```
+
+While you're away from the keyboard, the loop drains the queue. When you come back:
+
+```sh
+afk count                # see how many tasks ran / failed / remain
+afk ls --status done     # review what got done
+afk ls --status failed   # see what needs your attention
+afk explain 42           # full ledger for a task: events + attempts
+```
+
+To focus the worker on a single task:
+
+```
+/loop 10m "run ! afk prompt --task 42"
+```
+
 ## Commands
 
 | Command | Behavior |
@@ -93,6 +124,39 @@ afk prompt --output ~/.claude/loop.md
 - `internal/task`: persisted task schema, statuses, and state transitions.
 - `internal/output`: human and JSON/JSONL CLI rendering.
 - `internal/prompt`: generated loop instruction Markdown.
+
+## Examples
+
+End-to-end queue lifecycle from the shell:
+
+```sh
+afk add "summarize the open PRs on dotcommander/afk"
+afk add --tag review --priority high "review the new sqlite store tests"
+afk count
+# pending=2  working=0  done=0  failed=0
+
+afk next                       # peek at what `afk pop` would claim
+afk pop --lease 30m            # claim the first pending task (JSON)
+# ... do the work ...
+afk done 1                     # mark it done
+afk fail 2 "needs more context" # or fail with a reason
+afk retry 2                    # return a failed task to pending
+```
+
+Generate the worker prompt and inspect a task:
+
+```sh
+afk prompt --output ~/.claude/loop.md
+afk explain 1 --json | jq .
+```
+
+Housekeeping:
+
+```sh
+afk requeue-stale --older-than 2h   # reset stuck working tasks
+afk prune --status done,failed      # clear terminal tasks
+afk doctor                          # health check
+```
 
 ## Install
 
