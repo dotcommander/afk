@@ -20,6 +20,8 @@ import (
 
 const importedJSONLKey = "imported_jsonl"
 
+const sqliteBusyRetryDelay = 25 * time.Millisecond
+
 // SQLiteStore persists tasks in SQLite. JSONL is used only as an import source.
 type SQLiteStore struct {
 	db *sql.DB
@@ -815,13 +817,7 @@ func sqliteDSN(path string) string {
 }
 
 func (s *SQLiteStore) init(ctx context.Context, jsonlPath string) error {
-	if _, err := s.db.ExecContext(ctx, `PRAGMA journal_mode = WAL`); err != nil {
-		return fmt.Errorf("store: enable wal: %w", err)
-	}
-	if _, err := s.db.ExecContext(ctx, `PRAGMA busy_timeout = 5000`); err != nil {
-		return fmt.Errorf("store: set busy timeout: %w", err)
-	}
-	if _, err := s.db.ExecContext(ctx, `
+	if err := s.execWithBusyRetry(ctx, `
 CREATE TABLE IF NOT EXISTS tasks (
 	id TEXT PRIMARY KEY,
 	created TEXT NOT NULL,
@@ -880,10 +876,41 @@ CREATE TABLE IF NOT EXISTS task_blocks (
 `); err != nil {
 		return fmt.Errorf("store: create schema: %w", err)
 	}
-	if err := s.migrateTaskMetadata(ctx); err != nil {
+	if err := retrySQLiteBusy(ctx, s.migrateTaskMetadata); err != nil {
 		return err
 	}
 	return s.importJSONL(ctx, jsonlPath)
+}
+
+func (s *SQLiteStore) execWithBusyRetry(ctx context.Context, query string, args ...any) error {
+	return retrySQLiteBusy(ctx, func(ctx context.Context) error {
+		_, err := s.db.ExecContext(ctx, query, args...)
+		return err
+	})
+}
+
+func retrySQLiteBusy(ctx context.Context, fn func(context.Context) error) error {
+	var err error
+	for {
+		err = fn(ctx)
+		if !isSQLiteBusy(err) {
+			return err
+		}
+		if waitErr := waitSQLiteBusyRetry(ctx); waitErr != nil {
+			return err
+		}
+	}
+}
+
+func waitSQLiteBusyRetry(ctx context.Context) error {
+	timer := time.NewTimer(sqliteBusyRetryDelay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
 }
 
 func (s *SQLiteStore) importJSONL(ctx context.Context, jsonlPath string) error {
@@ -1066,6 +1093,15 @@ func isDuplicateColumn(err error) bool {
 
 func isDuplicateTaskID(err error) bool {
 	return strings.Contains(err.Error(), "UNIQUE constraint failed: tasks.id")
+}
+
+func isSQLiteBusy(err error) bool {
+	if err == nil {
+		return false
+	}
+	message := strings.ToLower(err.Error())
+	return strings.Contains(message, "sqlite_busy") ||
+		strings.Contains(message, "database is locked")
 }
 
 func markImported(ctx context.Context, db *sql.DB, jsonlPath string) error {
