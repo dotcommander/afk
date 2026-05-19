@@ -43,12 +43,16 @@ type Store interface {
 	Update(ctx context.Context, id string, event task.EventType, message string, fn func(*task.Task) bool) error
 	Delete(ctx context.Context, id string) error
 	Prune(ctx context.Context, statuses []task.Status) error
+	// PruneByTag deletes all tasks whose tags slice contains the given tag.
+	// Returns the number of deleted tasks. Returns an error if tag is empty.
+	PruneByTag(ctx context.Context, tag string) (int, error)
 	ClaimNext(ctx context.Context, now time.Time, leaseExpires time.Time) (*task.Task, error)
 	ClaimNextForWorker(ctx context.Context, now time.Time, leaseExpires time.Time, workerID, agent string) (*task.Task, error)
 	Heartbeat(ctx context.Context, taskID, workerID string, now time.Time, leaseExpires time.Time) error
 	AddDependency(ctx context.Context, taskID, dependsOnID string) error
 	RemoveDependency(ctx context.Context, taskID, dependsOnID string) error
 	Dependencies(ctx context.Context, taskID string) ([]task.Dependency, error)
+	BulkAdd(ctx context.Context, tasks []task.Task, deps []task.Dependency) error
 	Block(ctx context.Context, taskID, reason string) error
 	Unblock(ctx context.Context, taskID string) error
 	BlockForTask(ctx context.Context, taskID string) (*task.Block, error)

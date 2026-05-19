@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -293,6 +294,85 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 	return commit(tx)
 }
 
+// BulkAdd inserts tasks and dependency edges in a single transaction.
+// Tasks are inserted with sequential ordinals; each dependency edge is
+// cycle-checked against the in-progress graph before insertion.
+func (s *SQLiteStore) BulkAdd(ctx context.Context, tasks []task.Task, deps []task.Dependency) error {
+	if len(tasks) == 0 && len(deps) == 0 {
+		return nil
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("store: begin bulk add: %w", err)
+	}
+	defer rollback(tx)
+
+	if err := bulkInsertTasks(ctx, tx, tasks); err != nil {
+		return err
+	}
+	if err := bulkInsertDeps(ctx, tx, deps); err != nil {
+		return err
+	}
+	return commit(tx)
+}
+
+// bulkInsertTasks inserts each task with a fresh ordinal and emits an EventAdded.
+// Caller owns the transaction; on error the caller's deferred rollback fires.
+func bulkInsertTasks(ctx context.Context, tx *sql.Tx, tasks []task.Task) error {
+	for _, t := range tasks {
+		ordinal, err := nextOrdinal(ctx, tx)
+		if err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `
+INSERT INTO tasks (
+	id, created, status, body, started, finished, error, ordinal,
+	priority, tags, cwd, source, agent, group_id, resource_key
+)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			t.ID, t.Created, string(t.Status), t.Body, t.Started, t.Finished, t.Error, ordinal,
+			t.Priority, encodeTags(t.Tags), t.CWD, t.Source, t.Agent, t.GroupID, t.ResourceKey); err != nil {
+			return fmt.Errorf("store: bulk add task %s: %w", t.ID, err)
+		}
+		if err := insertEvent(ctx, tx, t.ID, task.EventAdded, t.Created, ""); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// bulkInsertDeps validates and inserts each dependency edge, cycle-checking
+// against the in-progress graph. Returns ErrInvalidDependency for malformed
+// edges and ErrDependencyCycle if the new edge would close a cycle.
+func bulkInsertDeps(ctx context.Context, tx *sql.Tx, deps []task.Dependency) error {
+	for _, dep := range deps {
+		if dep.TaskID == "" || dep.DependsOnID == "" || dep.TaskID == dep.DependsOnID {
+			return ErrInvalidDependency
+		}
+		cycle, err := dependencyPathExists(ctx, tx, dep.DependsOnID, dep.TaskID)
+		if err != nil {
+			return err
+		}
+		if cycle {
+			return ErrDependencyCycle
+		}
+		created := dep.Created
+		if created == "" {
+			created = nowString()
+		}
+		if _, err := tx.ExecContext(ctx, `
+INSERT INTO task_dependencies (task_id, depends_on_id, created)
+VALUES (?, ?, ?)
+ON CONFLICT(task_id, depends_on_id) DO NOTHING`, dep.TaskID, dep.DependsOnID, created); err != nil {
+			return fmt.Errorf("store: bulk add dependency %s -> %s: %w", dep.TaskID, dep.DependsOnID, err)
+		}
+		if err := insertEvent(ctx, tx, dep.TaskID, task.EventDependencyAdded, created, dep.DependsOnID); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // Update mutates one task. If fn returns false, no write occurs.
 func (s *SQLiteStore) Update(ctx context.Context, id string, event task.EventType, message string, fn func(*task.Task) bool) error {
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -382,6 +462,60 @@ VALUES (?, ?, ?, ?)`, id, string(task.EventPruned), nowString(), string(status))
 		}
 	}
 	return nil
+}
+
+// PruneByTag deletes all tasks whose tags slice contains tag.
+// Returns count deleted; returns an error if tag is empty.
+func (s *SQLiteStore) PruneByTag(ctx context.Context, tag string) (int, error) {
+	if tag == "" {
+		return 0, fmt.Errorf("prune by tag: tag must not be empty")
+	}
+
+	rows, err := s.db.QueryContext(ctx, `SELECT id, tags FROM tasks`)
+	if err != nil {
+		return 0, fmt.Errorf("store: prune by tag scan: %w", err)
+	}
+	var ids []string
+	for rows.Next() {
+		var id, rawTags string
+		if err := rows.Scan(&id, &rawTags); err != nil {
+			_ = rows.Close()
+			return 0, fmt.Errorf("store: prune by tag row: %w", err)
+		}
+		tags := decodeTags(rawTags)
+		if slices.Contains(tags, tag) {
+			ids = append(ids, id)
+		}
+	}
+	if err := rows.Close(); err != nil {
+		return 0, fmt.Errorf("store: prune by tag close rows: %w", err)
+	}
+	if err := rows.Err(); err != nil {
+		return 0, fmt.Errorf("store: prune by tag rows: %w", err)
+	}
+	if len(ids) == 0 {
+		return 0, nil
+	}
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, fmt.Errorf("store: begin prune by tag: %w", err)
+	}
+	defer rollback(tx)
+
+	now := nowString()
+	for _, id := range ids {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM tasks WHERE id = ?`, id); err != nil {
+			return 0, fmt.Errorf("store: prune by tag delete %s: %w", id, err)
+		}
+		if err := insertEvent(ctx, tx, id, task.EventPruned, now, "tag="+tag); err != nil {
+			return 0, err
+		}
+	}
+	if err := commit(tx); err != nil {
+		return 0, err
+	}
+	return len(ids), nil
 }
 
 // ClaimNext atomically marks the first pending task working and returns it.

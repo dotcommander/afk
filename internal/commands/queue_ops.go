@@ -13,11 +13,23 @@ import (
 
 func newPruneCmd(d *Deps) *cobra.Command {
 	var statusCSV string
+	var tag string
 
 	cmd := &cobra.Command{
 		Use:   "prune",
 		Short: "Remove tasks by status",
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			if tag != "" && cmd.Flags().Changed("status") {
+				return fmt.Errorf("prune: --tag and --status are mutually exclusive")
+			}
+			if tag != "" {
+				n, err := d.Service.PruneByTag(cmd.Context(), tag)
+				if err != nil {
+					return err
+				}
+				_, err = fmt.Fprintf(d.Stdout, "pruned %d tasks (tag=%s)\n", n, tag)
+				return err
+			}
 			var statuses []string
 			for _, s := range strings.Split(statusCSV, ",") {
 				s = strings.TrimSpace(s)
@@ -33,6 +45,7 @@ func newPruneCmd(d *Deps) *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&statusCSV, "status", "done,failed", "comma-separated statuses to prune")
+	cmd.Flags().StringVar(&tag, "tag", "", "delete all tasks with this tag")
 	return cmd
 }
 

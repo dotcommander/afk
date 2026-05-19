@@ -163,6 +163,11 @@ func (s *Service) Prune(ctx context.Context, statuses []task.Status) error {
 	return s.store.Prune(ctx, statuses)
 }
 
+// PruneByTag deletes tasks tagged with tag. Returns count deleted.
+func (s *Service) PruneByTag(ctx context.Context, tag string) (int, error) {
+	return s.store.PruneByTag(ctx, tag)
+}
+
 // Pop atomically claims the next pending task.
 func (s *Service) Pop(ctx context.Context) (*task.Task, error) {
 	return s.PopWithLease(ctx, 0)

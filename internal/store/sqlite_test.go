@@ -582,6 +582,51 @@ func TestSQLiteStorePruneAndNotFound(t *testing.T) {
 	require.Equal(t, "keep", tasks[0].ID)
 }
 
+func TestSQLiteStorePruneByTag(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	dir := t.TempDir()
+	s, err := store.NewSQLite(ctx, store.Paths{
+		SQLitePath: filepath.Join(dir, "tasks.sqlite"),
+		JSONLPath:  filepath.Join(dir, "tasks.jsonl"),
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, s.Close()) })
+
+	require.NoError(t, s.Add(ctx, task.Task{ID: "alpha1", Status: task.StatusPending, Tags: []string{"spec:alpha"}}))
+	require.NoError(t, s.Add(ctx, task.Task{ID: "alpha2", Status: task.StatusPending, Tags: []string{"spec:alpha"}}))
+	require.NoError(t, s.Add(ctx, task.Task{ID: "beta1", Status: task.StatusPending, Tags: []string{"spec:beta"}}))
+
+	n, err := s.PruneByTag(ctx, "spec:alpha")
+	require.NoError(t, err)
+	require.Equal(t, 2, n)
+
+	tasks, err := s.List(ctx)
+	require.NoError(t, err)
+	ids := make([]string, 0, len(tasks))
+	for _, tk := range tasks {
+		ids = append(ids, tk.ID)
+	}
+	require.NotContains(t, ids, "alpha1")
+	require.NotContains(t, ids, "alpha2")
+	require.Contains(t, ids, "beta1")
+
+	t.Run("no match", func(t *testing.T) {
+		t.Parallel()
+		n2, err2 := s.PruneByTag(ctx, "spec:nomatch")
+		require.NoError(t, err2)
+		require.Equal(t, 0, n2)
+	})
+
+	t.Run("empty tag", func(t *testing.T) {
+		t.Parallel()
+		_, err3 := s.PruneByTag(ctx, "")
+		require.Error(t, err3)
+		require.Contains(t, err3.Error(), "must not be empty")
+	})
+}
+
 func TestSQLiteStoreImportsLegacyJSONLOnce(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()

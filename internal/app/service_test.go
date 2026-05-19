@@ -322,3 +322,76 @@ func TestServiceMissingTask(t *testing.T) {
 	require.True(t, errors.Is(err, app.ErrNotFound))
 	require.ErrorIs(t, svc.Remove(ctx, "missing"), app.ErrNotFound)
 }
+
+func TestServiceImportRequiresSuccessAndVerifySections(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	tests := []struct {
+		name    string
+		body    string
+		wantErr string
+	}{
+		{
+			name:    "missing success",
+			body:    "Add the ledger.\n\nVerify:\n- go test ./internal/store/...",
+			wantErr: `import: task "ledger": missing Success section`,
+		},
+		{
+			name:    "missing verify",
+			body:    "Add the ledger.\n\nSuccess:\n- Duplicate remote imports are ignored.",
+			wantErr: `import: task "ledger": missing Verify section`,
+		},
+		{
+			name:    "inline words do not count",
+			body:    "Add the ledger. Success: dedupe works. Verify: run tests.",
+			wantErr: `import: task "ledger": missing Success section`,
+		},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			svc := newService(t)
+			_, err := svc.Import(ctx, task.ImportDoc{Tasks: []task.ImportTask{{
+				Slug: "ledger",
+				Body: tt.body,
+			}}})
+			require.EqualError(t, err, tt.wantErr)
+		})
+	}
+}
+
+func TestServiceImportStoresTasksWithSuccessAndVerifySections(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	svc := newService(t)
+
+	results, err := svc.Import(ctx, task.ImportDoc{Tasks: []task.ImportTask{
+		{
+			Slug: "inspect",
+			Body: "Inspect import code.\n\nSuccess:\n- Import extension points are listed.\n\nVerify:\n- Include file references in the summary.",
+			Tags: []string{"spec:remote-drain"},
+		},
+		{
+			Slug:      "implement",
+			Body:      "Implement import validation.\n\nSuccess:\n- Missing sections are rejected.\n\nVerify:\n- go test ./internal/app/...",
+			Tags:      []string{"spec:remote-drain"},
+			BlockedBy: []string{"inspect"},
+		},
+	}})
+	require.NoError(t, err)
+	require.Len(t, results, 2)
+
+	tasks, err := svc.List(ctx, "")
+	require.NoError(t, err)
+	require.Len(t, tasks, 2)
+	require.Contains(t, tasks[0].Body, "Success:\n- Import extension points are listed.")
+	require.Contains(t, tasks[1].Body, "Verify:\n- go test ./internal/app/...")
+
+	deps, err := svc.Dependencies(ctx, results[1].ID)
+	require.NoError(t, err)
+	require.Len(t, deps, 1)
+	require.Equal(t, results[0].ID, deps[0].DependsOnID)
+}
