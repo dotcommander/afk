@@ -103,6 +103,24 @@ func WriteCount(w io.Writer, tally map[task.Status]int) error {
 	return nil
 }
 
+// WriteCountJSON renders per-status tallies as a single JSON object on one line.
+// All four canonical status keys are always present (zero if missing) so consumers
+// can rely on a fixed shape.
+func WriteCountJSON(w io.Writer, tally map[task.Status]int) error {
+	doc := struct {
+		Pending int `json:"pending"`
+		Working int `json:"working"`
+		Done    int `json:"done"`
+		Failed  int `json:"failed"`
+	}{
+		Pending: tally[task.StatusPending],
+		Working: tally[task.StatusWorking],
+		Done:    tally[task.StatusDone],
+		Failed:  tally[task.StatusFailed],
+	}
+	return WriteJSONLine(w, doc, "count")
+}
+
 // WriteDependencies renders blocked-by dependencies.
 func WriteDependencies(w io.Writer, deps []task.Dependency, asJSON bool) error {
 	if asJSON {

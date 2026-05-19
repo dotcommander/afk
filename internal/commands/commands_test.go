@@ -436,3 +436,70 @@ func testDepsWithWriters(stdout, stderr *bytes.Buffer) *Deps {
 		Now:    func() time.Time { return time.Date(2025, 1, 2, 3, 4, 5, 0, time.UTC) },
 	}
 }
+
+func TestNextJSON(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	queuePath := filepath.Join(dir, "tasks.sqlite")
+	stdout, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	d := testDepsWithWriters(stdout, stderr)
+
+	// Empty queue → "{}\n"
+	root := NewRoot(d, "test")
+	root.SetArgs([]string{"--queue", queuePath, "next", "--json"})
+	require.NoError(t, root.Execute(), "stderr: %s", stderr.String())
+	require.Equal(t, "{}\n", stdout.String())
+
+	// Add a task
+	stdout.Reset()
+	stderr.Reset()
+	root = NewRoot(d, "test")
+	root.SetArgs([]string{"--queue", queuePath, "add", "--no-cwd", "smoke task"})
+	require.NoError(t, root.Execute(), "stderr: %s", stderr.String())
+	addedID := strings.TrimSpace(stdout.String())
+	require.NotEmpty(t, addedID)
+
+	// next --json should return that task
+	stdout.Reset()
+	stderr.Reset()
+	root = NewRoot(d, "test")
+	root.SetArgs([]string{"--queue", queuePath, "next", "--json"})
+	require.NoError(t, root.Execute(), "stderr: %s", stderr.String())
+
+	var doc map[string]any
+	require.NoError(t, json.Unmarshal([]byte(strings.TrimSpace(stdout.String())), &doc))
+	require.Equal(t, addedID, doc["id"])
+	require.Equal(t, "smoke task", doc["body"])
+}
+
+func TestAddCommandJSONFlag(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	queuePath := filepath.Join(dir, "tasks.sqlite")
+	stdout, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	d := testDepsWithWriters(stdout, stderr)
+
+	root := NewRoot(d, "test")
+	root.SetArgs([]string{"--queue", queuePath, "add", "--no-cwd", "--json", "json body"})
+	require.NoError(t, root.Execute(), "stderr: %s", stderr.String())
+
+	var doc map[string]any
+	require.NoError(t, json.Unmarshal([]byte(strings.TrimSpace(stdout.String())), &doc))
+	idVal, ok := doc["id"].(string)
+	require.True(t, ok, "id field must be a string")
+	require.NotEmpty(t, idVal)
+	require.Len(t, doc, 1, "only id key expected")
+
+	stdout.Reset()
+	stderr.Reset()
+	root = NewRoot(d, "test")
+	root.SetArgs([]string{"--queue", queuePath, "add", "--no-cwd", "plain body"})
+	require.NoError(t, root.Execute(), "stderr: %s", stderr.String())
+	plain := strings.TrimSpace(stdout.String())
+	require.NotEmpty(t, plain)
+	require.NotContains(t, plain, "{")
+	require.NotContains(t, plain, "}")
+	require.NotEqual(t, idVal, plain, "second add should yield distinct id")
+}

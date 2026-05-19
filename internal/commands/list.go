@@ -1,6 +1,8 @@
 package commands
 
 import (
+	"fmt"
+
 	"github.com/spf13/cobra"
 
 	"github.com/dotcommander/afk/internal/output"
@@ -46,7 +48,9 @@ func newShowCmd(d *Deps) *cobra.Command {
 }
 
 func newCountCmd(d *Deps) *cobra.Command {
-	return &cobra.Command{
+	var asJSON bool
+
+	cmd := &cobra.Command{
 		Use:   "count",
 		Short: "Print per-status tallies",
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -54,13 +58,20 @@ func newCountCmd(d *Deps) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			if asJSON {
+				return output.WriteCountJSON(d.Stdout, tally)
+			}
 			return output.WriteCount(d.Stdout, tally)
 		},
 	}
+	cmd.Flags().BoolVar(&asJSON, "json", false, "emit JSON output")
+	return cmd
 }
 
 func newNextCmd(d *Deps) *cobra.Command {
-	return &cobra.Command{
+	var asJSON bool
+
+	cmd := &cobra.Command{
 		Use:   "next",
 		Short: "Print the first pending task as JSON",
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -69,11 +80,18 @@ func newNextCmd(d *Deps) *cobra.Command {
 				return err
 			}
 			if next == nil {
+				if asJSON {
+					if _, err := fmt.Fprintln(d.Stdout, "{}"); err != nil {
+						return fmt.Errorf("next: write: %w", err)
+					}
+				}
 				return nil
 			}
 			return output.WriteJSONLine(d.Stdout, next, "next")
 		},
 	}
+	cmd.Flags().BoolVar(&asJSON, "json", false, "emit JSON output (empty queue emits {})")
+	return cmd
 }
 
 func newExplainCmd(d *Deps) *cobra.Command {

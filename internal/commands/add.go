@@ -8,6 +8,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/dotcommander/afk/internal/output"
 	"github.com/dotcommander/afk/internal/task"
 )
 
@@ -22,6 +23,7 @@ func newAddCmd(d *Deps) *cobra.Command {
 	var resourceKey string
 	var blockedBy string
 	var after string
+	var asJSON bool
 
 	cmd := &cobra.Command{
 		Use:   "add <body...>",
@@ -62,6 +64,11 @@ func newAddCmd(d *Deps) *cobra.Command {
 					return err
 				}
 			}
+			if asJSON {
+				return output.WriteJSONLine(d.Stdout, struct {
+					ID string `json:"id"`
+				}{ID: id}, "add")
+			}
 			_, err = fmt.Fprintln(d.Stdout, id)
 			return err
 		},
@@ -76,6 +83,7 @@ func newAddCmd(d *Deps) *cobra.Command {
 	cmd.Flags().StringVar(&resourceKey, "resource", "", "task resource key")
 	cmd.Flags().StringVar(&blockedBy, "blocked-by", "", "task id this task is blocked by, or none")
 	cmd.Flags().StringVar(&after, "after", "", "alias for --blocked-by")
+	cmd.Flags().BoolVar(&asJSON, "json", false, "emit JSON output")
 	return cmd
 }
 

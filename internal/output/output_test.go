@@ -139,3 +139,41 @@ func TestWriteListTruncatesLongUnicodeBody(t *testing.T) {
 	require.NoError(t, output.WriteList(&out, tasks, false))
 	require.Contains(t, out.String(), "…")
 }
+
+func TestWriteCountJSON(t *testing.T) {
+	t.Parallel()
+	tally := map[task.Status]int{
+		task.StatusPending: 2,
+		task.StatusWorking: 1,
+		task.StatusDone:    3,
+		task.StatusFailed:  0,
+	}
+
+	var buf bytes.Buffer
+	require.NoError(t, output.WriteCountJSON(&buf, tally))
+
+	out := strings.TrimSpace(buf.String())
+	require.True(t, strings.HasSuffix(buf.String(), "\n"), "output must be newline-terminated")
+
+	var got map[string]int
+	require.NoError(t, json.Unmarshal([]byte(out), &got))
+	require.Equal(t, 2, got["pending"])
+	require.Equal(t, 1, got["working"])
+	require.Equal(t, 3, got["done"])
+	require.Equal(t, 0, got["failed"])
+	require.Len(t, got, 4, "must emit exactly four canonical status keys")
+}
+
+func TestWriteCountJSONEmptyTally(t *testing.T) {
+	t.Parallel()
+	var buf bytes.Buffer
+	require.NoError(t, output.WriteCountJSON(&buf, map[task.Status]int{}))
+
+	var got map[string]int
+	require.NoError(t, json.Unmarshal([]byte(strings.TrimSpace(buf.String())), &got))
+	require.Equal(t, 0, got["pending"])
+	require.Equal(t, 0, got["working"])
+	require.Equal(t, 0, got["done"])
+	require.Equal(t, 0, got["failed"])
+	require.Len(t, got, 4)
+}
