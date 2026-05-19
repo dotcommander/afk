@@ -663,3 +663,63 @@ func TestSidecarPathDerivation(t *testing.T) {
 	require.Equal(t, "/home/user/.claude/queue/rejected.jsonl", app.SidecarPath(paths))
 	require.Equal(t, "", app.SidecarPath(store.Paths{}))
 }
+
+func TestListRejectedEmptyOrMissingReturnsNilNoError(t *testing.T) {
+	t.Parallel()
+	svc, _ := newServiceWithSidecar(t)
+	got, err := svc.ListRejected()
+	require.NoError(t, err)
+	require.Nil(t, got)
+}
+
+func TestListRejectedReturnsRecordsInOrder(t *testing.T) {
+	t.Parallel()
+	svc, sidecar := newServiceWithSidecar(t)
+	now := time.Now()
+	require.NoError(t, app.RecordRejection(sidecar, task.AddOptions{Body: "first bad task"}, errors.New("reason A"), now))
+	require.NoError(t, app.RecordRejection(sidecar, task.AddOptions{Body: "second bad task"}, errors.New("reason B"), now.Add(time.Second)))
+	got, err := svc.ListRejected()
+	require.NoError(t, err)
+	require.Len(t, got, 2)
+	require.Equal(t, "first bad task", got[0].Body)
+	require.Equal(t, "second bad task", got[1].Body)
+}
+
+func TestRemoveRejectedDropsCorrectEntry(t *testing.T) {
+	t.Parallel()
+	svc, sidecar := newServiceWithSidecar(t)
+	now := time.Now()
+	require.NoError(t, app.RecordRejection(sidecar, task.AddOptions{Body: "keep this"}, errors.New("r1"), now))
+	require.NoError(t, app.RecordRejection(sidecar, task.AddOptions{Body: "drop this"}, errors.New("r2"), now))
+	require.NoError(t, app.RecordRejection(sidecar, task.AddOptions{Body: "also keep"}, errors.New("r3"), now))
+
+	removed, err := svc.RemoveRejected(1) // 0-based -> middle entry
+	require.NoError(t, err)
+	require.Equal(t, "drop this", removed.Body)
+
+	remaining, err := svc.ListRejected()
+	require.NoError(t, err)
+	require.Len(t, remaining, 2)
+	require.Equal(t, "keep this", remaining[0].Body)
+	require.Equal(t, "also keep", remaining[1].Body)
+}
+
+func TestRemoveRejectedOutOfRangeReturnsSentinel(t *testing.T) {
+	t.Parallel()
+	svc, sidecar := newServiceWithSidecar(t)
+	require.NoError(t, app.RecordRejection(sidecar, task.AddOptions{Body: "only one"}, errors.New("r"), time.Now()))
+	_, err := svc.RemoveRejected(5)
+	require.ErrorIs(t, err, app.ErrRejectionIndexOutOfRange)
+}
+
+func TestRejectedMethodsErrorWhenSidecarDisabled(t *testing.T) {
+	t.Parallel()
+	// Construct a service WITHOUT WithSidecarPath — newService builds one this way.
+	svc := newService(t)
+	_, err := svc.ListRejected()
+	require.ErrorIs(t, err, app.ErrSidecarDisabled)
+	_, err = svc.RemoveRejected(0)
+	require.ErrorIs(t, err, app.ErrSidecarDisabled)
+	_, err = svc.RetryRejected(context.Background(), 0)
+	require.ErrorIs(t, err, app.ErrSidecarDisabled)
+}

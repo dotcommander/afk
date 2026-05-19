@@ -1,8 +1,11 @@
 package app
 
 import (
+	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"time"
@@ -81,6 +84,98 @@ func RecordRejection(sidecarPath string, opts task.AddOptions, reason error, now
 	}
 	if err := f.Close(); err != nil {
 		return fmt.Errorf("record rejection: close: %w", err)
+	}
+	return nil
+}
+
+// ErrRejectionIndexOutOfRange reports an index outside the bounds of the
+// current sidecar contents. Indices are 0-based at this layer; the CLI
+// converts from 1-based user input.
+var ErrRejectionIndexOutOfRange = errors.New("rejection index out of range")
+
+// ErrSidecarDisabled reports that the Service was constructed without a
+// sidecar path, so rejection listing/replay is unavailable.
+var ErrSidecarDisabled = errors.New("rejection sidecar disabled")
+
+// ReadRejections returns every record currently in the sidecar file in the
+// order it was written. Missing file returns (nil, nil) — that is a valid
+// empty state. Malformed lines are skipped (best-effort; the sidecar is a
+// debugging aid, not a transactional log).
+func ReadRejections(path string) ([]RejectionRecord, error) {
+	if path == "" {
+		return nil, nil
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("read rejection sidecar: %w", err)
+	}
+	var records []RejectionRecord
+	for _, line := range bytes.Split(data, []byte("\n")) {
+		line = bytes.TrimSpace(line)
+		if len(line) == 0 {
+			continue
+		}
+		var rec RejectionRecord
+		if err := json.Unmarshal(line, &rec); err != nil {
+			continue
+		}
+		records = append(records, rec)
+	}
+	return records, nil
+}
+
+// RemoveRejectionAt removes the record at idx (0-based) and rewrites the
+// sidecar atomically. Returns the removed record.
+func RemoveRejectionAt(path string, idx int) (RejectionRecord, error) {
+	records, err := ReadRejections(path)
+	if err != nil {
+		return RejectionRecord{}, err
+	}
+	if idx < 0 || idx >= len(records) {
+		return RejectionRecord{}, ErrRejectionIndexOutOfRange
+	}
+	removed := records[idx]
+	remaining := append(records[:idx:idx], records[idx+1:]...)
+	if err := writeRejections(path, remaining); err != nil {
+		return RejectionRecord{}, err
+	}
+	return removed, nil
+}
+
+// writeRejections rewrites the sidecar via temp file + rename. Empty slice
+// truncates to an empty file (preserves the path so subsequent appends still
+// land in the expected location).
+func writeRejections(path string, records []RejectionRecord) error {
+	if path == "" {
+		return ErrSidecarDisabled
+	}
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	for _, rec := range records {
+		if err := enc.Encode(rec); err != nil {
+			return fmt.Errorf("encode rejection record: %w", err)
+		}
+	}
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".rejected-*.tmp")
+	if err != nil {
+		return fmt.Errorf("create temp sidecar: %w", err)
+	}
+	tmpName := tmp.Name()
+	if _, err := tmp.Write(buf.Bytes()); err != nil {
+		_ = tmp.Close()
+		_ = os.Remove(tmpName)
+		return fmt.Errorf("write temp sidecar: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		_ = os.Remove(tmpName)
+		return fmt.Errorf("close temp sidecar: %w", err)
+	}
+	if err := os.Rename(tmpName, path); err != nil {
+		_ = os.Remove(tmpName)
+		return fmt.Errorf("rename temp sidecar: %w", err)
 	}
 	return nil
 }

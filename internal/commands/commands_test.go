@@ -759,6 +759,19 @@ func TestAddDiagnoseAcceptsValidGeneratedBody(t *testing.T) {
 	require.NoFileExists(t, filepath.Join(dir, "rejected.jsonl"), "diagnose must not write rejection sidecar on success")
 }
 
+func TestRejectedLsEmpty(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	queuePath := filepath.Join(dir, "tasks.sqlite")
+	stdout, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	root := NewRoot(testDepsWithWriters(stdout, stderr), "test")
+	root.SetArgs([]string{"--queue", queuePath, "rejected", "ls"})
+
+	require.NoError(t, root.Execute(), "stderr: %s", stderr.String())
+	require.Contains(t, stdout.String(), "no rejected tasks")
+}
+
 func TestAddDiagnoseDoesNotInsertRow(t *testing.T) {
 	t.Parallel()
 

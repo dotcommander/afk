@@ -81,6 +81,7 @@ func NewRoot(d *Deps, version string) *cobra.Command {
 		newDoctorCmd(d),
 		newDiscoverCmd(d),
 		newPromptCmd(d),
+		newRejectedCmd(d),
 	)
 
 	return root
