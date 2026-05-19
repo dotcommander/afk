@@ -1,15 +1,26 @@
 package commands
 
 import (
+	_ "embed"
 	"fmt"
 
 	"github.com/spf13/cobra"
 )
 
+//go:embed discover_stub.md
+var discoverStubText string
+
 func newDiscoverCmd(d *Deps) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "discover",
 		Short: "Print task-discovery workflow guidance",
+		Args: func(cmd *cobra.Command, args []string) error {
+			if len(args) == 0 {
+				return nil
+			}
+			cmd.SilenceUsage = true
+			return fmt.Errorf("afk discover accepts no arguments; run it from the target repo and follow the printed workflow")
+		},
 		Annotations: map[string]string{
 			"skipStoreInit": "true",
 		},
@@ -20,26 +31,3 @@ func newDiscoverCmd(d *Deps) *cobra.Command {
 	}
 	return cmd
 }
-
-const discoverStubText = `afk discover is a workflow stub.
-
-Mine concrete AFK-ready candidate tasks from the target repo without mutating the queue.
-
-Start with:
-  git status --porcelain=v2
-  rg -n "TODO|FIXME|HACK|XXX|OPTIMIZE" --glob '!vendor/**' --glob '!node_modules/**'
-  afk count
-  afk ready
-  afk ls --status failed --json
-  afk ls --status working --json
-
-Accept only candidates with:
-  - current evidence from files, command output, tests, or docs/source mismatch
-  - atomic scope that a worker can complete independently
-  - exact verification command
-  - low churn risk and no broad cleanup/refactor wording
-  - no duplicate pending or working task for the same behavior
-
-Candidate bodies should start with [discovery:<repo>:<topic>] and include Evidence:, Scope:, and Verify with.
-Use afk add --dry-run --source task-discovery --tag discovery before enqueueing generated candidates.
-`

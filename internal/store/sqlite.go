@@ -133,9 +133,9 @@ WHERE status = ?
 AND NOT EXISTS (
 	SELECT 1
 	FROM task_dependencies d
-	JOIN tasks prereq ON prereq.id = d.depends_on_id
+	LEFT JOIN tasks prereq ON prereq.id = d.depends_on_id
 	WHERE d.task_id = tasks.id
-	AND prereq.status != ?
+	AND (prereq.id IS NULL OR prereq.status != ?)
 )
 AND NOT EXISTS (
 	SELECT 1
@@ -373,11 +373,19 @@ func bulkInsertDeps(ctx context.Context, tx *sql.Tx, deps []task.Dependency) err
 		if created == "" {
 			created = nowString()
 		}
-		if _, err := tx.ExecContext(ctx, `
-INSERT INTO task_dependencies (task_id, depends_on_id, created)
-VALUES (?, ?, ?)
-ON CONFLICT(task_id, depends_on_id) DO NOTHING`, dep.TaskID, dep.DependsOnID, created); err != nil {
+		res, err := tx.ExecContext(ctx, `
+	INSERT INTO task_dependencies (task_id, depends_on_id, created)
+	VALUES (?, ?, ?)
+	ON CONFLICT(task_id, depends_on_id) DO NOTHING`, dep.TaskID, dep.DependsOnID, created)
+		if err != nil {
 			return fmt.Errorf("store: bulk add dependency %s -> %s: %w", dep.TaskID, dep.DependsOnID, err)
+		}
+		n, err := res.RowsAffected()
+		if err != nil {
+			return fmt.Errorf("store: bulk add dependency rows affected: %w", err)
+		}
+		if n == 0 {
+			continue
 		}
 		if err := insertEvent(ctx, tx, dep.TaskID, task.EventDependencyAdded, created, dep.DependsOnID); err != nil {
 			return err
@@ -587,9 +595,9 @@ WHERE id = (
 	AND NOT EXISTS (
 		SELECT 1
 		FROM task_dependencies d
-		JOIN tasks prereq ON prereq.id = d.depends_on_id
+		LEFT JOIN tasks prereq ON prereq.id = d.depends_on_id
 		WHERE d.task_id = tasks.id
-		AND prereq.status != ?
+		AND (prereq.id IS NULL OR prereq.status != ?)
 	)
 	AND NOT EXISTS (
 		SELECT 1
@@ -710,11 +718,19 @@ func (s *SQLiteStore) AddDependency(ctx context.Context, taskID, dependsOnID str
 	}
 
 	created := nowString()
-	if _, err := tx.ExecContext(ctx, `
+	res, err := tx.ExecContext(ctx, `
 INSERT INTO task_dependencies (task_id, depends_on_id, created)
 VALUES (?, ?, ?)
-ON CONFLICT(task_id, depends_on_id) DO NOTHING`, taskID, dependsOnID, created); err != nil {
+ON CONFLICT(task_id, depends_on_id) DO NOTHING`, taskID, dependsOnID, created)
+	if err != nil {
 		return fmt.Errorf("store: add dependency %s -> %s: %w", taskID, dependsOnID, err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("store: add dependency rows affected: %w", err)
+	}
+	if n == 0 {
+		return commit(tx)
 	}
 	if err := insertEvent(ctx, tx, taskID, task.EventDependencyAdded, created, dependsOnID); err != nil {
 		return err

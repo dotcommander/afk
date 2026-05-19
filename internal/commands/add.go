@@ -183,8 +183,15 @@ func buildAddCommandOptions(input addCommandInput) (task.AddOptions, string, err
 }
 
 func resolveAddCWD(cwd string, noCWD bool) (string, error) {
-	if cwd != "" || noCWD {
-		return cwd, nil
+	if noCWD {
+		return "", nil
+	}
+	if cwd != "" {
+		resolvedCWD, err := filepath.Abs(cwd)
+		if err != nil {
+			return "", fmt.Errorf("resolve cwd: %w", err)
+		}
+		return resolvedCWD, nil
 	}
 	resolvedCWD, err := os.Getwd()
 	if err != nil {

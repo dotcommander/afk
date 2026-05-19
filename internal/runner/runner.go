@@ -226,12 +226,20 @@ func startHeartbeat(ctx context.Context, service *app.Service, taskID string, op
 				return
 			case <-ticker.C:
 				if err := service.Heartbeat(ctx, taskID, opts.WorkerID, opts.Lease); err != nil {
+					if taskNoLongerWorking(ctx, service, taskID) {
+						return
+					}
 					errs <- fmt.Errorf("runner: heartbeat %s: %w", taskID, err)
 					return
 				}
 			}
 		}
 	}()
+}
+
+func taskNoLongerWorking(ctx context.Context, service *app.Service, taskID string) bool {
+	current, err := service.Show(context.WithoutCancel(ctx), taskID)
+	return err == nil && current.Status != task.StatusWorking
 }
 
 func firstHeartbeatErr(errs <-chan error) error {
