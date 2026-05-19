@@ -17,6 +17,7 @@ type Deps struct {
 	Service    *app.Service
 	QueuePaths store.Paths
 	Logger     *slog.Logger
+	Stdin      io.Reader
 	Stdout     io.Writer
 	Stderr     io.Writer
 	Now        func() time.Time
@@ -54,6 +55,7 @@ func NewRoot(d *Deps, version string) *cobra.Command {
 
 	root.AddCommand(
 		newAddCmd(d),
+		newImportCmd(d),
 		newDepsCmd(d),
 		newLsCmd(d),
 		newShowCmd(d),
