@@ -1,0 +1,104 @@
+version: "2"
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
+
+linters:
+  default: none
+  enable:
+    - errcheck
+    - govet
+    - staticcheck
+    - unused
+    - ineffassign
+    - gosec
+    - misspell
+    - revive
+    - gocritic
+    - gocyclo
+    - gocognit
+    - funlen
+    - nestif
+    - goconst
+    - dupl
+    - depguard
+
+  settings:
+    gocyclo:
+      min-complexity: 15
+
+    gocognit:
+      min-complexity: 20
+
+    funlen:
+      lines: 80
+      statements: 50
+
+    nestif:
+      min-complexity: 4
+
+    dupl:
+      threshold: 100
+
+    goconst:
+      min-occurrences: 3
+
+    gosec:
+      excludes:
+        - G304  # file path via variable — acceptable in test scaffolding
+        - G306  # WriteFile permissions — acceptable in test scaffolding
+
+    depguard:
+      rules:
+        banned-libs:
+          deny:
+            - pkg: github.com/urfave/cli
+              desc: use cobra+viper instead
+            - pkg: github.com/peterbourgon/ff
+              desc: use viper instead
+            - pkg: github.com/gin-gonic/gin
+              desc: use chi/v5 instead
+            - pkg: github.com/gorilla/mux
+              desc: use chi/v5 instead
+            - pkg: github.com/rs/zerolog
+              desc: use log/slog instead
+            - pkg: github.com/sirupsen/logrus
+              desc: use log/slog instead
+            - pkg: github.com/knadh/koanf
+              desc: use viper instead
+            - pkg: github.com/joho/godotenv
+              desc: use viper instead
+            - pkg: github.com/kelseyhightower/envconfig
+              desc: use viper instead
+            - pkg: github.com/pkg/errors
+              desc: use fmt.Errorf+%w instead
+            - pkg: github.com/go-resty/resty
+              desc: use go-retryablehttp instead
+            - pkg: github.com/sashabaranov/go-openai
+              desc: use openai/openai-go instead
+            - pkg: github.com/mattn/go-sqlite3
+              desc: use modernc.org/sqlite instead (CGO-free)
+            - pkg: github.com/golang-migrate/migrate
+              desc: use goose/v3 instead
+            - pkg: gopkg.in/yaml.v2
+              desc: use yaml.v3 instead
+            - pkg: github.com/satori/go.uuid
+              desc: use google/uuid instead
+            - pkg: github.com/fatih/color
+              desc: use lipgloss instead
+            - pkg: github.com/olekukonko/tablewriter
+              desc: use lipgloss/table instead
+            - pkg: github.com/lib/pq
+              desc: use pgx/v5 instead
+
+  exclusions:
+    rules:
+      - path: "_test\\.go"
+        linters:
+          - dupl
+          - goconst
+          - funlen
+          - gocognit
+          - gosec

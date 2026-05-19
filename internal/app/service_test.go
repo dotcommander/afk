@@ -1,0 +1,146 @@
+package app_test
+
+import (
+	"context"
+	"errors"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/dotcommander/afk/internal/app"
+	"github.com/dotcommander/afk/internal/store"
+	"github.com/dotcommander/afk/internal/task"
+	"github.com/stretchr/testify/require"
+)
+
+var fixed = time.Date(2025, 1, 2, 3, 4, 5, 0, time.UTC)
+
+func newService(t *testing.T) *app.Service {
+	t.Helper()
+	s, err := store.NewSQLite(context.Background(), store.Paths{
+		SQLitePath: filepath.Join(t.TempDir(), "tasks.sqlite"),
+		JSONLPath:  filepath.Join(t.TempDir(), "tasks.jsonl"),
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, s.Close()) })
+	return app.NewService(s, func() time.Time { return fixed })
+}
+
+func TestServiceLifecycle(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	svc := newService(t)
+
+	id, err := svc.Add(ctx, "hello")
+	require.NoError(t, err)
+	require.NotEmpty(t, id)
+
+	tasks, err := svc.List(ctx, "")
+	require.NoError(t, err)
+	require.Len(t, tasks, 1)
+	require.Equal(t, task.StatusPending, tasks[0].Status)
+
+	next, err := svc.Next(ctx)
+	require.NoError(t, err)
+	require.NotNil(t, next)
+	require.Equal(t, id, next.ID)
+
+	popped, err := svc.Pop(ctx)
+	require.NoError(t, err)
+	require.NotNil(t, popped)
+	require.Equal(t, task.StatusWorking, popped.Status)
+	require.Equal(t, fixed.Format(time.RFC3339), popped.Started)
+
+	require.NoError(t, svc.Done(ctx, id))
+	got, err := svc.Show(ctx, id)
+	require.NoError(t, err)
+	require.Equal(t, task.StatusDone, got.Status)
+
+	require.NoError(t, svc.Reset(ctx, id))
+	require.NoError(t, svc.Fail(ctx, id, "oops"))
+	tally, err := svc.Count(ctx)
+	require.NoError(t, err)
+	require.Equal(t, 1, tally[task.StatusFailed])
+
+	require.NoError(t, svc.Prune(ctx, []task.Status{task.StatusFailed}))
+	tasks, err = svc.List(ctx, "")
+	require.NoError(t, err)
+	require.Empty(t, tasks)
+}
+
+func TestServiceFilteringEditingAndCollisionIDs(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	svc := newService(t)
+
+	first, err := svc.Add(ctx, "first")
+	require.NoError(t, err)
+	second, err := svc.Add(ctx, "second")
+	require.NoError(t, err)
+	require.NotEqual(t, first, second)
+	require.True(t, strings.HasSuffix(second, "-1"))
+
+	require.NoError(t, svc.Edit(ctx, second, "edited"))
+	pending, err := svc.List(ctx, string(task.StatusPending))
+	require.NoError(t, err)
+	require.Len(t, pending, 2)
+	require.Equal(t, "edited", pending[1].Body)
+
+	done, err := svc.List(ctx, string(task.StatusDone))
+	require.NoError(t, err)
+	require.Empty(t, done)
+}
+
+func TestServiceAddWithOptionsStoresMetadata(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	svc := newService(t)
+
+	id, err := svc.AddWithOptions(ctx, task.AddOptions{
+		Body:        "metadata",
+		Priority:    "high",
+		Tags:        []string{"repo:afk", "type:test"},
+		CWD:         "/tmp/repo",
+		Source:      "cli",
+		Agent:       "codex",
+		GroupID:     "group",
+		ResourceKey: "repo:/tmp/repo",
+	})
+	require.NoError(t, err)
+
+	got, err := svc.Show(ctx, id)
+	require.NoError(t, err)
+	require.Equal(t, "high", got.Priority)
+	require.Equal(t, []string{"repo:afk", "type:test"}, got.Tags)
+	require.Equal(t, "/tmp/repo", got.CWD)
+	require.Equal(t, "cli", got.Source)
+	require.Equal(t, "codex", got.Agent)
+	require.Equal(t, "group", got.GroupID)
+	require.Equal(t, "repo:/tmp/repo", got.ResourceKey)
+}
+
+func TestServiceNextAndPopEmptyQueue(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	svc := newService(t)
+
+	next, err := svc.Next(ctx)
+	require.NoError(t, err)
+	require.Nil(t, next)
+
+	popped, err := svc.Pop(ctx)
+	require.NoError(t, err)
+	require.Nil(t, popped)
+}
+
+func TestServiceMissingTask(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	svc := newService(t)
+
+	_, err := svc.Show(ctx, "missing")
+	require.Error(t, err)
+	require.True(t, errors.Is(err, app.ErrNotFound))
+	require.ErrorIs(t, svc.Remove(ctx, "missing"), app.ErrNotFound)
+}
