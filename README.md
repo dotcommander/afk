@@ -14,6 +14,16 @@ Tasks stay in `pending`, `working`, `done`, or `failed`. Scheduler state such as
 
 On first use, `afk` imports existing tasks from `~/.claude/queue/tasks.jsonl` into SQLite when the database is empty. JSONL remains an import format only; new writes go to SQLite.
 
+For task-shaped docs see [`docs/`](docs/index.md):
+
+- [`docs/getting-started.md`](docs/getting-started.md) — install, queue a task, claim and finish it.
+- [`docs/tasks.md`](docs/tasks.md) — add tasks and attach metadata.
+- [`docs/scheduling.md`](docs/scheduling.md) — dependencies, blocks, resource locks, readiness.
+- [`docs/workers.md`](docs/workers.md) — claim, lease, heartbeat, recover.
+- [`docs/runner.md`](docs/runner.md) — the `afk run` worker loop.
+- [`docs/configuration.md`](docs/configuration.md) — queue path resolution.
+- [`docs/command-reference.md`](docs/command-reference.md) — every subcommand.
+
 ## Install
 
 ```sh
@@ -238,6 +248,7 @@ For migration compatibility, a path ending in `.jsonl` is treated as the legacy 
 | Command | Behavior |
 |---|---|
 | `afk add <body>` | Append a new pending task and print its id. |
+| `afk add --dry-run <body>` | Validate a task body and metadata without adding it. |
 | `afk ls [--status STATUS] [--json]` | List tasks, optionally filtered by status. |
 | `afk show <id> [--json]` | Show one task. |
 | `afk count` | Tally tasks per status. |
@@ -271,6 +282,7 @@ For migration compatibility, a path ending in `.jsonl` is treated as the legacy 
 - `internal/commands`: Cobra commands, argument parsing, and presentation wiring.
 - `internal/app`: task use cases such as add, list, pop, run, done, fail, reset, and prune.
 - `internal/store`: persistence boundary; the SQLite implementation owns atomic claim/update operations and one-time JSONL import.
+- `internal/queue`: legacy JSONL queue type used by the one-time SQLite import path.
 - `internal/task`: persisted task schema, statuses, metadata, events, attempts, dependencies, and blocks.
 - `internal/runner`: built-in command-template runner.
 - `internal/output`: human and JSON/JSONL CLI rendering.
