@@ -115,8 +115,27 @@ func TestDiscoverCommandPrintsStubWithoutCreatingQueue(t *testing.T) {
 	require.NoError(t, root.Execute(), "stderr: %s", stderr.String())
 	require.Contains(t, stdout.String(), "afk discover is a workflow stub")
 	require.Contains(t, stdout.String(), "Mine concrete AFK-ready candidate tasks")
-	require.Contains(t, stdout.String(), "afk add --dry-run --source task-discovery --tag discovery")
+	require.Contains(t, stdout.String(), "Ask one confirmation question such as: add all, add 1 3, or no.")
+	require.Contains(t, stdout.String(), `afk add --dry-run --cwd "$(pwd)" --source task-discovery --tag discovery --resource "repo:$(pwd)"`)
+	require.Contains(t, stdout.String(), "Use absolute paths in Evidence:/Scope:, or pass --cwd")
+	require.Contains(t, stdout.String(), "Queue inspection commands such as afk count, afk ready, and afk ls may initialize")
 	require.NotContains(t, stdout.String(), "docs/task-discovery.md")
+	require.NoFileExists(t, queuePath)
+}
+
+func TestDiscoverCommandRejectsArgs(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	queuePath := filepath.Join(dir, "tasks.sqlite")
+	stdout, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	root := NewRoot(testDepsWithWriters(stdout, stderr), "test")
+	root.SetArgs([]string{"--queue", queuePath, "discover", "docs/task-discovery.md"})
+
+	err := root.Execute()
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "afk discover accepts no arguments")
+	require.Empty(t, stdout.String())
 	require.NoFileExists(t, queuePath)
 }
 
@@ -274,6 +293,31 @@ func TestAddCommandCanDisableCWD(t *testing.T) {
 	require.NotContains(t, shown, "cwd")
 	require.Equal(t, "cli", shown["source"])
 	require.NotContains(t, shown, "resource_key")
+}
+
+func TestAddCommandNormalizesExplicitCWD(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	queuePath := filepath.Join(dir, "tasks.sqlite")
+	relCWD := filepath.Join("testdata", "relative-cwd")
+	expectedCWD, err := filepath.Abs(relCWD)
+	require.NoError(t, err)
+	stdout, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	d := testDepsWithWriters(stdout, stderr)
+	root := NewRoot(d, "test")
+	root.SetArgs([]string{"--queue", queuePath, "add", "--cwd", relCWD, "relative cwd"})
+
+	require.NoError(t, root.Execute(), "stderr: %s", stderr.String())
+	id := strings.TrimSpace(stdout.String())
+	stdout.Reset()
+	root = NewRoot(d, "test")
+	root.SetArgs([]string{"--queue", queuePath, "show", id, "--json"})
+	require.NoError(t, root.Execute(), "stderr: %s", stderr.String())
+
+	var shown map[string]any
+	require.NoError(t, json.Unmarshal([]byte(strings.TrimSpace(stdout.String())), &shown))
+	require.Equal(t, expectedCWD, shown["cwd"])
 }
 
 func TestAddCommandRejectsInvalidTask(t *testing.T) {

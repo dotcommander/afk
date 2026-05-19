@@ -240,7 +240,7 @@ func TestRunMaxDurationCancelsCommand(t *testing.T) {
 	require.Equal(t, task.StatusFailed, got.Status)
 }
 
-func TestRunHeartbeatErrorStopsRunner(t *testing.T) {
+func TestRunIgnoresHeartbeatAfterTaskFinalized(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
@@ -252,7 +252,7 @@ func TestRunHeartbeatErrorStopsRunner(t *testing.T) {
 		Body:    "done early",
 	}))
 
-	err := runner.Run(ctx, svc, runner.Options{
+	require.NoError(t, runner.Run(ctx, svc, runner.Options{
 		Limit:        1,
 		Lease:        10 * time.Millisecond,
 		WorkerID:     "runner-test",
@@ -260,9 +260,7 @@ func TestRunHeartbeatErrorStopsRunner(t *testing.T) {
 		QueuePath:    queuePath,
 		Stdout:       &bytes.Buffer{},
 		Stderr:       &bytes.Buffer{},
-	})
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "runner: heartbeat done-early")
+	}))
 
 	got, showErr := svc.Show(ctx, "done-early")
 	require.NoError(t, showErr)

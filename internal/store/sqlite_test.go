@@ -307,6 +307,26 @@ func TestSQLiteStoreReadyExcludesUnfinishedDependencies(t *testing.T) {
 	require.Equal(t, "prereq", ready[0].ID)
 }
 
+func TestSQLiteStoreReadyExcludesMissingDependencies(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	s := newStore(t)
+	now := time.Date(2025, 1, 2, 3, 4, 5, 0, time.UTC)
+
+	require.NoError(t, s.Add(ctx, task.Task{ID: "blocked", Status: task.StatusPending, Body: "blocked"}))
+	require.NoError(t, s.Add(ctx, task.Task{ID: "prereq", Status: task.StatusPending, Body: "prereq"}))
+	require.NoError(t, s.AddDependency(ctx, "blocked", "prereq"))
+	require.NoError(t, s.Delete(ctx, "prereq"))
+
+	ready, err := s.Ready(ctx, store.ReadyOptions{Now: now})
+	require.NoError(t, err)
+	require.Empty(t, ready)
+
+	claimed, err := s.ClaimNext(ctx, now, time.Time{})
+	require.NoError(t, err)
+	require.Nil(t, claimed)
+}
+
 func TestSQLiteStoreDependencies(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -327,6 +347,12 @@ func TestSQLiteStoreDependencies(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, task.EventDependencyAdded, events[len(events)-1].Type)
 	require.Equal(t, "prereq", events[len(events)-1].Message)
+
+	eventCount := len(events)
+	require.NoError(t, s.AddDependency(ctx, "blocked", "prereq"))
+	events, err = s.Events(ctx, "blocked")
+	require.NoError(t, err)
+	require.Len(t, events, eventCount)
 
 	require.NoError(t, s.RemoveDependency(ctx, "blocked", "prereq"))
 	deps, err = s.Dependencies(ctx, "blocked")
@@ -386,6 +412,12 @@ func TestSQLiteStoreBulkAddTasksAndDependencies(t *testing.T) {
 	events, err := s.Events(ctx, "blocked")
 	require.NoError(t, err)
 	require.Equal(t, task.EventDependencyAdded, events[len(events)-1].Type)
+	eventCount := len(events)
+
+	require.NoError(t, s.BulkAdd(ctx, nil, deps))
+	events, err = s.Events(ctx, "blocked")
+	require.NoError(t, err)
+	require.Len(t, events, eventCount)
 }
 
 func TestSQLiteStoreBulkAddValidatesDependencies(t *testing.T) {
