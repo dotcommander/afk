@@ -723,3 +723,29 @@ func TestRejectedMethodsErrorWhenSidecarDisabled(t *testing.T) {
 	_, err = svc.RetryRejected(context.Background(), 0)
 	require.ErrorIs(t, err, app.ErrSidecarDisabled)
 }
+
+func TestAddWithOptionsForceValidTaskBehavesLikeNormalAdd(t *testing.T) {
+	t.Parallel()
+	svc, sidecar := newServiceWithSidecar(t)
+	opts := task.AddOptions{Body: "a normal valid task body that passes validation"}
+	require.NoError(t, task.ValidateAddOptions(opts))
+	id, err := svc.AddWithOptionsForce(context.Background(), opts)
+	require.NoError(t, err)
+	require.NotEmpty(t, id)
+	records, _ := app.ReadRejections(sidecar)
+	require.Empty(t, records)
+}
+
+func TestAddWithOptionsForceInvalidTaskInsertsAndRecordsSidecar(t *testing.T) {
+	t.Parallel()
+	svc, sidecar := newServiceWithSidecar(t)
+	opts := task.AddOptions{Body: "fix the thing"} // matches invalidExactBodies
+	require.ErrorIs(t, task.ValidateAddOptions(opts), task.ErrInvalidTask)
+	id, err := svc.AddWithOptionsForce(context.Background(), opts)
+	require.NoError(t, err, "force-add must succeed even when validation rejects")
+	require.NotEmpty(t, id)
+	records, err := app.ReadRejections(sidecar)
+	require.NoError(t, err)
+	require.Len(t, records, 1)
+	require.Equal(t, "fix the thing", records[0].Body)
+}

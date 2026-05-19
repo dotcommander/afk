@@ -27,6 +27,7 @@ func newAddCmd(d *Deps) *cobra.Command {
 	var asJSON bool
 	var dryRun bool
 	var diagnose bool
+	var force bool
 
 	cmd := &cobra.Command{
 		Use:   "add <body...>",
@@ -49,6 +50,7 @@ func newAddCmd(d *Deps) *cobra.Command {
 				asJSON:   asJSON,
 				dryRun:   dryRun,
 				diagnose: diagnose,
+				force:    force,
 			})
 		},
 	}
@@ -65,6 +67,7 @@ func newAddCmd(d *Deps) *cobra.Command {
 	cmd.Flags().BoolVar(&asJSON, "json", false, "emit JSON output")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "validate without adding a task")
 	cmd.Flags().BoolVar(&diagnose, "diagnose", false, "run all validation checks and report every failure (read-only)")
+	cmd.Flags().BoolVar(&force, "force", false, "Bypass validation rejection. Requires AFK_ALLOW_FORCE=1 in environment.")
 	return cmd
 }
 
@@ -86,12 +89,17 @@ type addCommandMode struct {
 	asJSON   bool
 	dryRun   bool
 	diagnose bool
+	force    bool
 }
 
 func runAddCommand(cmd *cobra.Command, d *Deps, input addCommandInput, mode addCommandMode) error {
 	opts, dependsOnID, err := buildAddCommandOptions(input)
 	if err != nil {
 		return err
+	}
+	if mode.force && mode.diagnose {
+		cmd.SilenceUsage = true
+		return errors.New("--force and --diagnose are mutually exclusive")
 	}
 	if mode.diagnose {
 		return runAddDiagnose(cmd, d, opts)
@@ -101,6 +109,19 @@ func runAddCommand(cmd *cobra.Command, d *Deps, input addCommandInput, mode addC
 			return err
 		}
 		return writeAddDryRunResult(d, mode.asJSON)
+	}
+	if mode.force {
+		if v := os.Getenv("AFK_ALLOW_FORCE"); v != "1" {
+			cmd.SilenceUsage = true
+			return fmt.Errorf("--force requires AFK_ALLOW_FORCE=1 in environment (current: %q)", v)
+		}
+		fmt.Fprintln(d.Stderr, "warning: --force bypassing validation")
+		id, err := d.Service.AddWithOptionsForce(cmd.Context(), opts)
+		if err != nil {
+			cmd.SilenceUsage = true
+			return err
+		}
+		return writeAddResult(d, id, mode.asJSON)
 	}
 	if dependsOnID != "" {
 		if _, err := d.Service.Show(cmd.Context(), dependsOnID); err != nil {
