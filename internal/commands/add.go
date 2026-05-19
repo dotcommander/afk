@@ -2,6 +2,7 @@
 package commands
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -25,13 +26,14 @@ func newAddCmd(d *Deps) *cobra.Command {
 	var after string
 	var asJSON bool
 	var dryRun bool
+	var diagnose bool
 
 	cmd := &cobra.Command{
 		Use:   "add <body...>",
 		Short: "Append a new pending task",
 		Args:  cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			opts, dependsOnID, err := buildAddCommandOptions(addCommandInput{
+			return runAddCommand(cmd, d, addCommandInput{
 				args:        args,
 				tags:        tags,
 				priority:    priority,
@@ -43,31 +45,11 @@ func newAddCmd(d *Deps) *cobra.Command {
 				resourceKey: resourceKey,
 				blockedBy:   blockedBy,
 				after:       after,
+			}, addCommandMode{
+				asJSON:   asJSON,
+				dryRun:   dryRun,
+				diagnose: diagnose,
 			})
-			if err != nil {
-				return err
-			}
-			if dryRun {
-				if err := task.ValidateAddOptions(opts); err != nil {
-					return err
-				}
-				return writeAddDryRunResult(d, asJSON)
-			}
-			if dependsOnID != "" {
-				if _, err := d.Service.Show(cmd.Context(), dependsOnID); err != nil {
-					return err
-				}
-			}
-			id, err := d.Service.AddWithOptions(cmd.Context(), opts)
-			if err != nil {
-				return err
-			}
-			if dependsOnID != "" {
-				if err := d.Service.AddDependency(cmd.Context(), id, dependsOnID); err != nil {
-					return err
-				}
-			}
-			return writeAddResult(d, id, asJSON)
 		},
 	}
 	cmd.Flags().StringArrayVar(&tags, "tag", nil, "task tag (repeatable)")
@@ -82,6 +64,7 @@ func newAddCmd(d *Deps) *cobra.Command {
 	cmd.Flags().StringVar(&after, "after", "", "alias for --blocked-by")
 	cmd.Flags().BoolVar(&asJSON, "json", false, "emit JSON output")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "validate without adding a task")
+	cmd.Flags().BoolVar(&diagnose, "diagnose", false, "run all validation checks and report every failure (read-only)")
 	return cmd
 }
 
@@ -97,6 +80,43 @@ type addCommandInput struct {
 	resourceKey string
 	blockedBy   string
 	after       string
+}
+
+type addCommandMode struct {
+	asJSON   bool
+	dryRun   bool
+	diagnose bool
+}
+
+func runAddCommand(cmd *cobra.Command, d *Deps, input addCommandInput, mode addCommandMode) error {
+	opts, dependsOnID, err := buildAddCommandOptions(input)
+	if err != nil {
+		return err
+	}
+	if mode.diagnose {
+		return runAddDiagnose(cmd, d, opts)
+	}
+	if mode.dryRun {
+		if err := task.ValidateAddOptions(opts); err != nil {
+			return err
+		}
+		return writeAddDryRunResult(d, mode.asJSON)
+	}
+	if dependsOnID != "" {
+		if _, err := d.Service.Show(cmd.Context(), dependsOnID); err != nil {
+			return err
+		}
+	}
+	id, err := d.Service.AddWithOptions(cmd.Context(), opts)
+	if err != nil {
+		return err
+	}
+	if dependsOnID != "" {
+		if err := d.Service.AddDependency(cmd.Context(), id, dependsOnID); err != nil {
+			return err
+		}
+	}
+	return writeAddResult(d, id, mode.asJSON)
 }
 
 func buildAddCommandOptions(input addCommandInput) (task.AddOptions, string, error) {
@@ -163,4 +183,30 @@ func normalizeBlockedBy(blockedBy, after string) (string, error) {
 		return "", nil
 	}
 	return value, nil
+}
+
+// runAddDiagnose runs ValidateAddOptionsAll and reports every failure on its
+// own stderr line. Read-only: never calls Service.AddWithOptions and so never
+// writes a rejection sidecar entry or inserts a row.
+func runAddDiagnose(cmd *cobra.Command, d *Deps, opts task.AddOptions) error {
+	err := task.ValidateAddOptionsAll(opts)
+	if err == nil {
+		_, werr := fmt.Fprintln(d.Stdout, "task validates")
+		return werr
+	}
+	var joined interface{ Unwrap() []error }
+	if errors.As(err, &joined) {
+		for _, e := range joined.Unwrap() {
+			if _, werr := fmt.Fprintln(d.Stderr, e.Error()); werr != nil {
+				return werr
+			}
+		}
+	} else {
+		if _, werr := fmt.Fprintln(d.Stderr, err.Error()); werr != nil {
+			return werr
+		}
+	}
+	cmd.SilenceUsage = true
+	cmd.SilenceErrors = true
+	return err
 }

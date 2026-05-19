@@ -42,7 +42,8 @@ var discoveryPrefixRE = regexp.MustCompile(`^\[discovery:[a-zA-Z0-9._-]+:[a-zA-Z
 
 // ValidateAddOptions checks whether a new task is safe and concrete enough for
 // AFK. Discovery-generated tasks get stricter checks because they may be
-// auto-enqueued without a human reviewing each body first.
+// auto-enqueued without a human reviewing each body first. Returns the first
+// failure (fail-fast). For a complete report, use ValidateAddOptionsAll.
 func ValidateAddOptions(opts AddOptions) error {
 	if err := ValidateBody(opts.Body); err != nil {
 		return err
@@ -50,25 +51,60 @@ func ValidateAddOptions(opts AddOptions) error {
 	if !isGeneratedCandidate(opts.Source, opts.Tags) {
 		return nil
 	}
-	if !discoveryPrefixRE.MatchString(strings.TrimSpace(opts.Body)) {
-		return fmt.Errorf("%w: %w", ErrInvalidTask, ErrMissingDiscoveryPrefix)
-	}
-	if !containsFold(opts.Body, "verify") && !containsFold(opts.Body, "verification") {
-		return fmt.Errorf("%w: %w", ErrInvalidTask, ErrMissingVerify)
-	}
-	if !containsFold(opts.Body, "evidence:") {
-		return fmt.Errorf("%w: %w", ErrInvalidTask, ErrMissingEvidence)
-	}
-	if !containsFold(opts.Body, "scope:") {
-		return fmt.Errorf("%w: %w", ErrInvalidTask, ErrMissingScope)
-	}
-	if phrase := firstGeneratedChurnPhrase(opts.Body); phrase != "" {
-		return fmt.Errorf("%w: %w", ErrInvalidTask, &ChurnPhraseError{Phrase: phrase})
-	}
-	if opts.CWD == "" && !hasAbsolutePath(opts.Body) {
-		return fmt.Errorf("%w: %w", ErrInvalidTask, ErrMissingCwd)
+	if reasons := generatedCandidateChecks(opts); len(reasons) > 0 {
+		return fmt.Errorf("%w: %w", ErrInvalidTask, reasons[0])
 	}
 	return nil
+}
+
+// ValidateAddOptionsAll runs every check that ValidateAddOptions performs and
+// returns errors.Join of every failure. Useful for diagnostic mode where the
+// caller wants a complete report instead of fail-fast. ValidateBody still
+// short-circuits because an empty/non-actionable body makes later checks
+// meaningless. Each joined error satisfies errors.Is(err, ErrInvalidTask) and
+// errors.Is(err, ErrMissing*) for the specific reason that fired.
+func ValidateAddOptionsAll(opts AddOptions) error {
+	if err := ValidateBody(opts.Body); err != nil {
+		return err
+	}
+	if !isGeneratedCandidate(opts.Source, opts.Tags) {
+		return nil
+	}
+	reasons := generatedCandidateChecks(opts)
+	if len(reasons) == 0 {
+		return nil
+	}
+	wrapped := make([]error, len(reasons))
+	for i, reason := range reasons {
+		wrapped[i] = fmt.Errorf("%w: %w", ErrInvalidTask, reason)
+	}
+	return errors.Join(wrapped...)
+}
+
+// generatedCandidateChecks runs every generated-candidate validation check in
+// order and returns the underlying reason errors. Callers wrap each in
+// ErrInvalidTask. Ordering matches the historical ValidateAddOptions sequence.
+func generatedCandidateChecks(opts AddOptions) []error {
+	var failures []error
+	if !discoveryPrefixRE.MatchString(strings.TrimSpace(opts.Body)) {
+		failures = append(failures, ErrMissingDiscoveryPrefix)
+	}
+	if !containsFold(opts.Body, "verify") && !containsFold(opts.Body, "verification") {
+		failures = append(failures, ErrMissingVerify)
+	}
+	if !containsFold(opts.Body, "evidence:") {
+		failures = append(failures, ErrMissingEvidence)
+	}
+	if !containsFold(opts.Body, "scope:") {
+		failures = append(failures, ErrMissingScope)
+	}
+	if phrase := firstGeneratedChurnPhrase(opts.Body); phrase != "" {
+		failures = append(failures, &ChurnPhraseError{Phrase: phrase})
+	}
+	if opts.CWD == "" && !hasAbsolutePath(opts.Body) {
+		failures = append(failures, ErrMissingCwd)
+	}
+	return failures
 }
 
 // ValidateImportTask checks an import task before it can be persisted.

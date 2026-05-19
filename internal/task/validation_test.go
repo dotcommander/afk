@@ -249,3 +249,58 @@ func TestValidateAddOptionsChurnPhraseError(t *testing.T) {
 		})
 	}
 }
+
+func TestValidateAddOptionsAllReturnsNilForValidGeneratedBody(t *testing.T) {
+	t.Parallel()
+
+	err := task.ValidateAddOptionsAll(task.AddOptions{
+		Body:   "[discovery:repo:file] Evidence: /tmp/repo/file.go:1. Scope: /tmp/repo/file.go. Fix /tmp/repo/file.go. Verify with go test ./...",
+		Source: "task-discovery",
+		CWD:    "/tmp/repo",
+	})
+	require.NoError(t, err)
+}
+
+func TestValidateAddOptionsAllReturnsNilForNonGeneratedBody(t *testing.T) {
+	t.Parallel()
+
+	err := task.ValidateAddOptionsAll(task.AddOptions{
+		Body: "just a normal task body",
+	})
+	require.NoError(t, err)
+}
+
+func TestValidateAddOptionsAllJoinsEveryFailure(t *testing.T) {
+	t.Parallel()
+
+	err := task.ValidateAddOptionsAll(task.AddOptions{
+		Body:   "Scope: /tmp/repo/file.go. Fix /tmp/repo/file.go.",
+		Source: "task-discovery",
+		CWD:    "/tmp/repo",
+	})
+	require.Error(t, err)
+	require.True(t, errors.Is(err, task.ErrInvalidTask))
+	require.True(t, errors.Is(err, task.ErrMissingDiscoveryPrefix))
+	require.True(t, errors.Is(err, task.ErrMissingVerify))
+	require.True(t, errors.Is(err, task.ErrMissingEvidence))
+	require.False(t, errors.Is(err, task.ErrMissingScope))
+	require.False(t, errors.Is(err, task.ErrMissingCwd))
+
+	var joined interface{ Unwrap() []error }
+	require.True(t, errors.As(err, &joined))
+	require.Len(t, joined.Unwrap(), 3)
+}
+
+func TestValidateAddOptionsAllShortCircuitsOnInvalidBody(t *testing.T) {
+	t.Parallel()
+
+	err := task.ValidateAddOptionsAll(task.AddOptions{
+		Body:   "",
+		Source: "task-discovery",
+	})
+	require.Error(t, err)
+	require.True(t, errors.Is(err, task.ErrInvalidTask))
+
+	var joined interface{ Unwrap() []error }
+	require.False(t, errors.As(err, &joined))
+}

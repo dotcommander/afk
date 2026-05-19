@@ -710,3 +710,89 @@ func TestAddCommandJSONFlag(t *testing.T) {
 	require.NotContains(t, plain, "}")
 	require.NotEqual(t, idVal, plain, "second add should yield distinct id")
 }
+
+func TestAddDiagnoseReportsAllFailures(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	queuePath := filepath.Join(dir, "tasks.sqlite")
+	stdout, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	d := testDepsWithWriters(stdout, stderr)
+	root := NewRoot(d, "test")
+	root.SetArgs([]string{
+		"--queue", queuePath,
+		"add", "--diagnose",
+		"--source", "task-discovery",
+		"--cwd", dir,
+		"Scope: /tmp/repo/file.go. Fix /tmp/repo/file.go.",
+	})
+
+	err := root.Execute()
+	require.Error(t, err)
+	require.True(t, errors.Is(err, task.ErrInvalidTask))
+
+	out := stderr.String()
+	require.Contains(t, out, "must start with [discovery:")
+	require.Contains(t, out, "verification command")
+	require.Contains(t, out, "must include evidence")
+	require.NoFileExists(t, filepath.Join(dir, "rejected.jsonl"), "diagnose must not write rejection sidecar")
+}
+
+func TestAddDiagnoseAcceptsValidGeneratedBody(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	queuePath := filepath.Join(dir, "tasks.sqlite")
+	stdout, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	d := testDepsWithWriters(stdout, stderr)
+	root := NewRoot(d, "test")
+	root.SetArgs([]string{
+		"--queue", queuePath,
+		"add", "--diagnose",
+		"--source", "task-discovery",
+		"--cwd", dir,
+		"[discovery:afk:diag] Evidence: /tmp/repo/file.go:1. Scope: /tmp/repo/file.go. Fix the focused issue. Verify with go test ./...",
+	})
+
+	require.NoError(t, root.Execute(), "stderr: %s", stderr.String())
+	require.Contains(t, stdout.String(), "task validates")
+	require.NoFileExists(t, filepath.Join(dir, "rejected.jsonl"), "diagnose must not write rejection sidecar on success")
+}
+
+func TestAddDiagnoseDoesNotInsertRow(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	queuePath := filepath.Join(dir, "tasks.sqlite")
+	stdout, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	d := testDepsWithWriters(stdout, stderr)
+	runCmd := func(args ...string) string {
+		t.Helper()
+		stdout.Reset()
+		stderr.Reset()
+		root := NewRoot(d, "test")
+		root.SetArgs(append([]string{"--queue", queuePath}, args...))
+		require.NoError(t, root.Execute(), "stderr: %s", stderr.String())
+		return stdout.String()
+	}
+
+	id := strings.TrimSpace(runCmd("add", "--no-cwd", "seed task"))
+	require.NotEmpty(t, id)
+	before := runCmd("count")
+
+	stdout.Reset()
+	stderr.Reset()
+	root := NewRoot(d, "test")
+	root.SetArgs([]string{
+		"--queue", queuePath,
+		"add", "--diagnose",
+		"--source", "task-discovery",
+		"--cwd", dir,
+		"[discovery:afk:diag] Evidence: /tmp/repo/file.go:1. Scope: /tmp/repo/file.go. Fix the focused issue. Verify with go test ./...",
+	})
+	require.NoError(t, root.Execute(), "stderr: %s", stderr.String())
+
+	after := runCmd("count")
+	require.Equal(t, before, after, "diagnose must not change task counts")
+	require.NoFileExists(t, filepath.Join(dir, "rejected.jsonl"), "diagnose must not write rejection sidecar")
+}
