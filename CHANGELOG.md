@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.1.2 (2026-05-19)
+
+### Features
+
+- Add `afk add --diagnose` to run all generated-task validation checks without mutating the queue.
+
+### Other
+
+- Share fail-fast and diagnose validation checks so generated-task rules cannot drift.
+
 ## v0.1.1 (2026-05-19)
 
 ### Fixes
