@@ -114,7 +114,9 @@ func TestDiscoverCommandPrintsStubWithoutCreatingQueue(t *testing.T) {
 
 	require.NoError(t, root.Execute(), "stderr: %s", stderr.String())
 	require.Contains(t, stdout.String(), "afk discover is a workflow stub")
-	require.Contains(t, stdout.String(), "docs/task-discovery.md")
+	require.Contains(t, stdout.String(), "Mine concrete AFK-ready candidate tasks")
+	require.Contains(t, stdout.String(), "afk add --dry-run --source task-discovery --tag discovery")
+	require.NotContains(t, stdout.String(), "docs/task-discovery.md")
 	require.NoFileExists(t, queuePath)
 }
 

@@ -23,7 +23,7 @@ func newDiscoverCmd(d *Deps) *cobra.Command {
 
 const discoverStubText = `afk discover is a workflow stub.
 
-Use docs/task-discovery.md to mine concrete AFK-ready candidate tasks.
+Mine concrete AFK-ready candidate tasks from the target repo without mutating the queue.
 
 Start with:
   git status --porcelain=v2
@@ -33,5 +33,13 @@ Start with:
   afk ls --status failed --json
   afk ls --status working --json
 
+Accept only candidates with:
+  - current evidence from files, command output, tests, or docs/source mismatch
+  - atomic scope that a worker can complete independently
+  - exact verification command
+  - low churn risk and no broad cleanup/refactor wording
+  - no duplicate pending or working task for the same behavior
+
 Candidate bodies should start with [discovery:<repo>:<topic>] and include Evidence:, Scope:, and Verify with.
+Use afk add --dry-run --source task-discovery --tag discovery before enqueueing generated candidates.
 `
