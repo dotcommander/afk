@@ -92,6 +92,62 @@ func TestServiceFilteringEditingAndCollisionIDs(t *testing.T) {
 	require.Empty(t, done)
 }
 
+func TestServiceRetriesDuplicateIDOnAdd(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	st := &duplicateOnFirstAddStore{}
+	svc := app.NewService(st, func() time.Time { return fixed })
+
+	id, err := svc.Add(ctx, "retry duplicate id")
+	require.NoError(t, err)
+	require.Equal(t, "1735787045-1", id)
+	require.Equal(t, 2, st.addCalls)
+}
+
+type duplicateOnFirstAddStore struct {
+	store.Store
+	tasks    []task.Task
+	addCalls int
+}
+
+func (s *duplicateOnFirstAddStore) List(context.Context) ([]task.Task, error) {
+	return append([]task.Task(nil), s.tasks...), nil
+}
+
+func (s *duplicateOnFirstAddStore) Add(_ context.Context, t task.Task) error {
+	s.addCalls++
+	if s.addCalls == 1 {
+		s.tasks = append(s.tasks, task.Task{ID: t.ID})
+		return store.ErrDuplicateTask
+	}
+	s.tasks = append(s.tasks, t)
+	return nil
+}
+
+func TestServiceRejectsInvalidTasks(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	svc := newService(t)
+
+	_, err := svc.Add(ctx, "pick my nose")
+	require.Error(t, err)
+	require.True(t, errors.Is(err, task.ErrInvalidTask), "got %v", err)
+
+	_, err = svc.AddWithOptions(ctx, task.AddOptions{
+		Body:   "Fix /tmp/repo/file.go. Verify with go test ./...",
+		Source: "task-discovery",
+		CWD:    "/tmp/repo",
+	})
+	require.Error(t, err)
+	require.True(t, errors.Is(err, task.ErrInvalidTask), "got %v", err)
+
+	id, err := svc.Add(ctx, "valid software task")
+	require.NoError(t, err)
+	require.Error(t, svc.Edit(ctx, id, "make it better"))
+}
+
 func TestServiceAddWithOptionsStoresMetadata(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -350,7 +406,6 @@ func TestServiceImportRequiresSuccessAndVerifySections(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			svc := newService(t)

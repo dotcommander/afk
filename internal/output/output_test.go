@@ -177,3 +177,54 @@ func TestWriteCountJSONEmptyTally(t *testing.T) {
 	require.Equal(t, 0, got["failed"])
 	require.Len(t, got, 4)
 }
+
+func TestWriteListJSONBoundsRowsAndBody(t *testing.T) {
+	t.Parallel()
+
+	tasks := make([]task.Task, 101)
+	for i := range tasks {
+		tasks[i] = task.Task{
+			ID:      string(rune('a' + i%26)),
+			Created: "2025-01-02T03:04:05Z",
+			Status:  task.StatusPending,
+			Body:    strings.Repeat("界", 600),
+		}
+	}
+
+	var buf bytes.Buffer
+	require.NoError(t, output.WriteList(&buf, tasks, true))
+	lines := strings.Split(strings.TrimSpace(buf.String()), "\n")
+	require.Len(t, lines, 101)
+
+	var first map[string]any
+	require.NoError(t, json.Unmarshal([]byte(lines[0]), &first))
+	require.Equal(t, true, first["body_truncated"])
+	require.Less(t, len([]rune(first["body"].(string))), 600)
+
+	var summary map[string]any
+	require.NoError(t, json.Unmarshal([]byte(lines[100]), &summary))
+	require.Equal(t, float64(1), summary["omitted"])
+}
+
+func TestWriteExplainBoundsHistoryAndMessages(t *testing.T) {
+	t.Parallel()
+
+	events := make([]task.Event, 51)
+	attempts := make([]task.Attempt, 51)
+	for i := range events {
+		events[i] = task.Event{ID: int64(i + 1), TaskID: "1", Type: task.EventFailed, At: "2025-01-02T03:04:05Z", Message: strings.Repeat("e", 1100)}
+		attempts[i] = task.Attempt{ID: int64(i + 1), TaskID: "1", Started: "2025-01-02T03:04:05Z", Status: task.StatusFailed, Error: strings.Repeat("a", 1100)}
+	}
+
+	var buf bytes.Buffer
+	require.NoError(t, output.WriteExplain(&buf, task.Task{ID: "1", Body: strings.Repeat("b", 9000)}, events, attempts, true))
+
+	var got map[string]any
+	require.NoError(t, json.Unmarshal([]byte(strings.TrimSpace(buf.String())), &got))
+	require.Equal(t, float64(1), got["events_omitted"])
+	require.Equal(t, float64(1), got["attempts_omitted"])
+	require.Len(t, got["events"], 50)
+	require.Len(t, got["attempts"], 50)
+	taskDoc := got["task"].(map[string]any)
+	require.Equal(t, true, taskDoc["body_truncated"])
+}

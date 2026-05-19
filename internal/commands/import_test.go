@@ -36,6 +36,13 @@ func runImport(t *testing.T, queuePath, input string) (string, error) {
 // listTasks returns all tasks in the queue at queuePath via a `afk ls --json`
 // round-trip so we stay fully in-process with no store construction in the test.
 // It returns the count of tasks in the store, inferred from NDJSON lines.
+func requireExitCode(t *testing.T, err error, code int) {
+	t.Helper()
+	var exitErr *ExitError
+	require.True(t, errors.As(err, &exitErr), "error must be *ExitError, got %T: %v", err, err)
+	require.Equal(t, code, exitErr.Code)
+}
+
 func countTasks(t *testing.T, queuePath string) int {
 	t.Helper()
 	stdout, stderr := &bytes.Buffer{}, &bytes.Buffer{}
@@ -129,9 +136,7 @@ func TestImport(t *testing.T) {
 		_, err := runImport(t, queuePath, `{"tasks":[]}`)
 		require.Error(t, err)
 
-		var exitErr *ExitError
-		require.True(t, errors.As(err, &exitErr), "error must be *ExitError, got %T: %v", err, err)
-		require.Equal(t, 1, exitErr.Code)
+		requireExitCode(t, err, 1)
 
 		require.Equal(t, 0, countTasks(t, queuePath), "no tasks should be written on error")
 	})
@@ -145,10 +150,23 @@ func TestImport(t *testing.T) {
 		_, err := runImport(t, queuePath, `not json{`)
 		require.Error(t, err)
 
-		var exitErr *ExitError
-		require.True(t, errors.As(err, &exitErr), "error must be *ExitError, got %T: %v", err, err)
-		require.Equal(t, 1, exitErr.Code)
+		requireExitCode(t, err, 1)
 
+		require.Equal(t, 0, countTasks(t, queuePath))
+	})
+
+	t.Run("invalid_task_exit_1", func(t *testing.T) {
+		t.Parallel()
+
+		dir := t.TempDir()
+		queuePath := filepath.Join(dir, "queue.db")
+
+		input := `{"tasks":[{"slug":"bad","body":"pick my nose\nSuccess:\ndone\nVerify:\nchecked"}]}`
+		_, err := runImport(t, queuePath, input)
+		require.Error(t, err)
+
+		requireExitCode(t, err, 1)
+		require.True(t, errors.Is(err, task.ErrInvalidTask), "got %v", err)
 		require.Equal(t, 0, countTasks(t, queuePath))
 	})
 
@@ -166,9 +184,7 @@ func TestImport(t *testing.T) {
 		_, err := runImport(t, queuePath, input)
 		require.Error(t, err)
 
-		var exitErr *ExitError
-		require.True(t, errors.As(err, &exitErr), "error must be *ExitError, got %T: %v", err, err)
-		require.Equal(t, 2, exitErr.Code)
+		requireExitCode(t, err, 2)
 
 		require.True(t, errors.Is(err, store.ErrDependencyCycle),
 			"error chain must contain store.ErrDependencyCycle; got: %v", err)
@@ -193,9 +209,7 @@ func TestImport(t *testing.T) {
 		_, err = runImport(t, queuePath, second)
 		require.Error(t, err)
 
-		var exitErr *ExitError
-		require.True(t, errors.As(err, &exitErr), "error must be *ExitError, got %T: %v", err, err)
-		require.Equal(t, 3, exitErr.Code)
+		requireExitCode(t, err, 3)
 
 		var dupErr *app.ErrDuplicateSpec
 		require.True(t, errors.As(err, &dupErr),

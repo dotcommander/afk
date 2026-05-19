@@ -3,12 +3,14 @@ package commands
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/dotcommander/afk/internal/task"
 	"github.com/stretchr/testify/require"
 )
 
@@ -160,6 +162,52 @@ func TestAddCommandCanDisableCWD(t *testing.T) {
 	var shown map[string]any
 	require.NoError(t, json.Unmarshal([]byte(strings.TrimSpace(stdout.String())), &shown))
 	require.NotContains(t, shown, "cwd")
+}
+
+func TestAddCommandRejectsInvalidTask(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	queuePath := filepath.Join(dir, "tasks.sqlite")
+	stdout, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	d := testDepsWithWriters(stdout, stderr)
+	root := NewRoot(d, "test")
+	root.SetArgs([]string{"--queue", queuePath, "add", "pick", "my", "nose"})
+
+	err := root.Execute()
+	require.Error(t, err)
+	require.True(t, errors.Is(err, task.ErrInvalidTask), "got %v", err)
+	require.Empty(t, stdout.String())
+}
+
+func TestAddDryRunValidatesWithoutAddingTask(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	queuePath := filepath.Join(dir, "tasks.sqlite")
+	stdout, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	d := testDepsWithWriters(stdout, stderr)
+	root := NewRoot(d, "test")
+	root.SetArgs([]string{
+		"--queue", queuePath,
+		"add",
+		"--dry-run",
+		"--json",
+		"--source", "task-discovery",
+		"--cwd", dir,
+		"[discovery:afk:validate] Evidence: /tmp/repo/file.go:1. Scope: /tmp/repo/file.go. Fix the focused issue. Verify with go test ./...",
+	})
+
+	require.NoError(t, root.Execute(), "stderr: %s", stderr.String())
+	var dryRun map[string]any
+	require.NoError(t, json.Unmarshal([]byte(strings.TrimSpace(stdout.String())), &dryRun))
+	require.Equal(t, true, dryRun["valid"])
+
+	stdout.Reset()
+	root = NewRoot(d, "test")
+	root.SetArgs([]string{"--queue", queuePath, "count"})
+	require.NoError(t, root.Execute(), "stderr: %s", stderr.String())
+	require.Contains(t, stdout.String(), "pending: 0")
 }
 
 func TestDependencyCommands(t *testing.T) {
@@ -471,6 +519,34 @@ func TestNextJSON(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(strings.TrimSpace(stdout.String())), &doc))
 	require.Equal(t, addedID, doc["id"])
 	require.Equal(t, "smoke task", doc["body"])
+}
+
+func TestNextAndPopJSONBoundLargeBodies(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	queuePath := filepath.Join(dir, "tasks.sqlite")
+	stdout, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	d := testDepsWithWriters(stdout, stderr)
+	run := func(args ...string) string {
+		t.Helper()
+		stdout.Reset()
+		stderr.Reset()
+		root := NewRoot(d, "test")
+		root.SetArgs(append([]string{"--queue", queuePath}, args...))
+		require.NoError(t, root.Execute(), "stderr: %s", stderr.String())
+		return stdout.String()
+	}
+
+	run("add", "--no-cwd", strings.Repeat("x", 9000))
+	for _, out := range []string{run("next", "--json"), run("pop")} {
+		var doc map[string]any
+		require.NoError(t, json.Unmarshal([]byte(strings.TrimSpace(out)), &doc))
+		body, ok := doc["body"].(string)
+		require.True(t, ok)
+		require.Equal(t, true, doc["body_truncated"])
+		require.NotContains(t, body, strings.Repeat("x", 8500))
+	}
 }
 
 func TestAddCommandJSONFlag(t *testing.T) {

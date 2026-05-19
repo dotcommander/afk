@@ -49,6 +49,46 @@ func TestSQLiteStoreAddListUpdateDelete(t *testing.T) {
 	require.Empty(t, tasks)
 }
 
+func TestSQLiteStoreConcurrentFirstOpenAndAdd(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	dir := t.TempDir()
+	paths := store.Paths{SQLitePath: filepath.Join(dir, "tasks.sqlite")}
+	const workers = 20
+	start := make(chan struct{})
+	errs := make(chan error, workers)
+	var wg sync.WaitGroup
+	for i := range workers {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			<-start
+			s, err := store.NewSQLite(ctx, paths)
+			if err != nil {
+				errs <- err
+				return
+			}
+			defer s.Close() //nolint:errcheck // test reports operation errors explicitly
+			id := fmt.Sprintf("concurrent-%02d", i)
+			errs <- s.Add(ctx, task.Task{ID: id, Status: task.StatusPending, Body: id})
+		}(i)
+	}
+	close(start)
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		require.NoError(t, err)
+	}
+
+	s, err := store.NewSQLite(ctx, paths)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, s.Close()) })
+	tasks, err := s.List(ctx)
+	require.NoError(t, err)
+	require.Len(t, tasks, workers)
+}
+
 func TestSQLiteStorePersistsMetadata(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
