@@ -8,11 +8,13 @@ afk done 1
 
 ## install
 
-Build from source and link the binary into your path:
+Build from source and copy the binary into your path:
 
 ```sh
 go build -o afk ./cmd/afk
-ln -sf "$(pwd)/afk" ~/go/bin/afk
+mkdir -p ~/go/bin
+rm -f ~/go/bin/afk
+install -m 0755 afk ~/go/bin/afk
 ```
 
 Confirm the install:

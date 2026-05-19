@@ -46,6 +46,30 @@ func TestValidateAddOptionsRequiresEvidenceForGeneratedTasks(t *testing.T) {
 	require.NoError(t, err)
 }
 
+func TestValidateAddOptionsRejectsInvalidPriority(t *testing.T) {
+	t.Parallel()
+
+	err := task.ValidateAddOptions(task.AddOptions{
+		Body:     "valid software task",
+		Priority: "hihg",
+	})
+	require.Error(t, err)
+	require.True(t, errors.Is(err, task.ErrInvalidPriority), "got %v", err)
+	require.Contains(t, err.Error(), "hihg")
+
+	for _, priority := range []string{"", "urgent", "high", "normal", "low", " HIGH "} {
+		priority := priority
+		t.Run(priority, func(t *testing.T) {
+			t.Parallel()
+			err := task.ValidateAddOptions(task.AddOptions{
+				Body:     "valid software task",
+				Priority: priority,
+			})
+			require.NoError(t, err)
+		})
+	}
+}
+
 func TestValidateAddOptionsRequiresDiscoveryPrefixAndScopeForGeneratedTasks(t *testing.T) {
 	t.Parallel()
 

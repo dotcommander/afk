@@ -28,7 +28,9 @@ For task-shaped docs see [`docs/`](docs/index.md):
 
 ```sh
 go build -o afk ./cmd/afk
-ln -sf "$(pwd)/afk" ~/go/bin/afk
+mkdir -p ~/go/bin
+rm -f ~/go/bin/afk
+install -m 0755 afk ~/go/bin/afk
 ```
 
 ## Quick Start
@@ -210,11 +212,13 @@ To focus the loop on one task:
 
 ## Task Metadata
 
-`afk add` records the current working directory by default so workers have context for relative paths and underspecified task bodies.
+`afk add` records useful repo context by default so workers have enough metadata without extra flags. It stores the current working directory, sets `source=cli`, and, when run inside a git repo, infers `resource=repo:<git-root>` plus a `repo:<directory-name>` tag.
 
 ```sh
+afk add "run local tests"
 afk add --cwd /path/to/repo "run local tests"
 afk add --no-cwd "context-free task"
+afk add --resource none "task that does not need a repo lock"
 afk add --agent codex --group release-1 "draft release notes"
 ```
 
@@ -222,14 +226,14 @@ Supported metadata flags:
 
 | Flag | Behavior |
 |---|---|
-| `--tag VALUE` | Repeatable task tag. |
-| `--priority VALUE` | Scheduler priority: `urgent`, `high`, `normal`, or `low`. Empty and unknown values schedule as normal. |
+| `--tag VALUE` | Repeatable task tag. Supplying any tag disables the inferred repo tag. |
+| `--priority VALUE` | Scheduler priority: `urgent`, `high`, `normal`, or `low`. Unknown values are rejected. |
 | `--cwd PATH` | Working-directory context; defaults to the invocation directory. |
 | `--no-cwd` | Do not record a working directory. |
-| `--source VALUE` | Origin such as `cli`, `roadmap.md`, `todo-scan`, or `go-test`. |
+| `--source VALUE` | Origin; defaults to `cli`. Examples: `roadmap.md`, `todo-scan`, or `go-test`. |
 | `--agent VALUE` | Preferred worker profile metadata. |
 | `--group VALUE` | Grouping key for related tasks. |
-| `--resource VALUE` | Resource key such as a repo or path lock target. |
+| `--resource VALUE` | Resource key such as a repo or path lock target. Defaults to `repo:<git-root>` inside a git repo; use `none` to disable. |
 | `--blocked-by ID|none` | Task dependency. |
 | `--after ID` | Alias for `--blocked-by ID`. |
 

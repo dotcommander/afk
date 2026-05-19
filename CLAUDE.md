@@ -16,7 +16,9 @@ Module path: `github.com/dotcommander/afk`. Go 1.26.
 
 ```sh
 go build -o afk ./cmd/afk
-ln -sf "$(pwd)/afk" ~/go/bin/afk
+mkdir -p ~/go/bin
+rm -f ~/go/bin/afk
+install -m 0755 afk ~/go/bin/afk
 ```
 
 Verification (per workspace rules — pipe long output through `tail`):

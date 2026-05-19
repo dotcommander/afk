@@ -185,6 +185,71 @@ func TestAddCommandRecordsMetadataAndDefaultCWD(t *testing.T) {
 	require.Equal(t, []any{"repo:afk", "type:test"}, shown["tags"])
 }
 
+func TestAddCommandInfersRepoDefaults(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	repo := filepath.Join(dir, "project")
+	require.NoError(t, os.MkdirAll(filepath.Join(repo, ".git"), 0o755))
+	queuePath := filepath.Join(dir, "tasks.sqlite")
+	stdout, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	d := testDepsWithWriters(stdout, stderr)
+	root := NewRoot(d, "test")
+	root.SetArgs([]string{"--queue", queuePath, "add", "--cwd", repo, "repo defaults"})
+
+	require.NoError(t, root.Execute(), "stderr: %s", stderr.String())
+	id := strings.TrimSpace(stdout.String())
+	require.NotEmpty(t, id)
+	require.Empty(t, stderr.String(), "non-tty stderr must stay script-friendly")
+
+	stdout.Reset()
+	root = NewRoot(d, "test")
+	root.SetArgs([]string{"--queue", queuePath, "show", id, "--json"})
+	require.NoError(t, root.Execute(), "stderr: %s", stderr.String())
+
+	var shown map[string]any
+	require.NoError(t, json.Unmarshal([]byte(strings.TrimSpace(stdout.String())), &shown))
+	require.Equal(t, "cli", shown["source"])
+	require.Equal(t, repo, shown["cwd"])
+	require.Equal(t, "repo:"+repo, shown["resource_key"])
+	require.Equal(t, []any{"repo:project"}, shown["tags"])
+}
+
+func TestAddCommandExplicitMetadataOverridesRepoDefaults(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	repo := filepath.Join(dir, "project")
+	require.NoError(t, os.MkdirAll(filepath.Join(repo, ".git"), 0o755))
+	queuePath := filepath.Join(dir, "tasks.sqlite")
+	stdout, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	d := testDepsWithWriters(stdout, stderr)
+	root := NewRoot(d, "test")
+	root.SetArgs([]string{
+		"--queue", queuePath,
+		"add",
+		"--cwd", repo,
+		"--source", "roadmap.md",
+		"--tag", "type:docs",
+		"--resource", "none",
+		"explicit defaults",
+	})
+
+	require.NoError(t, root.Execute(), "stderr: %s", stderr.String())
+	id := strings.TrimSpace(stdout.String())
+
+	stdout.Reset()
+	root = NewRoot(d, "test")
+	root.SetArgs([]string{"--queue", queuePath, "show", id, "--json"})
+	require.NoError(t, root.Execute(), "stderr: %s", stderr.String())
+
+	var shown map[string]any
+	require.NoError(t, json.Unmarshal([]byte(strings.TrimSpace(stdout.String())), &shown))
+	require.Equal(t, "roadmap.md", shown["source"])
+	require.NotContains(t, shown, "resource_key")
+	require.Equal(t, []any{"type:docs"}, shown["tags"])
+}
+
 func TestAddCommandCanDisableCWD(t *testing.T) {
 	t.Parallel()
 
@@ -205,6 +270,8 @@ func TestAddCommandCanDisableCWD(t *testing.T) {
 	var shown map[string]any
 	require.NoError(t, json.Unmarshal([]byte(strings.TrimSpace(stdout.String())), &shown))
 	require.NotContains(t, shown, "cwd")
+	require.Equal(t, "cli", shown["source"])
+	require.NotContains(t, shown, "resource_key")
 }
 
 func TestAddCommandRejectsInvalidTask(t *testing.T) {
@@ -220,6 +287,23 @@ func TestAddCommandRejectsInvalidTask(t *testing.T) {
 	err := root.Execute()
 	require.Error(t, err)
 	require.True(t, errors.Is(err, task.ErrInvalidTask), "got %v", err)
+	require.Empty(t, stdout.String())
+}
+
+func TestAddCommandRejectsInvalidPriority(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	queuePath := filepath.Join(dir, "tasks.sqlite")
+	stdout, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	d := testDepsWithWriters(stdout, stderr)
+	root := NewRoot(d, "test")
+	root.SetArgs([]string{"--queue", queuePath, "add", "--no-cwd", "--priority", "hihg", "priority typo"})
+
+	err := root.Execute()
+	require.Error(t, err)
+	require.True(t, errors.Is(err, task.ErrInvalidPriority), "got %v", err)
+	require.Contains(t, err.Error(), "urgent, high, normal, or low")
 	require.Empty(t, stdout.String())
 }
 
@@ -736,6 +820,31 @@ func TestAddDiagnoseReportsAllFailures(t *testing.T) {
 	require.Contains(t, out, "verification command")
 	require.Contains(t, out, "must include evidence")
 	require.NoFileExists(t, filepath.Join(dir, "rejected.jsonl"), "diagnose must not write rejection sidecar")
+}
+
+func TestAddDiscoveryFailureSuggestsDiagnose(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	queuePath := filepath.Join(dir, "tasks.sqlite")
+	stdout, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	d := testDepsWithWriters(stdout, stderr)
+	root := NewRoot(d, "test")
+	root.SetArgs([]string{
+		"--queue", queuePath,
+		"add",
+		"--source", "task-discovery",
+		"--cwd", dir,
+		"Fix the focused issue.",
+	})
+
+	err := root.Execute()
+	require.Error(t, err)
+	require.True(t, errors.Is(err, task.ErrInvalidTask))
+	require.Contains(t, err.Error(), "--diagnose")
+	require.Contains(t, err.Error(), "remove --source task-discovery/--tag discovery")
+	require.Empty(t, stdout.String())
+	require.Empty(t, stderr.String())
 }
 
 func TestAddDiagnoseAcceptsValidGeneratedBody(t *testing.T) {

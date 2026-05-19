@@ -10,4 +10,5 @@ build:
 
 install: build
     mkdir -p "$HOME/go/bin"
-    ln -sf "$(pwd)/{{binary}}" "$HOME/go/bin/{{binary}}"
+    rm -f "$HOME/go/bin/{{binary}}"
+    install -m 0755 "{{binary}}" "$HOME/go/bin/{{binary}}"

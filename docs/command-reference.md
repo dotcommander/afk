@@ -80,14 +80,14 @@ See [workers.md](workers.md).
 
 | Flag | Behavior |
 |---|---|
-| `--tag VALUE` | Repeatable tag. |
-| `--priority VALUE` | Scheduler priority: `urgent`, `high`, `normal`, or `low`. Empty and unknown values schedule as normal. |
+| `--tag VALUE` | Repeatable tag. Supplying any tag disables the inferred repo tag. |
+| `--priority VALUE` | Scheduler priority: `urgent`, `high`, `normal`, or `low`. Unknown values are rejected. |
 | `--cwd PATH` | Working-directory context. Defaults to the current directory. |
-| `--no-cwd` | Do not record a working directory. |
-| `--source VALUE` | Origin such as `cli`, `roadmap.md`, `todo-scan`. |
+| `--no-cwd` | Do not record a working directory or infer repo context. |
+| `--source VALUE` | Origin. Defaults to `cli`; examples: `roadmap.md`, `todo-scan`. |
 | `--agent VALUE` | Preferred worker profile metadata. |
 | `--group VALUE` | Grouping key for related tasks. |
-| `--resource VALUE` | Resource key for lock arbitration. |
+| `--resource VALUE` | Resource key for lock arbitration. Defaults to `repo:<git-root>` inside a git repo; use `none` to disable. |
 | `--blocked-by ID\|none` | Task dependency. |
 | `--after ID` | Alias for `--blocked-by`. |
 | `--dry-run` | Validate without mutating the queue. |

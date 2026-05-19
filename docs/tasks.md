@@ -15,6 +15,13 @@ afk add "fix the failing queue test"
 
 `afk add` appends a new task, sets its status to `pending`, and prints the new task id. The body may span multiple words; quote it to prevent shell splitting.
 
+For normal repo work, the plain command carries the useful metadata by default:
+
+- `cwd` is the current directory.
+- `source` is `cli`.
+- inside a git repository, `resource` is `repo:<git-root>` so workers do not concurrently claim work against the same repo.
+- inside a git repository, a `repo:<directory-name>` tag is added when no tags are supplied.
+
 Validate a generated task without mutating the queue:
 
 ```sh
@@ -42,19 +49,19 @@ afk add \
 
 | Flag | Behavior |
 |---|---|
-| `--tag VALUE` | Repeatable tag. Use for namespaced labels like `repo:afk`. |
-| `--priority VALUE` | Scheduler priority. Recognized values are `urgent`, `high`, `normal`, and `low`; empty and unknown values schedule as normal. |
-| `--source VALUE` | Origin of the task — `cli`, `roadmap.md`, `todo-scan`, `go-test`. |
+| `--tag VALUE` | Repeatable tag. Use for namespaced labels like `repo:afk`. Supplying any tag disables the inferred repo tag. |
+| `--priority VALUE` | Scheduler priority. Recognized values are `urgent`, `high`, `normal`, and `low`; unknown values are rejected. |
+| `--source VALUE` | Origin of the task — defaults to `cli`; examples: `roadmap.md`, `todo-scan`, `go-test`. |
 | `--cwd PATH` | Working-directory context. Defaults to your current directory. |
 | `--no-cwd` | Skip the cwd record for a context-free task. |
 | `--agent VALUE` | Preferred worker profile metadata. |
 | `--group VALUE` | Grouping key for related tasks. |
-| `--resource VALUE` | Resource lock target (see [scheduling.md](scheduling.md)). |
+| `--resource VALUE` | Resource lock target. Defaults to `repo:<git-root>` inside a git repo; use `--resource none` to disable. |
 | `--blocked-by ID\|none` | Task dependency (see [scheduling.md](scheduling.md)). |
 | `--after ID` | Alias for `--blocked-by`. |
 | `--dry-run` | Validate the task body and metadata without adding a task. |
 
-`afk add` records the current working directory by default. Pass `--no-cwd` when the task should not carry that context.
+Explicit metadata flags override inferred defaults. Pass `--no-cwd` when the task should not carry working-directory or repo-derived context.
 
 Priority applies only among tasks that are already ready. It does not bypass
 dependencies, manual blocks, resource locks, or non-pending status. `afk ls`

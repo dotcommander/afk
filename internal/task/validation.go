@@ -19,6 +19,7 @@ var (
 	ErrMissingEvidence        = errors.New("generated task must include evidence")
 	ErrMissingScope           = errors.New("generated task must include scope")
 	ErrMissingCwd             = errors.New("generated task must include cwd metadata or an absolute path")
+	ErrInvalidPriority        = errors.New("priority must be urgent, high, normal, or low")
 )
 
 // ChurnPhraseError reports that a generated task body contains a phrase known
@@ -48,6 +49,9 @@ func ValidateAddOptions(opts AddOptions) error {
 	if err := ValidateBody(opts.Body); err != nil {
 		return err
 	}
+	if err := ValidatePriority(opts.Priority); err != nil {
+		return err
+	}
 	if !isGeneratedCandidate(opts.Source, opts.Tags) {
 		return nil
 	}
@@ -67,6 +71,9 @@ func ValidateAddOptionsAll(opts AddOptions) error {
 	if err := ValidateBody(opts.Body); err != nil {
 		return err
 	}
+	if err := ValidatePriority(opts.Priority); err != nil {
+		return err
+	}
 	if !isGeneratedCandidate(opts.Source, opts.Tags) {
 		return nil
 	}
@@ -79,6 +86,17 @@ func ValidateAddOptionsAll(opts AddOptions) error {
 		wrapped[i] = fmt.Errorf("%w: %w", ErrInvalidTask, reason)
 	}
 	return errors.Join(wrapped...)
+}
+
+// ValidatePriority rejects misspelled priority values instead of letting the
+// scheduler silently treat them as normal priority.
+func ValidatePriority(priority string) error {
+	switch strings.ToLower(strings.TrimSpace(priority)) {
+	case "", "urgent", "high", "normal", "low":
+		return nil
+	default:
+		return fmt.Errorf("%w: %q", ErrInvalidPriority, priority)
+	}
 }
 
 // generatedCandidateChecks runs every generated-candidate validation check in
