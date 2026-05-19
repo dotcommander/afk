@@ -223,7 +223,7 @@ Supported metadata flags:
 | Flag | Behavior |
 |---|---|
 | `--tag VALUE` | Repeatable task tag. |
-| `--priority VALUE` | Scheduling and reporting priority metadata. |
+| `--priority VALUE` | Scheduler priority: `urgent`, `high`, `normal`, or `low`. Empty and unknown values schedule as normal. |
 | `--cwd PATH` | Working-directory context; defaults to the invocation directory. |
 | `--no-cwd` | Do not record a working directory. |
 | `--source VALUE` | Origin such as `cli`, `roadmap.md`, `todo-scan`, or `go-test`. |
@@ -232,6 +232,11 @@ Supported metadata flags:
 | `--resource VALUE` | Resource key such as a repo or path lock target. |
 | `--blocked-by ID|none` | Task dependency. |
 | `--after ID` | Alias for `--blocked-by ID`. |
+
+Priority applies only among ready tasks. It does not bypass dependencies,
+manual blocks, resource locks, or non-pending status. Use `afk top <id>` to
+promote a pending task ahead of peers with the same effective priority without
+changing its priority metadata.
 
 ## Configuration
 
@@ -261,6 +266,7 @@ For migration compatibility, a path ending in `.jsonl` is treated as the legacy 
 | `afk deps ls <id> [--json]` | List dependencies. |
 | `afk block <id> <reason>` | Manually block a pending task from scheduling. |
 | `afk unblock <id>` | Remove a manual block. |
+| `afk top <id>` | Promote a pending task ahead of peers with the same effective priority. |
 | `afk pop [--lease DURATION] [--worker ID]` | Atomically claim the next ready task and print it as JSON. |
 | `afk run --exec TEMPLATE [--limit N]` | Claim ready tasks and run a shell command template. |
 | `afk heartbeat <id> --worker ID [--lease DURATION]` | Extend a worker-owned task lease. |
@@ -275,6 +281,7 @@ For migration compatibility, a path ending in `.jsonl` is treated as the legacy 
 | `afk prompt [--output PATH]` | Generate loop instruction Markdown. |
 | `afk prompt --task <id>` | Generate a focused prompt for one queued task. |
 | `afk doctor` | Check queue health and installation basics. |
+| `afk discover` | Print the task-discovery workflow stub without opening or creating the queue. |
 
 ## Architecture
 

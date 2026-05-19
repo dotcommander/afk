@@ -70,6 +70,7 @@ func NewRoot(d *Deps, version string) *cobra.Command {
 		newBlockCmd(d),
 		newUnblockCmd(d),
 		newResetCmd(d),
+		newTopCmd(d),
 		newRmCmd(d),
 		newPruneCmd(d),
 		newPopCmd(d),
@@ -78,6 +79,7 @@ func NewRoot(d *Deps, version string) *cobra.Command {
 		newRequeueStaleCmd(d),
 		newHeartbeatCmd(d),
 		newDoctorCmd(d),
+		newDiscoverCmd(d),
 		newPromptCmd(d),
 	)
 

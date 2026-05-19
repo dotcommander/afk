@@ -18,13 +18,18 @@ var fixed = time.Date(2025, 1, 2, 3, 4, 5, 0, time.UTC)
 
 func newService(t *testing.T) *app.Service {
 	t.Helper()
+	return newServiceWithNow(t, func() time.Time { return fixed })
+}
+
+func newServiceWithNow(t *testing.T, now func() time.Time) *app.Service {
+	t.Helper()
 	s, err := store.NewSQLite(context.Background(), store.Paths{
 		SQLitePath: filepath.Join(t.TempDir(), "tasks.sqlite"),
 		JSONLPath:  filepath.Join(t.TempDir(), "tasks.jsonl"),
 	})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, s.Close()) })
-	return app.NewService(s, func() time.Time { return fixed })
+	return app.NewService(s, now)
 }
 
 func TestServiceLifecycle(t *testing.T) {
@@ -299,6 +304,27 @@ func TestServiceWhyReportsResourceLock(t *testing.T) {
 	require.Equal(t, claimed.ID, why.Reasons[0].Detail)
 }
 
+func TestServiceWhyIgnoresExpiredResourceLease(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	now := fixed
+	svc := newServiceWithNow(t, func() time.Time { return now })
+
+	_, err := svc.AddWithOptions(ctx, task.AddOptions{Body: "first", ResourceKey: "repo:x"})
+	require.NoError(t, err)
+	second, err := svc.AddWithOptions(ctx, task.AddOptions{Body: "second", ResourceKey: "repo:x"})
+	require.NoError(t, err)
+	claimed, err := svc.PopWithLease(ctx, time.Second)
+	require.NoError(t, err)
+	require.NotNil(t, claimed)
+
+	now = now.Add(2 * time.Second)
+	why, err := svc.Why(ctx, second)
+	require.NoError(t, err)
+	require.True(t, why.Ready)
+	require.Empty(t, why.Reasons)
+}
+
 func TestServiceNextAndPopEmptyQueue(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -334,6 +360,52 @@ func TestServiceNextAgreesWithPop(t *testing.T) {
 	require.Equal(t, next.ID, popped.ID)
 }
 
+func TestServiceNextAndPopAgreeWithPriorityOrder(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	svc := newService(t)
+
+	_, err := svc.Add(ctx, "normal")
+	require.NoError(t, err)
+	urgent, err := svc.AddWithOptions(ctx, task.AddOptions{Body: "urgent", Priority: "urgent"})
+	require.NoError(t, err)
+
+	next, err := svc.Next(ctx)
+	require.NoError(t, err)
+	require.NotNil(t, next)
+	require.Equal(t, urgent, next.ID)
+
+	popped, err := svc.Pop(ctx)
+	require.NoError(t, err)
+	require.NotNil(t, popped)
+	require.Equal(t, urgent, popped.ID)
+}
+
+func TestServicePromote(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	svc := newService(t)
+
+	first, err := svc.Add(ctx, "first")
+	require.NoError(t, err)
+	second, err := svc.Add(ctx, "second")
+	require.NoError(t, err)
+
+	require.NoError(t, svc.Promote(ctx, second))
+	next, err := svc.Next(ctx)
+	require.NoError(t, err)
+	require.NotNil(t, next)
+	require.Equal(t, second, next.ID)
+
+	require.NoError(t, svc.Done(ctx, second))
+	require.ErrorIs(t, svc.Promote(ctx, second), store.ErrInvalidState)
+	require.ErrorIs(t, svc.Promote(ctx, "missing"), store.ErrNotFound)
+	next, err = svc.Next(ctx)
+	require.NoError(t, err)
+	require.NotNil(t, next)
+	require.Equal(t, first, next.ID)
+}
+
 func TestServicePopRecordsWorker(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -350,6 +422,49 @@ func TestServicePopRecordsWorker(t *testing.T) {
 	require.Len(t, data.Attempts, 1)
 	require.Equal(t, "worker-1", data.Attempts[0].WorkerID)
 	require.Equal(t, "codex", data.Attempts[0].Agent)
+}
+
+func TestServiceRetryRequeueStaleAndPruneByTag(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	now := fixed
+	svc := newServiceWithNow(t, func() time.Time { return now })
+
+	failed, err := svc.AddWithOptions(ctx, task.AddOptions{Body: "failed", Tags: []string{"spec:drop"}})
+	require.NoError(t, err)
+	require.NoError(t, svc.Fail(ctx, failed, "boom"))
+	require.NoError(t, svc.Retry(ctx, failed))
+	got, err := svc.Show(ctx, failed)
+	require.NoError(t, err)
+	require.Equal(t, task.StatusPending, got.Status)
+
+	stale, err := svc.Add(ctx, "stale")
+	require.NoError(t, err)
+	claimed, err := svc.PopWithLease(ctx, time.Nanosecond)
+	require.NoError(t, err)
+	require.NotNil(t, claimed)
+	require.Equal(t, failed, claimed.ID)
+	now = now.Add(time.Second)
+	requeued, err := svc.RequeueStale(ctx, time.Hour)
+	require.NoError(t, err)
+	require.Len(t, requeued, 1)
+	require.Equal(t, failed, requeued[0].ID)
+
+	claimed, err = svc.Pop(ctx)
+	require.NoError(t, err)
+	require.NotNil(t, claimed)
+	require.Equal(t, failed, claimed.ID)
+	require.NoError(t, svc.Done(ctx, failed))
+	claimed, err = svc.Pop(ctx)
+	require.NoError(t, err)
+	require.NotNil(t, claimed)
+	require.Equal(t, stale, claimed.ID)
+
+	n, err := svc.PruneByTag(ctx, "spec:drop")
+	require.NoError(t, err)
+	require.Equal(t, 1, n)
+	_, err = svc.Show(ctx, failed)
+	require.ErrorIs(t, err, app.ErrNotFound)
 }
 
 func TestServiceHeartbeat(t *testing.T) {

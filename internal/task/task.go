@@ -54,6 +54,7 @@ type AddOptions struct {
 // EventType is a durable lifecycle event name.
 type EventType string
 
+// Event type values recorded in durable task history.
 const (
 	EventAdded             EventType = "added"
 	EventClaimed           EventType = "claimed"
@@ -68,6 +69,7 @@ const (
 	EventHeartbeat         EventType = "heartbeat"
 	EventBlocked           EventType = "blocked"
 	EventUnblocked         EventType = "unblocked"
+	EventPromoted          EventType = "promoted"
 	EventDependencyAdded   EventType = "dependency_added"
 	EventDependencyRemoved EventType = "dependency_removed"
 )

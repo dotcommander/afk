@@ -157,6 +157,7 @@ func runTask(ctx context.Context, service *app.Service, t task.Task, opts Option
 		return fmt.Errorf("runner: write start: %w", err)
 	}
 
+	//nolint:gosec // afk intentionally executes the user-provided --exec shell template.
 	cmd := exec.CommandContext(ctx, "/bin/sh", "-c", commandText)
 	if t.CWD != "" {
 		cmd.Dir = t.CWD
@@ -177,7 +178,8 @@ func runTask(ctx context.Context, service *app.Service, t task.Task, opts Option
 		return err
 	}
 
-	current, showErr := service.Show(ctx, t.ID)
+	cleanupCtx := context.WithoutCancel(ctx)
+	current, showErr := service.Show(cleanupCtx, t.ID)
 	if showErr != nil {
 		return showErr
 	}
@@ -186,7 +188,7 @@ func runTask(ctx context.Context, service *app.Service, t task.Task, opts Option
 		if runErr != nil {
 			reason = "runner command failed: " + runErr.Error()
 		}
-		if err := service.Fail(ctx, t.ID, reason); err != nil {
+		if err := service.Fail(cleanupCtx, t.ID, reason); err != nil {
 			return err
 		}
 	}

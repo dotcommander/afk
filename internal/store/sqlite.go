@@ -15,12 +15,19 @@ import (
 
 	"github.com/dotcommander/afk/internal/queue"
 	"github.com/dotcommander/afk/internal/task"
-	_ "modernc.org/sqlite"
+	_ "modernc.org/sqlite" // register the sqlite database/sql driver
 )
 
 const importedJSONLKey = "imported_jsonl"
 
 const sqliteBusyRetryDelay = 25 * time.Millisecond
+const schedulerOrderSQL = `
+CASE lower(trim(priority))
+	WHEN 'urgent' THEN 0
+	WHEN 'high' THEN 1
+	WHEN 'low' THEN 3
+	ELSE 2
+END, ordinal, rowid`
 
 // SQLiteStore persists tasks in SQLite. JSONL is used only as an import source.
 type SQLiteStore struct {
@@ -149,7 +156,7 @@ AND (
 		)
 	)
 )
-ORDER BY ordinal, rowid`, string(task.StatusPending), string(task.StatusDone), string(task.StatusWorking), now.UTC().Format(time.RFC3339))
+ORDER BY `+schedulerOrderSQL, string(task.StatusPending), string(task.StatusDone), string(task.StatusWorking), now.UTC().Format(time.RFC3339))
 	if err != nil {
 		return nil, fmt.Errorf("store: ready: %w", err)
 	}
@@ -470,6 +477,34 @@ VALUES (?, ?, ?, ?)`, id, string(task.EventPruned), nowString(), string(status))
 	return nil
 }
 
+// Promote moves a pending task ahead of other tasks with the same effective priority.
+func (s *SQLiteStore) Promote(ctx context.Context, id string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("store: begin promote: %w", err)
+	}
+	defer rollback(tx)
+
+	t, err := getTask(ctx, tx, id)
+	if err != nil {
+		return err
+	}
+	if t.Status != task.StatusPending {
+		return ErrInvalidState
+	}
+	ordinal, err := minOrdinal(ctx, tx)
+	if err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE tasks SET ordinal = ? WHERE id = ?`, ordinal-1, id); err != nil {
+		return fmt.Errorf("store: promote task %s: %w", id, err)
+	}
+	if err := insertEvent(ctx, tx, id, task.EventPromoted, nowString(), ""); err != nil {
+		return err
+	}
+	return commit(tx)
+}
+
 // PruneByTag deletes all tasks whose tags slice contains tag.
 // Returns count deleted; returns an error if tag is empty.
 func (s *SQLiteStore) PruneByTag(ctx context.Context, tag string) (int, error) {
@@ -575,7 +610,7 @@ WHERE id = (
 			)
 		)
 	)
-	ORDER BY ordinal, rowid
+	ORDER BY `+schedulerOrderSQL+`
 	LIMIT 1
 )
 RETURNING id, created, status, body, started, lease_expires, finished, error,
@@ -1061,6 +1096,14 @@ func nextOrdinal(ctx context.Context, tx *sql.Tx) (int, error) {
 	var ordinal int
 	if err := tx.QueryRowContext(ctx, `SELECT COALESCE(MAX(ordinal), 0) + 1 FROM tasks`).Scan(&ordinal); err != nil {
 		return 0, fmt.Errorf("store: next ordinal: %w", err)
+	}
+	return ordinal, nil
+}
+
+func minOrdinal(ctx context.Context, tx *sql.Tx) (int, error) {
+	var ordinal int
+	if err := tx.QueryRowContext(ctx, `SELECT COALESCE(MIN(ordinal), 1) FROM tasks`).Scan(&ordinal); err != nil {
+		return 0, fmt.Errorf("store: min ordinal: %w", err)
 	}
 	return ordinal, nil
 }

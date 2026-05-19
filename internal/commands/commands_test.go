@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -100,6 +101,48 @@ func TestCommandsRetryRequeueStaleAndDoctor(t *testing.T) {
 	doctor := run("doctor")
 	require.Contains(t, doctor, "db: ok")
 	require.Contains(t, doctor, "prompt: ok")
+}
+
+func TestDiscoverCommandPrintsStubWithoutCreatingQueue(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	queuePath := filepath.Join(dir, "tasks.sqlite")
+	stdout, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	root := NewRoot(testDepsWithWriters(stdout, stderr), "test")
+	root.SetArgs([]string{"--queue", queuePath, "discover"})
+
+	require.NoError(t, root.Execute(), "stderr: %s", stderr.String())
+	require.Contains(t, stdout.String(), "afk discover is a workflow stub")
+	require.Contains(t, stdout.String(), "docs/task-discovery.md")
+	require.NoFileExists(t, queuePath)
+}
+
+func TestDoctorReportIncludesTaskCountsAndWorkingWarning(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	queuePath := filepath.Join(dir, "tasks.sqlite")
+	require.NoError(t, os.WriteFile(queuePath, nil, 0o600))
+
+	var out bytes.Buffer
+	snapshot := summarizeDoctorTasks([]task.Task{
+		{Status: task.StatusPending},
+		{Status: task.StatusWorking},
+		{Status: task.StatusDone},
+		{Status: task.StatusFailed},
+	})
+	require.NoError(t, writeDoctorReport(&out, queuePath, snapshot))
+
+	report := out.String()
+	require.Contains(t, report, "queue: "+queuePath)
+	require.Contains(t, report, "db: ok")
+	require.Contains(t, report, "pending: 1")
+	require.Contains(t, report, "working: 1")
+	require.Contains(t, report, "done: 1")
+	require.Contains(t, report, "failed: 1")
+	require.Contains(t, report, "working tasks: 1")
+	require.Contains(t, report, "prompt: ok")
 }
 
 func TestAddCommandRecordsMetadataAndDefaultCWD(t *testing.T) {
@@ -287,6 +330,94 @@ func TestReadyAndWhyCommands(t *testing.T) {
 	var data map[string]any
 	require.NoError(t, json.Unmarshal([]byte(strings.TrimSpace(whyJSON)), &data))
 	require.Equal(t, false, data["ready"])
+}
+
+func TestPrioritySchedulingCommands(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	queuePath := filepath.Join(dir, "tasks.sqlite")
+	stdout, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	d := testDepsWithWriters(stdout, stderr)
+
+	run := func(args ...string) string {
+		t.Helper()
+		stdout.Reset()
+		stderr.Reset()
+		root := NewRoot(d, "test")
+		root.SetArgs(append([]string{"--queue", queuePath}, args...))
+		require.NoError(t, root.Execute(), "stderr: %s", stderr.String())
+		return stdout.String()
+	}
+
+	normal := strings.TrimSpace(run("add", "--no-cwd", "normal"))
+	urgent := strings.TrimSpace(run("add", "--no-cwd", "--priority", "urgent", "urgent"))
+	high := strings.TrimSpace(run("add", "--no-cwd", "--priority", "high", "high"))
+
+	readyLines := strings.Split(strings.TrimSpace(run("ready", "--json")), "\n")
+	require.Len(t, readyLines, 3)
+	var firstReady map[string]any
+	require.NoError(t, json.Unmarshal([]byte(readyLines[0]), &firstReady))
+	require.Equal(t, urgent, firstReady["id"])
+
+	var next map[string]any
+	require.NoError(t, json.Unmarshal([]byte(strings.TrimSpace(run("next", "--json"))), &next))
+	require.Equal(t, urgent, next["id"])
+
+	dryRun := run("run", "--dry-run", "--limit", "0", "--exec", "echo {{id}}")
+	dryRunLines := strings.Split(strings.TrimSpace(dryRun), "\n")
+	require.Len(t, dryRunLines, 4)
+	require.True(t, strings.HasPrefix(dryRunLines[1], urgent+"\t") || strings.HasPrefix(dryRunLines[1], urgent+" "))
+	require.True(t, strings.HasPrefix(dryRunLines[2], high+"\t") || strings.HasPrefix(dryRunLines[2], high+" "))
+	require.True(t, strings.HasPrefix(dryRunLines[3], normal+"\t") || strings.HasPrefix(dryRunLines[3], normal+" "))
+
+	var popped map[string]any
+	require.NoError(t, json.Unmarshal([]byte(strings.TrimSpace(run("pop"))), &popped))
+	require.Equal(t, urgent, popped["id"])
+}
+
+func TestTopCommandPromotesPendingTask(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	queuePath := filepath.Join(dir, "tasks.sqlite")
+	stdout, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	d := testDepsWithWriters(stdout, stderr)
+
+	run := func(args ...string) string {
+		t.Helper()
+		stdout.Reset()
+		stderr.Reset()
+		root := NewRoot(d, "test")
+		root.SetArgs(append([]string{"--queue", queuePath}, args...))
+		require.NoError(t, root.Execute(), "stderr: %s", stderr.String())
+		return stdout.String()
+	}
+
+	first := strings.TrimSpace(run("add", "--no-cwd", "first"))
+	second := strings.TrimSpace(run("add", "--no-cwd", "second"))
+	urgent := strings.TrimSpace(run("add", "--no-cwd", "--priority", "urgent", "urgent"))
+
+	require.Equal(t, second+"\n", run("top", second))
+	var next map[string]any
+	require.NoError(t, json.Unmarshal([]byte(strings.TrimSpace(run("next", "--json"))), &next))
+	require.Equal(t, urgent, next["id"], "promotion must not outrank urgent priority")
+
+	run("done", urgent)
+	require.NoError(t, json.Unmarshal([]byte(strings.TrimSpace(run("next", "--json"))), &next))
+	require.Equal(t, second, next["id"])
+	require.Contains(t, run("explain", second), "promoted")
+
+	run("done", second)
+	stdout.Reset()
+	stderr.Reset()
+	root := NewRoot(d, "test")
+	root.SetArgs([]string{"--queue", queuePath, "top", second})
+	err := root.Execute()
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "invalid state")
+
+	require.NotEmpty(t, first)
 }
 
 func TestBlockCommands(t *testing.T) {

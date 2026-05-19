@@ -11,6 +11,32 @@ import (
 // ErrInvalidTask reports a task body that AFK should not schedule or execute.
 var ErrInvalidTask = errors.New("invalid task")
 
+// Named generated-candidate rejection reasons. Each wraps ErrInvalidTask so
+// existing callers using errors.Is(err, ErrInvalidTask) continue to match.
+var (
+	ErrMissingDiscoveryPrefix = errors.New("generated task must start with [discovery:<repo>:<topic>]")
+	ErrMissingVerify          = errors.New("generated task must include a verification command")
+	ErrMissingEvidence        = errors.New("generated task must include evidence")
+	ErrMissingScope           = errors.New("generated task must include scope")
+	ErrMissingCwd             = errors.New("generated task must include cwd metadata or an absolute path")
+)
+
+// ChurnPhraseError reports that a generated task body contains a phrase known
+// to produce vague or churn-prone work. It wraps ErrInvalidTask via Is so that
+// errors.Is(err, ErrInvalidTask) returns true.
+type ChurnPhraseError struct {
+	Phrase string
+}
+
+func (e *ChurnPhraseError) Error() string {
+	return fmt.Sprintf("contains churn phrase: %q", e.Phrase)
+}
+
+// Is reports whether target is ErrInvalidTask.
+func (e *ChurnPhraseError) Is(target error) bool {
+	return target == ErrInvalidTask
+}
+
 var absolutePathRE = regexp.MustCompile(`(?:^|\s)/[^\s]+`)
 var discoveryPrefixRE = regexp.MustCompile(`^\[discovery:[a-zA-Z0-9._-]+:[a-zA-Z0-9._-]+\]`)
 
@@ -25,22 +51,22 @@ func ValidateAddOptions(opts AddOptions) error {
 		return nil
 	}
 	if !discoveryPrefixRE.MatchString(strings.TrimSpace(opts.Body)) {
-		return invalid("generated task must start with [discovery:<repo>:<topic>]")
+		return fmt.Errorf("%w: %w", ErrInvalidTask, ErrMissingDiscoveryPrefix)
 	}
 	if !containsFold(opts.Body, "verify") && !containsFold(opts.Body, "verification") {
-		return invalid("generated task must include a verification command")
+		return fmt.Errorf("%w: %w", ErrInvalidTask, ErrMissingVerify)
 	}
 	if !containsFold(opts.Body, "evidence:") {
-		return invalid("generated task must include evidence")
+		return fmt.Errorf("%w: %w", ErrInvalidTask, ErrMissingEvidence)
 	}
 	if !containsFold(opts.Body, "scope:") {
-		return invalid("generated task must include scope")
+		return fmt.Errorf("%w: %w", ErrInvalidTask, ErrMissingScope)
 	}
-	if containsGeneratedChurnPhrase(opts.Body) {
-		return invalid("generated task is too vague or churn-prone")
+	if phrase := firstGeneratedChurnPhrase(opts.Body); phrase != "" {
+		return fmt.Errorf("%w: %w", ErrInvalidTask, &ChurnPhraseError{Phrase: phrase})
 	}
 	if opts.CWD == "" && !hasAbsolutePath(opts.Body) {
-		return invalid("generated task must include cwd metadata or an absolute path")
+		return fmt.Errorf("%w: %w", ErrInvalidTask, ErrMissingCwd)
 	}
 	return nil
 }
@@ -101,14 +127,14 @@ func containsFold(s, substr string) bool {
 	return strings.Contains(strings.ToLower(s), strings.ToLower(substr))
 }
 
-func containsGeneratedChurnPhrase(body string) bool {
+func firstGeneratedChurnPhrase(body string) string {
 	normalized := normalizeBody(body)
 	for _, phrase := range invalidGeneratedPhrases {
 		if strings.Contains(normalized, phrase) {
-			return true
+			return phrase
 		}
 	}
-	return false
+	return ""
 }
 
 var invalidExactBodies = []string{

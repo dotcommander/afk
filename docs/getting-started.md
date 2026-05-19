@@ -22,7 +22,7 @@ afk --version
 afk doctor
 ```
 
-`afk doctor` reports the queue path, the SQLite schema version, and whether legacy JSONL was imported.
+`afk doctor` reports the queue path, database presence, task counts, working-task warning, binary path, and prompt health.
 
 ## queue your first task
 
@@ -78,5 +78,6 @@ The second task stays `pending` and is excluded from `afk ready` until the first
 ## next steps
 
 - Read [tasks.md](tasks.md) for metadata flags (`--tag`, `--priority`, `--source`, `--cwd`).
+- Run `afk discover` or read [task-discovery.md](task-discovery.md) to mine concrete candidate tasks.
 - Read [runner.md](runner.md) for `afk run`, the built-in worker loop.
 - Read [command-reference.md](command-reference.md) for the full surface.

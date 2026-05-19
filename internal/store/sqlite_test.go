@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -33,6 +34,7 @@ func TestSQLiteStoreAddListUpdateDelete(t *testing.T) {
 	s := newStore(t)
 
 	require.NoError(t, s.Add(ctx, task.Task{ID: "1", Status: task.StatusPending, Body: "one"}))
+	require.ErrorIs(t, s.Add(ctx, task.Task{ID: "1", Status: task.StatusPending, Body: "dupe"}), store.ErrDuplicateTask)
 	require.NoError(t, s.Update(ctx, "1", task.EventEdited, "", func(tk *task.Task) bool {
 		tk.Body = "two"
 		return true
@@ -47,6 +49,18 @@ func TestSQLiteStoreAddListUpdateDelete(t *testing.T) {
 	tasks, err = s.List(ctx)
 	require.NoError(t, err)
 	require.Empty(t, tasks)
+}
+
+func TestSQLiteStoreNewSQLiteReportsInvalidParentPath(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	filePath := filepath.Join(t.TempDir(), "file")
+	require.NoError(t, os.WriteFile(filePath, nil, 0o600))
+
+	_, err := store.NewSQLite(ctx, store.Paths{SQLitePath: filepath.Join(filePath, "tasks.sqlite")})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "mkdir sqlite dir")
 }
 
 func TestSQLiteStoreConcurrentFirstOpenAndAdd(t *testing.T) {
@@ -157,6 +171,68 @@ func TestSQLiteStoreReadyReturnsPendingTasksInClaimOrder(t *testing.T) {
 	require.Equal(t, "second", ready[1].ID)
 }
 
+func TestSQLiteStoreReadyOrdersByPriority(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	s := newStore(t)
+
+	for _, tsk := range []task.Task{
+		{ID: "normal", Status: task.StatusPending, Body: "normal"},
+		{ID: "low", Status: task.StatusPending, Body: "low", Priority: "low"},
+		{ID: "unknown", Status: task.StatusPending, Body: "unknown", Priority: "later"},
+		{ID: "urgent", Status: task.StatusPending, Body: "urgent", Priority: " urgent "},
+		{ID: "high", Status: task.StatusPending, Body: "high", Priority: "HIGH"},
+	} {
+		require.NoError(t, s.Add(ctx, tsk))
+	}
+
+	ready, err := s.Ready(ctx, store.ReadyOptions{})
+	require.NoError(t, err)
+	requireIDs(t, ready, "urgent", "high", "normal", "unknown", "low")
+}
+
+func TestSQLiteStoreClaimNextOrdersByPriority(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	s := newStore(t)
+	now := time.Date(2025, 1, 2, 3, 4, 5, 0, time.UTC)
+
+	require.NoError(t, s.Add(ctx, task.Task{ID: "normal", Status: task.StatusPending, Body: "normal"}))
+	require.NoError(t, s.Add(ctx, task.Task{ID: "urgent", Status: task.StatusPending, Body: "urgent", Priority: "urgent"}))
+	require.NoError(t, s.Add(ctx, task.Task{ID: "high", Status: task.StatusPending, Body: "high", Priority: "high"}))
+
+	claimed, err := s.ClaimNext(ctx, now, time.Time{})
+	require.NoError(t, err)
+	require.NotNil(t, claimed)
+	require.Equal(t, "urgent", claimed.ID)
+
+	claimed, err = s.ClaimNext(ctx, now.Add(time.Second), time.Time{})
+	require.NoError(t, err)
+	require.NotNil(t, claimed)
+	require.Equal(t, "high", claimed.ID)
+}
+
+func TestSQLiteStorePriorityDoesNotBypassReadinessConstraints(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	s := newStore(t)
+	now := time.Date(2025, 1, 2, 3, 4, 5, 0, time.UTC)
+
+	require.NoError(t, s.Add(ctx, task.Task{ID: "blocked-by-dep", Status: task.StatusPending, Body: "blocked", Priority: "urgent"}))
+	require.NoError(t, s.Add(ctx, task.Task{ID: "prereq", Status: task.StatusPending, Body: "prereq"}))
+	require.NoError(t, s.AddDependency(ctx, "blocked-by-dep", "prereq"))
+
+	require.NoError(t, s.Add(ctx, task.Task{ID: "manual", Status: task.StatusPending, Body: "manual", Priority: "urgent"}))
+	require.NoError(t, s.Block(ctx, "manual", "waiting"))
+
+	require.NoError(t, s.Add(ctx, task.Task{ID: "resource-active", Status: task.StatusWorking, Body: "active", ResourceKey: "repo:x"}))
+	require.NoError(t, s.Add(ctx, task.Task{ID: "resource-blocked", Status: task.StatusPending, Body: "blocked", Priority: "urgent", ResourceKey: "repo:x"}))
+
+	ready, err := s.Ready(ctx, store.ReadyOptions{Now: now.Add(time.Second)})
+	require.NoError(t, err)
+	requireIDs(t, ready, "prereq")
+}
+
 func TestSQLiteStoreReadyAgreesWithClaimNext(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -175,6 +251,45 @@ func TestSQLiteStoreReadyAgreesWithClaimNext(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, claimed)
 	require.Equal(t, ready[0].ID, claimed.ID)
+}
+
+func TestSQLiteStorePromote(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	s := newStore(t)
+
+	require.NoError(t, s.Add(ctx, task.Task{ID: "urgent", Status: task.StatusPending, Body: "urgent", Priority: "urgent"}))
+	require.NoError(t, s.Add(ctx, task.Task{ID: "first", Status: task.StatusPending, Body: "first"}))
+	require.NoError(t, s.Add(ctx, task.Task{ID: "second", Status: task.StatusPending, Body: "second"}))
+
+	require.NoError(t, s.Promote(ctx, "second"))
+
+	ready, err := s.Ready(ctx, store.ReadyOptions{})
+	require.NoError(t, err)
+	requireIDs(t, ready, "urgent", "second", "first")
+
+	tasks, err := s.List(ctx)
+	require.NoError(t, err)
+	requireIDs(t, tasks, "second", "urgent", "first")
+
+	events, err := s.Events(ctx, "second")
+	require.NoError(t, err)
+	require.Equal(t, task.EventPromoted, events[len(events)-1].Type)
+}
+
+func TestSQLiteStorePromoteRejectsNonPendingTasks(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	s := newStore(t)
+
+	require.NoError(t, s.Add(ctx, task.Task{ID: "working", Status: task.StatusWorking, Body: "working"}))
+	require.NoError(t, s.Add(ctx, task.Task{ID: "done", Status: task.StatusDone, Body: "done"}))
+	require.NoError(t, s.Add(ctx, task.Task{ID: "failed", Status: task.StatusFailed, Body: "failed"}))
+
+	require.ErrorIs(t, s.Promote(ctx, "missing"), store.ErrNotFound)
+	require.ErrorIs(t, s.Promote(ctx, "working"), store.ErrInvalidState)
+	require.ErrorIs(t, s.Promote(ctx, "done"), store.ErrInvalidState)
+	require.ErrorIs(t, s.Promote(ctx, "failed"), store.ErrInvalidState)
 }
 
 func TestSQLiteStoreReadyExcludesUnfinishedDependencies(t *testing.T) {
@@ -242,6 +357,59 @@ func TestSQLiteStoreDependencyValidation(t *testing.T) {
 	require.ErrorIs(t, s.AddDependency(ctx, "a", "c"), store.ErrDependencyCycle)
 }
 
+func TestSQLiteStoreBulkAddTasksAndDependencies(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	s := newStore(t)
+
+	tasks := []task.Task{
+		{ID: "prereq", Created: "2025-01-02T03:04:05Z", Status: task.StatusPending, Body: "prereq", Tags: []string{"spec:bulk"}},
+		{ID: "blocked", Created: "2025-01-02T03:04:05Z", Status: task.StatusPending, Body: "blocked"},
+	}
+	deps := []task.Dependency{{
+		TaskID:      "blocked",
+		DependsOnID: "prereq",
+		Created:     "2025-01-02T03:04:05Z",
+	}}
+	require.NoError(t, s.BulkAdd(ctx, tasks, deps))
+
+	got, err := s.List(ctx)
+	require.NoError(t, err)
+	require.Len(t, got, 2)
+	require.Equal(t, "prereq", got[0].ID)
+	require.Equal(t, []string{"spec:bulk"}, got[0].Tags)
+
+	gotDeps, err := s.Dependencies(ctx, "blocked")
+	require.NoError(t, err)
+	require.Equal(t, deps, gotDeps)
+
+	events, err := s.Events(ctx, "blocked")
+	require.NoError(t, err)
+	require.Equal(t, task.EventDependencyAdded, events[len(events)-1].Type)
+}
+
+func TestSQLiteStoreBulkAddValidatesDependencies(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	s := newStore(t)
+
+	require.NoError(t, s.BulkAdd(ctx, nil, nil))
+	require.ErrorIs(t, s.BulkAdd(ctx, []task.Task{
+		{ID: "self", Status: task.StatusPending, Body: "self"},
+	}, []task.Dependency{{TaskID: "self", DependsOnID: "self"}}), store.ErrInvalidDependency)
+
+	require.NoError(t, s.BulkAdd(ctx, []task.Task{
+		{ID: "a", Status: task.StatusPending, Body: "a"},
+		{ID: "b", Status: task.StatusPending, Body: "b"},
+		{ID: "c", Status: task.StatusPending, Body: "c"},
+	}, nil))
+	require.NoError(t, s.AddDependency(ctx, "b", "a"))
+	require.NoError(t, s.AddDependency(ctx, "c", "b"))
+	require.ErrorIs(t, s.BulkAdd(ctx, nil, []task.Dependency{
+		{TaskID: "a", DependsOnID: "c"},
+	}), store.ErrDependencyCycle)
+}
+
 func TestSQLiteStoreDependenciesAffectClaim(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -295,6 +463,7 @@ func TestSQLiteStoreManualBlocks(t *testing.T) {
 	block, err = s.BlockForTask(ctx, "blocked")
 	require.NoError(t, err)
 	require.Nil(t, block)
+	require.ErrorIs(t, s.Unblock(ctx, "blocked"), store.ErrBlockNotFound)
 
 	ready, err = s.Ready(ctx, store.ReadyOptions{Now: now})
 	require.NoError(t, err)
@@ -613,6 +782,7 @@ func TestSQLiteStorePruneAndNotFound(t *testing.T) {
 
 	require.ErrorIs(t, s.Update(ctx, "missing", task.EventEdited, "", func(*task.Task) bool { return true }), store.ErrNotFound)
 	require.ErrorIs(t, s.Delete(ctx, "missing"), store.ErrNotFound)
+	require.ErrorIs(t, s.RemoveDependency(ctx, "keep", "missing"), store.ErrDependencyNotFound)
 	require.True(t, errors.Is(store.ErrNotFound, store.ErrNotFound))
 
 	require.NoError(t, s.Prune(ctx, []task.Status{task.StatusFailed}))
@@ -795,4 +965,13 @@ func TestResolvePaths(t *testing.T) {
 	defaultPath, err := store.DefaultPath()
 	require.NoError(t, err)
 	require.True(t, strings.HasSuffix(defaultPath, ".claude/queue/tasks.sqlite"))
+}
+
+func requireIDs(t *testing.T, tasks []task.Task, ids ...string) {
+	t.Helper()
+	got := make([]string, 0, len(tasks))
+	for _, tk := range tasks {
+		got = append(got, tk.ID)
+	}
+	require.Equal(t, ids, got)
 }

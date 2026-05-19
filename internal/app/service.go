@@ -183,6 +183,11 @@ func (s *Service) PruneByTag(ctx context.Context, tag string) (int, error) {
 	return s.store.PruneByTag(ctx, tag)
 }
 
+// Promote moves a pending task ahead of peers with the same effective priority.
+func (s *Service) Promote(ctx context.Context, id string) error {
+	return s.store.Promote(ctx, id)
+}
+
 // Pop atomically claims the next pending task.
 func (s *Service) Pop(ctx context.Context) (*task.Task, error) {
 	return s.PopWithLease(ctx, 0)
@@ -230,27 +235,9 @@ func (s *Service) Unblock(ctx context.Context, taskID string) error {
 	return s.store.Unblock(ctx, taskID)
 }
 
-// Ready returns pending tasks with no unfinished dependencies.
+// Ready returns pending tasks with no unfinished dependencies in scheduler order.
 func (s *Service) Ready(ctx context.Context) ([]task.Task, error) {
-	tasks, err := s.store.List(ctx)
-	if err != nil {
-		return nil, err
-	}
-	byID := tasksByID(tasks)
-	ready := make([]task.Task, 0, len(tasks))
-	for _, t := range tasks {
-		if t.Status != task.StatusPending {
-			continue
-		}
-		reasons, err := s.notReadyReasons(ctx, t.ID, byID)
-		if err != nil {
-			return nil, err
-		}
-		if len(reasons) == 0 {
-			ready = append(ready, t)
-		}
-	}
-	return ready, nil
+	return s.store.Ready(ctx, store.ReadyOptions{Now: s.now()})
 }
 
 // Why returns computed readiness information for one task.
@@ -349,14 +336,33 @@ func (s *Service) notReadyReasons(ctx context.Context, id string, tasks map[stri
 	if !ok {
 		return nil, fmt.Errorf("task %s: %w", id, ErrNotFound)
 	}
+
+	reasons, err := s.manualBlockReasons(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	reasons = append(reasons, s.resourceLockReasons(id, t, tasks)...)
+
+	dependencyReasons, err := s.dependencyReasons(ctx, id, tasks)
+	if err != nil {
+		return nil, err
+	}
+	reasons = append(reasons, dependencyReasons...)
+	return reasons, nil
+}
+
+func (s *Service) manualBlockReasons(ctx context.Context, id string) ([]NotReadyReason, error) {
 	block, err := s.store.BlockForTask(ctx, id)
 	if err != nil {
 		return nil, err
 	}
-	var reasons []NotReadyReason
-	if block != nil {
-		reasons = append(reasons, NotReadyReason{TaskID: id, Kind: "manual_block", Detail: block.Reason})
+	if block == nil {
+		return nil, nil
 	}
+	return []NotReadyReason{{TaskID: id, Kind: "manual_block", Detail: block.Reason}}, nil
+}
+
+func (s *Service) resourceLockReasons(id string, t task.Task, tasks map[string]task.Task) []NotReadyReason {
 	if t.ResourceKey != "" {
 		nowText := formatTime(s.now())
 		for _, active := range tasks {
@@ -364,15 +370,19 @@ func (s *Service) notReadyReasons(ctx context.Context, id string, tasks map[stri
 				continue
 			}
 			if active.LeaseExpires == "" || active.LeaseExpires > nowText {
-				reasons = append(reasons, NotReadyReason{TaskID: id, Kind: "resource_locked", Detail: active.ID})
-				break
+				return []NotReadyReason{{TaskID: id, Kind: "resource_locked", Detail: active.ID}}
 			}
 		}
 	}
+	return nil
+}
+
+func (s *Service) dependencyReasons(ctx context.Context, id string, tasks map[string]task.Task) ([]NotReadyReason, error) {
 	deps, err := s.store.Dependencies(ctx, id)
 	if err != nil {
 		return nil, err
 	}
+	reasons := make([]NotReadyReason, 0, len(deps))
 	for _, dep := range deps {
 		depTask, ok := tasks[dep.DependsOnID]
 		if !ok {

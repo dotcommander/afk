@@ -1,6 +1,7 @@
 # task discovery
 
 ```sh
+afk discover
 afk ready
 afk explain <id>
 rg -n "TODO|FIXME|HACK|XXX|OPTIMIZE" .
@@ -10,6 +11,7 @@ AFK drains work quickly when queued tasks are concrete. The bottleneck is findin
 the next useful task without inventing vague work. Use task discovery as a
 candidate-generation pass: inspect local evidence, rank possible work, emit
 AFK-ready task bodies, then ask one confirmation question before enqueueing.
+`afk discover` prints this workflow stub without opening or creating the queue.
 
 ## discovery contract
 

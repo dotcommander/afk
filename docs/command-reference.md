@@ -33,6 +33,7 @@ Every `afk` subcommand. Group by intent; follow the per-topic doc when you need 
 | `afk deps ls <id>` | List dependencies. Add `--json`. |
 | `afk block <id> <reason>` | Manually block a pending task. |
 | `afk unblock <id>` | Remove a manual block. |
+| `afk top <id>` | Promote a pending task ahead of peers with the same effective priority. |
 
 See [scheduling.md](scheduling.md).
 
@@ -57,6 +58,7 @@ See [workers.md](workers.md).
 |---|---|
 | `afk explain <id>` | Show task metadata, events, and attempts. Add `--json`. |
 | `afk doctor` | Check queue health, queue path, and binary install. |
+| `afk discover` | Print the task-discovery workflow stub without opening or creating the queue. |
 
 ## prompts
 
@@ -79,7 +81,7 @@ See [workers.md](workers.md).
 | Flag | Behavior |
 |---|---|
 | `--tag VALUE` | Repeatable tag. |
-| `--priority VALUE` | Free-form priority string. |
+| `--priority VALUE` | Scheduler priority: `urgent`, `high`, `normal`, or `low`. Empty and unknown values schedule as normal. |
 | `--cwd PATH` | Working-directory context. Defaults to the current directory. |
 | `--no-cwd` | Do not record a working directory. |
 | `--source VALUE` | Origin such as `cli`, `roadmap.md`, `todo-scan`. |

@@ -43,7 +43,7 @@ afk add \
 | Flag | Behavior |
 |---|---|
 | `--tag VALUE` | Repeatable tag. Use for namespaced labels like `repo:afk`. |
-| `--priority VALUE` | Free-form priority string. Surfaces in `afk show` and `afk explain`. |
+| `--priority VALUE` | Scheduler priority. Recognized values are `urgent`, `high`, `normal`, and `low`; empty and unknown values schedule as normal. |
 | `--source VALUE` | Origin of the task — `cli`, `roadmap.md`, `todo-scan`, `go-test`. |
 | `--cwd PATH` | Working-directory context. Defaults to your current directory. |
 | `--no-cwd` | Skip the cwd record for a context-free task. |
@@ -55,6 +55,21 @@ afk add \
 | `--dry-run` | Validate the task body and metadata without adding a task. |
 
 `afk add` records the current working directory by default. Pass `--no-cwd` when the task should not carry that context.
+
+Priority applies only among tasks that are already ready. It does not bypass
+dependencies, manual blocks, resource locks, or non-pending status. `afk ls`
+keeps insertion order for history/inspection; scheduler commands such as
+`ready`, `next`, `pop`, and `run --dry-run` use priority order.
+
+Promote an existing pending task ahead of peers with the same effective
+priority:
+
+```sh
+afk top 42
+```
+
+`afk top` does not change the task's priority metadata. Use it when one pending
+task should be handled before other tasks with the same priority rank.
 
 ## inspect tasks
 

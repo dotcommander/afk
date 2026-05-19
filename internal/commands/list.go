@@ -1,6 +1,7 @@
 package commands
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/spf13/cobra"
@@ -29,21 +30,26 @@ func newLsCmd(d *Deps) *cobra.Command {
 }
 
 func newShowCmd(d *Deps) *cobra.Command {
-	var asJSON bool
+	return newJSONByIDCmd("show <id>", "Show a single task", "emit JSON output", func(ctx context.Context, id string, asJSON bool) error {
+		t, err := d.Service.Show(ctx, id)
+		if err != nil {
+			return err
+		}
+		return output.WriteShow(d.Stdout, t, asJSON)
+	})
+}
 
+func newJSONByIDCmd(use, short, jsonUsage string, run func(context.Context, string, bool) error) *cobra.Command {
+	var asJSON bool
 	cmd := &cobra.Command{
-		Use:   "show <id>",
-		Short: "Show a single task",
+		Use:   use,
+		Short: short,
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			t, err := d.Service.Show(cmd.Context(), args[0])
-			if err != nil {
-				return err
-			}
-			return output.WriteShow(d.Stdout, t, asJSON)
+			return run(cmd.Context(), args[0], asJSON)
 		},
 	}
-	cmd.Flags().BoolVar(&asJSON, "json", false, "emit JSON output")
+	cmd.Flags().BoolVar(&asJSON, "json", false, jsonUsage)
 	return cmd
 }
 

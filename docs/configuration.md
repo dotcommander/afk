@@ -53,10 +53,11 @@ afk doctor
 `afk doctor` reports:
 
 - The resolved queue path.
-- Whether the SQLite database exists and is writable.
-- The schema version.
-- Whether legacy JSONL was imported.
-- Whether the binary is on `$PATH`.
+- Whether the SQLite database exists.
+- Pending, working, done, and failed task counts.
+- A warning when working tasks are present.
+- The running binary path.
+- Prompt health.
 
 Run `afk doctor` first when a command behaves unexpectedly. Most queue surprises trace back to a flag, env var, or stale `AFK_QUEUE` from a parent shell.
 

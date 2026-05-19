@@ -2,6 +2,7 @@ package commands
 
 import (
 	"fmt"
+	"io"
 	"os"
 
 	"github.com/spf13/cobra"
@@ -18,42 +19,80 @@ func newDoctorCmd(d *Deps) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			tally := map[task.Status]int{}
-			var staleWorking int
-			for _, t := range tasks {
-				tally[t.Status]++
-				if t.Status == task.StatusWorking {
-					staleWorking++
-				}
-			}
-			if _, err := fmt.Fprintf(d.Stdout, "queue: %s\n", d.QueuePaths.SQLitePath); err != nil {
-				return err
-			}
-			if _, err := os.Stat(d.QueuePaths.SQLitePath); err != nil {
-				if os.IsNotExist(err) {
-					if _, err := fmt.Fprintln(d.Stdout, "db: missing"); err != nil {
-						return err
-					}
-				} else {
-					return fmt.Errorf("stat queue db: %w", err)
-				}
-			} else if _, err := fmt.Fprintln(d.Stdout, "db: ok"); err != nil {
-				return err
-			}
-			if _, err := fmt.Fprintf(d.Stdout, "pending: %d\nworking: %d\ndone: %d\nfailed: %d\n", tally[task.StatusPending], tally[task.StatusWorking], tally[task.StatusDone], tally[task.StatusFailed]); err != nil {
-				return err
-			}
-			if staleWorking > 0 {
-				if _, err := fmt.Fprintf(d.Stdout, "working tasks: %d (inspect with afk ls --status working --json)\n", staleWorking); err != nil {
-					return err
-				}
-			}
-			exe, err := os.Executable()
-			if err != nil {
-				exe = "unknown"
-			}
-			_, err = fmt.Fprintf(d.Stdout, "binary: %s\nprompt: ok\n", exe)
-			return err
+			return writeDoctorReport(d.Stdout, d.QueuePaths.SQLitePath, summarizeDoctorTasks(tasks))
 		},
 	}
+}
+
+type doctorSnapshot struct {
+	tally        map[task.Status]int
+	workingTasks int
+}
+
+func summarizeDoctorTasks(tasks []task.Task) doctorSnapshot {
+	snapshot := doctorSnapshot{tally: map[task.Status]int{}}
+	for _, t := range tasks {
+		snapshot.tally[t.Status]++
+		if t.Status == task.StatusWorking {
+			snapshot.workingTasks++
+		}
+	}
+	return snapshot
+}
+
+func writeDoctorReport(w io.Writer, queuePath string, snapshot doctorSnapshot) error {
+	if _, err := fmt.Fprintf(w, "queue: %s\n", queuePath); err != nil {
+		return err
+	}
+	if err := writeDoctorDBStatus(w, queuePath); err != nil {
+		return err
+	}
+	if err := writeDoctorTaskCounts(w, snapshot); err != nil {
+		return err
+	}
+	if err := writeDoctorWorkingWarning(w, snapshot.workingTasks); err != nil {
+		return err
+	}
+	return writeDoctorBinaryPrompt(w)
+}
+
+func writeDoctorDBStatus(w io.Writer, queuePath string) error {
+	if _, err := os.Stat(queuePath); err != nil {
+		if os.IsNotExist(err) {
+			_, writeErr := fmt.Fprintln(w, "db: missing")
+			return writeErr
+		}
+		return fmt.Errorf("stat queue db: %w", err)
+	}
+	_, err := fmt.Fprintln(w, "db: ok")
+	return err
+}
+
+func writeDoctorTaskCounts(w io.Writer, snapshot doctorSnapshot) error {
+	_, err := fmt.Fprintf(
+		w,
+		"pending: %d\nworking: %d\ndone: %d\nfailed: %d\n",
+		snapshot.tally[task.StatusPending],
+		snapshot.tally[task.StatusWorking],
+		snapshot.tally[task.StatusDone],
+		snapshot.tally[task.StatusFailed],
+	)
+	return err
+}
+
+func writeDoctorWorkingWarning(w io.Writer, workingTasks int) error {
+	if workingTasks == 0 {
+		return nil
+	}
+	_, err := fmt.Fprintf(w, "working tasks: %d (inspect with afk ls --status working --json)\n", workingTasks)
+	return err
+}
+
+func writeDoctorBinaryPrompt(w io.Writer) error {
+	exe, err := os.Executable()
+	if err != nil {
+		exe = "unknown"
+	}
+	_, err = fmt.Fprintf(w, "binary: %s\nprompt: ok\n", exe)
+	return err
 }

@@ -3,6 +3,7 @@ package output_test
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 
@@ -227,4 +228,73 @@ func TestWriteExplainBoundsHistoryAndMessages(t *testing.T) {
 	require.Len(t, got["attempts"], 50)
 	taskDoc := got["task"].(map[string]any)
 	require.Equal(t, true, taskDoc["body_truncated"])
+}
+
+func TestWriteOutputPropagatesWriterErrors(t *testing.T) {
+	t.Parallel()
+
+	w := errWriter{}
+	tk := task.Task{
+		ID:      "1",
+		Created: "2025-01-02T03:04:05Z",
+		Status:  task.StatusFailed,
+		Body:    "body",
+		Error:   "boom",
+	}
+	event := task.Event{ID: 1, TaskID: "1", Type: task.EventFailed, At: "2025-01-02T03:05:05Z", Message: "boom"}
+	attempt := task.Attempt{ID: 1, TaskID: "1", Started: "2025-01-02T03:04:05Z", Status: task.StatusFailed, Error: "boom"}
+
+	checks := []struct {
+		name string
+		err  error
+	}{
+		{name: "list table", err: output.WriteList(w, []task.Task{tk}, false)},
+		{name: "list json", err: output.WriteList(w, []task.Task{tk}, true)},
+		{name: "show text", err: output.WriteShow(w, tk, false)},
+		{name: "show json", err: output.WriteShow(w, tk, true)},
+		{name: "count text", err: output.WriteCount(w, map[task.Status]int{})},
+		{name: "dependencies table", err: output.WriteDependencies(w, []task.Dependency{{TaskID: "1", DependsOnID: "0"}}, false)},
+		{name: "dependencies json", err: output.WriteDependencies(w, []task.Dependency{{TaskID: "1", DependsOnID: "0"}}, true)},
+		{name: "explain text", err: output.WriteExplain(w, tk, []task.Event{event}, []task.Attempt{attempt}, false)},
+		{name: "explain json", err: output.WriteExplain(w, tk, []task.Event{event}, []task.Attempt{attempt}, true)},
+	}
+	for _, check := range checks {
+		require.Error(t, check.err, check.name)
+		require.True(t, errors.Is(check.err, errWrite), "%s: %v", check.name, check.err)
+	}
+}
+
+func TestWriteExplainTextEmptySections(t *testing.T) {
+	t.Parallel()
+
+	var out bytes.Buffer
+	require.NoError(t, output.WriteExplain(&out, task.Task{ID: "1", Body: "body"}, nil, nil, false))
+	require.Contains(t, out.String(), "Events:\n  none")
+	require.Contains(t, out.String(), "Attempts:\n  none")
+}
+
+func TestWriteExplainTextOmittedHistory(t *testing.T) {
+	t.Parallel()
+
+	events := make([]task.Event, 51)
+	attempts := make([]task.Attempt, 51)
+	for i := range events {
+		events[i] = task.Event{ID: int64(i + 1), TaskID: "1", Type: task.EventFailed, At: "2025-01-02T03:04:05Z", Message: "boom"}
+		attempts[i] = task.Attempt{ID: int64(i + 1), TaskID: "1", Started: "2025-01-02T03:04:05Z", Finished: "2025-01-02T03:05:05Z", Status: task.StatusFailed, Error: "boom", WorkerID: "worker", Agent: "codex"}
+	}
+
+	var out bytes.Buffer
+	require.NoError(t, output.WriteExplain(&out, task.Task{ID: "1", Body: "body"}, events, attempts, false))
+	require.Contains(t, out.String(), "older events omitted")
+	require.Contains(t, out.String(), "older attempts omitted")
+	require.Contains(t, out.String(), "worker=worker")
+	require.Contains(t, out.String(), "agent=codex")
+}
+
+var errWrite = errors.New("write failed")
+
+type errWriter struct{}
+
+func (errWriter) Write([]byte) (int, error) {
+	return 0, errWrite
 }
