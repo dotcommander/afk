@@ -107,13 +107,7 @@ Generate the `/loop` instruction prompt from the current binary:
 afk prompt
 ```
 
-Write it directly to a file:
-
-```sh
-afk prompt --output ~/.claude/loop.md
-```
-
-`afk prompt` uses the same queue path resolution as other commands, but it does not open or create the SQLite database.
+`afk prompt` uses the same queue path resolution as other commands, but it does not open or create the SQLite database. Pipe it into Claude via `/loop 15m "run ! afk prompt"` — no intermediate file needed.
 
 ## Architecture
 
@@ -143,10 +137,9 @@ afk fail 2 "needs more context" # or fail with a reason
 afk retry 2                    # return a failed task to pending
 ```
 
-Generate the worker prompt and inspect a task:
+Inspect a task in full detail:
 
 ```sh
-afk prompt --output ~/.claude/loop.md
 afk explain 1 --json | jq .
 ```
 
