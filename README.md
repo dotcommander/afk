@@ -1,155 +1,18 @@
 # afk
 
-CLI for CRUD operations on `~/.claude/queue/tasks.sqlite` — the SQLite queue consumed by the `/loop`-driven background task worker.
+`afk` is a local SQLite task queue for coding agents and shell workflows.
+
+```sh
+tests=$(afk add "write tests for the scheduler")
+afk add --blocked-by "$tests" "update README after tests pass"
+afk ready
+afk run --dry-run --exec 'afk prompt --task {{id}}'
+afk run --exec 'afk prompt --task {{id}}' --limit 1
+```
+
+Tasks stay in `pending`, `working`, `done`, or `failed`. Scheduler state such as dependencies, manual blocks, leases, and resource locks is stored separately so the task lifecycle stays simple.
 
 On first use, `afk` imports existing tasks from `~/.claude/queue/tasks.jsonl` into SQLite when the database is empty. JSONL remains an import format only; new writes go to SQLite.
-
-## Use with Claude Code
-
-`afk` is built to pair with Claude Code's `/loop` skill. Queue work from anywhere, then let Claude drain the queue on an interval:
-
-```
-/loop 15m "run ! afk prompt"
-```
-
-Every 15 minutes Claude runs `afk prompt`, which emits the current queue as instructions, and works the next pending task. Add work from any shell session:
-
-```sh
-afk add "refactor internal/store atomic claim into its own type"
-afk add --tag repo:afk --priority high "write benchmark for pop under contention"
-afk add --source roadmap.md "next roadmap checklist item"
-```
-
-While you're away from the keyboard, the loop drains the queue. When you come back:
-
-```sh
-afk count                # see how many tasks ran / failed / remain
-afk ls --status done     # review what got done
-afk ls --status failed   # see what needs your attention
-afk explain 42           # full ledger for a task: events + attempts
-```
-
-To focus the worker on a single task:
-
-```
-/loop 10m "run ! afk prompt --task 42"
-```
-
-## Commands
-
-| Command | Behavior |
-|---|---|
-| `afk add <body>` | Append a new pending task; prints the new id. |
-| `afk ls [--status STATUS] [--json]` | List tasks, optionally filtered. |
-| `afk show <id> [--json]` | Show one task. |
-| `afk count` | Tally tasks per status. |
-| `afk next` | Show the task `afk pop` would claim (no mutation). |
-| `afk explain <id> [--json]` | Show task metadata, events, and attempts. |
-| `afk prompt [--output PATH]` | Generate loop instruction Markdown for the current queue configuration. |
-| `afk prompt --task <id>` | Generate a focused prompt for one queued task. |
-| `afk edit <id> <new-body>` | Update the body of a task. |
-| `afk done <id>` | Mark task as done. |
-| `afk fail <id> <reason>` | Mark task as failed with a reason. |
-| `afk retry <id>` | Reset a failed task to pending while preserving attempt history. |
-| `afk reset <id>` | Set status back to pending; clear started/finished/error. |
-| `afk rm <id>` | Remove a task. |
-| `afk prune [--status LIST]` | Remove tasks by status (default: done,failed). |
-| `afk pop [--lease DURATION]` | Atomically claim the first pending task and print it as JSON. |
-| `afk requeue-stale [--older-than DURATION]` | Reset stale working tasks to pending. |
-| `afk doctor` | Check queue health and installation basics. |
-
-## Configuration
-
-Queue database path resolution order:
-1. `--queue <path>` flag
-2. `AFK_QUEUE` env var
-3. Default: `~/.claude/queue/tasks.sqlite`
-
-For migration compatibility, a path ending in `.jsonl` is treated as the legacy import path and stored next to a `.sqlite` database with the same basename. For example, `--queue /tmp/tasks.jsonl` writes to `/tmp/tasks.sqlite` and imports `/tmp/tasks.jsonl` once.
-
-## Task metadata
-
-`afk add` records the current working directory by default so workers have context for relative paths and underspecified task bodies.
-
-```sh
-afk add --tag repo:afk --priority high "add tests for prompt generation"
-afk add --cwd /path/to/repo --source roadmap.md "implement the next checklist item"
-afk add --no-cwd "context-free task"
-```
-
-Supported metadata flags:
-
-- `--tag VALUE` repeatable task tags.
-- `--priority VALUE` scheduling/reporting priority metadata.
-- `--cwd PATH` working-directory context; defaults to the invocation directory.
-- `--no-cwd` disables cwd capture.
-- `--source VALUE` origin such as `cli`, `roadmap.md`, `todo-scan`, or `go-test`.
-- `--agent VALUE` preferred worker profile.
-- `--group VALUE` grouping key for related tasks.
-- `--resource VALUE` resource key such as a repo/path lock target.
-
-SQLite also records lifecycle events and attempts for task transitions. The current CLI uses this ledger internally for durability and future reporting/diagnostics.
-
-Leases can be attached to claimed tasks:
-
-```sh
-afk pop --lease 30m
-afk requeue-stale --older-than 2h
-```
-
-Use `afk explain <id>` to inspect task state, metadata, lifecycle events, and attempts. Use `afk retry <id>` to return a failed task to pending without losing its previous attempt history.
-
-## Loop prompt
-
-Generate the `/loop` instruction prompt from the current binary:
-
-```sh
-afk prompt
-```
-
-`afk prompt` uses the same queue path resolution as other commands, but it does not open or create the SQLite database. Pipe it into Claude via `/loop 15m "run ! afk prompt"` — no intermediate file needed.
-
-## Architecture
-
-- `cmd/afk`: process setup and signal-aware command execution.
-- `internal/commands`: Cobra commands, argument parsing, and presentation wiring.
-- `internal/app`: task use cases such as add, list, pop, done, fail, reset, and prune.
-- `internal/store`: persistence boundary; the SQLite implementation owns atomic claim/update operations and one-time JSONL import.
-- `internal/task`: persisted task schema, statuses, and state transitions.
-- `internal/output`: human and JSON/JSONL CLI rendering.
-- `internal/prompt`: generated loop instruction Markdown.
-
-## Examples
-
-End-to-end queue lifecycle from the shell:
-
-```sh
-afk add "summarize the open PRs on dotcommander/afk"
-afk add --tag review --priority high "review the new sqlite store tests"
-afk count
-# pending=2  working=0  done=0  failed=0
-
-afk next                       # peek at what `afk pop` would claim
-afk pop --lease 30m            # claim the first pending task (JSON)
-# ... do the work ...
-afk done 1                     # mark it done
-afk fail 2 "needs more context" # or fail with a reason
-afk retry 2                    # return a failed task to pending
-```
-
-Inspect a task in full detail:
-
-```sh
-afk explain 1 --json | jq .
-```
-
-Housekeeping:
-
-```sh
-afk requeue-stale --older-than 2h   # reset stuck working tasks
-afk prune --status done,failed      # clear terminal tasks
-afk doctor                          # health check
-```
 
 ## Install
 
@@ -157,3 +20,258 @@ afk doctor                          # health check
 go build -o afk ./cmd/afk
 ln -sf "$(pwd)/afk" ~/go/bin/afk
 ```
+
+## Quick Start
+
+Add work:
+
+```sh
+afk add "fix the failing queue test"
+afk add --tag repo:afk --priority high "review scheduler indexes"
+afk add --source roadmap.md "implement the next checklist item"
+```
+
+Inspect the queue:
+
+```sh
+afk ls
+afk count
+afk next
+afk explain 1
+```
+
+Claim and finish one task manually:
+
+```sh
+task=$(afk add "fix one small bug")
+afk pop --lease 30m --worker codex:1
+# do the work
+afk done "$task"
+```
+
+If work fails, keep the attempt history and return it to the queue later:
+
+```sh
+task=$(afk add "call the protected API")
+afk pop --lease 30m --worker codex:1
+afk fail "$task" "missing credentials"
+afk retry "$task"
+```
+
+## Task Ordering
+
+Use `--blocked-by` when one task must finish before another task can run.
+
+```sh
+schema=$(afk add "add migration")
+tests=$(afk add --blocked-by "$schema" "update migration tests")
+afk deps ls "$tests"
+```
+
+The second task stays `pending`, but it is not ready until the first task is `done`.
+
+```sh
+afk ready
+afk why "$tests"
+```
+
+Dependency commands:
+
+```sh
+afk deps add 43 --blocked-by 42
+afk deps rm 43 --blocked-by 42
+afk deps ls 43 --json
+```
+
+Rules:
+
+- `--blocked-by none` records no dependency.
+- `--after ID` is an alias for `--blocked-by ID`.
+- Missing dependency ids, self-dependencies, and dependency cycles are rejected.
+- A failed prerequisite does not auto-fail dependent tasks; `afk why` reports the failed prerequisite.
+
+## Scheduler Controls
+
+Manual blocks pause a task without changing its lifecycle status:
+
+```sh
+afk block 43 "waiting on API credentials"
+afk why 43
+afk unblock 43
+```
+
+Resource locks prevent two active workers from touching the same resource at the same time:
+
+```sh
+afk add --resource repo:/path/to/project "edit package A"
+afk add --resource repo:/path/to/project "edit package B"
+```
+
+If one task with that resource is `working`, the next task with the same resource is not ready until the active claim is completed, failed, reset, or its lease expires.
+
+Readiness applies consistently to:
+
+- `afk ready`
+- `afk why <id>`
+- `afk next`
+- `afk pop`
+- `afk run`
+
+## Leases And Recovery
+
+Leases make abandoned work recoverable.
+
+```sh
+afk pop --lease 30m --worker codex:1
+afk heartbeat 42 --worker codex:1 --lease 30m
+afk requeue-stale --older-than 2h
+```
+
+Behavior:
+
+- `afk pop --lease DURATION` records a claim expiration.
+- `afk heartbeat` extends the lease, but only for the worker that owns the active attempt.
+- `afk requeue-stale` returns expired or old `working` tasks to `pending`.
+- `afk explain <id>` shows lifecycle events and execution attempts.
+
+## Runner Mode
+
+`afk run` is the built-in worker loop. It claims tasks through the same atomic scheduler path as `afk pop`, then runs a user-provided shell command template.
+
+Preview what would run:
+
+```sh
+afk run --dry-run --exec 'afk prompt --task {{id}}'
+```
+
+Run one ready task:
+
+```sh
+afk run --exec 'afk prompt --task {{id}}'
+```
+
+Run up to five tasks or stop after 30 minutes:
+
+```sh
+afk run --exec 'afk prompt --task {{id}}' --limit 5 --max-minutes 30
+```
+
+Runner flags:
+
+| Flag | Default | Behavior |
+|---|---:|---|
+| `--exec TEMPLATE` | empty | Shell command to run for each claimed task. Required unless `--dry-run` is set. |
+| `--dry-run` | `false` | Print runnable tasks and waiting reasons without claiming work. |
+| `--limit N` | `1` | Maximum tasks to process. `0` means no limit. |
+| `--max-minutes N` | `0` | Stop claiming after this many minutes. `0` means no time limit. |
+| `--lease DURATION` | `30m` | Lease duration for each claim and heartbeat. |
+| `--worker ID` | `hostname:pid` | Worker id recorded on attempts and heartbeats. |
+| `--workers N` | `1` | Reserved for parallel runners. Values above `1` are rejected in this version. |
+
+Template variables:
+
+| Variable | Value |
+|---|---|
+| `{{id}}` | Task id. |
+| `{{cwd}}` | Task working directory metadata. |
+| `{{body}}` | Task body. |
+| `{{queue}}` | Resolved SQLite queue path. |
+
+The runner also sets `AFK_QUEUE` for subprocesses so nested `afk` commands use the same queue.
+
+Important failure behavior: if the command exits while the task is still `working`, `afk run` marks the task failed. Worker commands should call `afk done <id>` or `afk fail <id> <reason>` when they finish the real work.
+
+## Claude Code Loop
+
+`afk prompt` emits queue instructions for Claude Code.
+
+```sh
+afk prompt
+/loop 15m "run ! afk prompt"
+```
+
+To focus the loop on one task:
+
+```sh
+/loop 10m "run ! afk prompt --task 42"
+```
+
+`afk prompt` uses the same queue path resolution as other commands, but it does not open or create the SQLite database.
+
+## Task Metadata
+
+`afk add` records the current working directory by default so workers have context for relative paths and underspecified task bodies.
+
+```sh
+afk add --cwd /path/to/repo "run local tests"
+afk add --no-cwd "context-free task"
+afk add --agent codex --group release-1 "draft release notes"
+```
+
+Supported metadata flags:
+
+| Flag | Behavior |
+|---|---|
+| `--tag VALUE` | Repeatable task tag. |
+| `--priority VALUE` | Scheduling and reporting priority metadata. |
+| `--cwd PATH` | Working-directory context; defaults to the invocation directory. |
+| `--no-cwd` | Do not record a working directory. |
+| `--source VALUE` | Origin such as `cli`, `roadmap.md`, `todo-scan`, or `go-test`. |
+| `--agent VALUE` | Preferred worker profile metadata. |
+| `--group VALUE` | Grouping key for related tasks. |
+| `--resource VALUE` | Resource key such as a repo or path lock target. |
+| `--blocked-by ID|none` | Task dependency. |
+| `--after ID` | Alias for `--blocked-by ID`. |
+
+## Configuration
+
+Queue database path resolution order:
+
+1. `--queue <path>` flag
+2. `AFK_QUEUE` environment variable
+3. `~/.claude/queue/tasks.sqlite`
+
+For migration compatibility, a path ending in `.jsonl` is treated as the legacy import path and stored next to a `.sqlite` database with the same basename. For example, `--queue /tmp/tasks.jsonl` writes to `/tmp/tasks.sqlite` and imports `/tmp/tasks.jsonl` once.
+
+## Command Reference
+
+| Command | Behavior |
+|---|---|
+| `afk add <body>` | Append a new pending task and print its id. |
+| `afk ls [--status STATUS] [--json]` | List tasks, optionally filtered by status. |
+| `afk show <id> [--json]` | Show one task. |
+| `afk count` | Tally tasks per status. |
+| `afk next` | Show the task `afk pop` would claim without mutation. |
+| `afk ready [--json]` | List pending tasks ready to run. |
+| `afk why <id> [--json]` | Explain why a task is or is not ready. |
+| `afk explain <id> [--json]` | Show task metadata, events, and attempts. |
+| `afk deps add <id> --blocked-by <other-id>` | Add a dependency. |
+| `afk deps rm <id> --blocked-by <other-id>` | Remove a dependency. |
+| `afk deps ls <id> [--json]` | List dependencies. |
+| `afk block <id> <reason>` | Manually block a pending task from scheduling. |
+| `afk unblock <id>` | Remove a manual block. |
+| `afk pop [--lease DURATION] [--worker ID]` | Atomically claim the next ready task and print it as JSON. |
+| `afk run --exec TEMPLATE [--limit N]` | Claim ready tasks and run a shell command template. |
+| `afk heartbeat <id> --worker ID [--lease DURATION]` | Extend a worker-owned task lease. |
+| `afk requeue-stale [--older-than DURATION]` | Reset stale `working` tasks to `pending`. |
+| `afk done <id>` | Mark a task done. |
+| `afk fail <id> <reason>` | Mark a task failed. |
+| `afk retry <id>` | Reset a failed task to pending while preserving attempt history. |
+| `afk reset <id>` | Set a task back to pending and clear started, finished, lease, and error fields. |
+| `afk edit <id> <new-body>` | Replace a task body. |
+| `afk rm <id>` | Remove one task. |
+| `afk prune [--status LIST]` | Remove tasks by status. Defaults to `done,failed`. |
+| `afk prompt [--output PATH]` | Generate loop instruction Markdown. |
+| `afk prompt --task <id>` | Generate a focused prompt for one queued task. |
+| `afk doctor` | Check queue health and installation basics. |
+
+## Architecture
+
+- `cmd/afk`: process setup and signal-aware command execution.
+- `internal/commands`: Cobra commands, argument parsing, and presentation wiring.
+- `internal/app`: task use cases such as add, list, pop, run, done, fail, reset, and prune.
+- `internal/store`: persistence boundary; the SQLite implementation owns atomic claim/update operations and one-time JSONL import.
+- `internal/task`: persisted task schema, statuses, metadata, events, attempts, dependencies, and blocks.
+- `internal/runner`: built-in command-template runner.
+- `internal/output`: human and JSON/JSONL CLI rendering.
+- `internal/prompt`: generated loop instruction Markdown.

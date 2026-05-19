@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"fmt"
+	"os"
 	"strconv"
 	"time"
 
@@ -21,6 +22,20 @@ type ExplainData struct {
 	Task     task.Task      `json:"task"`
 	Events   []task.Event   `json:"events"`
 	Attempts []task.Attempt `json:"attempts"`
+}
+
+// NotReadyReason explains why a task is not ready to be claimed.
+type NotReadyReason struct {
+	TaskID string `json:"task_id"`
+	Kind   string `json:"kind"`
+	Detail string `json:"detail"`
+}
+
+// ReadinessData contains a task and its computed readiness reasons.
+type ReadinessData struct {
+	Task    task.Task        `json:"task"`
+	Ready   bool             `json:"ready"`
+	Reasons []NotReadyReason `json:"not_ready_reasons,omitempty"`
 }
 
 // NewService constructs a Service.
@@ -97,17 +112,15 @@ func (s *Service) Count(ctx context.Context) (map[task.Status]int, error) {
 
 // Next returns the first pending task without mutation.
 func (s *Service) Next(ctx context.Context) (*task.Task, error) {
-	tasks, err := s.store.List(ctx)
+	tasks, err := s.store.Ready(ctx, store.ReadyOptions{Now: s.now()})
 	if err != nil {
 		return nil, err
 	}
-	for _, t := range tasks {
-		if t.Status == task.StatusPending {
-			next := t
-			return &next, nil
-		}
+	if len(tasks) == 0 {
+		return nil, nil
 	}
-	return nil, nil
+	next := tasks[0]
+	return &next, nil
 }
 
 // Edit replaces a task body.
@@ -157,11 +170,96 @@ func (s *Service) Pop(ctx context.Context) (*task.Task, error) {
 
 // PopWithLease atomically claims the next pending task, optionally setting a lease.
 func (s *Service) PopWithLease(ctx context.Context, lease time.Duration) (*task.Task, error) {
+	return s.PopWithLeaseForWorker(ctx, lease, defaultWorkerID(), "")
+}
+
+// PopWithLeaseForWorker atomically claims the next ready task for workerID.
+func (s *Service) PopWithLeaseForWorker(ctx context.Context, lease time.Duration, workerID, agent string) (*task.Task, error) {
+	if workerID == "" {
+		workerID = defaultWorkerID()
+	}
 	var expires time.Time
 	if lease > 0 {
 		expires = s.now().Add(lease)
 	}
-	return s.store.ClaimNext(ctx, s.now(), expires)
+	return s.store.ClaimNextForWorker(ctx, s.now(), expires, workerID, agent)
+}
+
+// Heartbeat extends a worker-owned active claim lease.
+func (s *Service) Heartbeat(ctx context.Context, taskID, workerID string, lease time.Duration) error {
+	if workerID == "" {
+		workerID = defaultWorkerID()
+	}
+	var expires time.Time
+	if lease > 0 {
+		expires = s.now().Add(lease)
+	}
+	return s.store.Heartbeat(ctx, taskID, workerID, s.now(), expires)
+}
+
+// AddDependency records that taskID is blocked by dependsOnID.
+func (s *Service) AddDependency(ctx context.Context, taskID, dependsOnID string) error {
+	return s.store.AddDependency(ctx, taskID, dependsOnID)
+}
+
+// RemoveDependency removes a blocked-by edge.
+func (s *Service) RemoveDependency(ctx context.Context, taskID, dependsOnID string) error {
+	return s.store.RemoveDependency(ctx, taskID, dependsOnID)
+}
+
+// Dependencies returns the tasks that taskID is blocked by.
+func (s *Service) Dependencies(ctx context.Context, taskID string) ([]task.Dependency, error) {
+	return s.store.Dependencies(ctx, taskID)
+}
+
+// Block records a manual scheduling block.
+func (s *Service) Block(ctx context.Context, taskID, reason string) error {
+	return s.store.Block(ctx, taskID, reason)
+}
+
+// Unblock removes a manual scheduling block.
+func (s *Service) Unblock(ctx context.Context, taskID string) error {
+	return s.store.Unblock(ctx, taskID)
+}
+
+// Ready returns pending tasks with no unfinished dependencies.
+func (s *Service) Ready(ctx context.Context) ([]task.Task, error) {
+	tasks, err := s.store.List(ctx)
+	if err != nil {
+		return nil, err
+	}
+	byID := tasksByID(tasks)
+	ready := make([]task.Task, 0, len(tasks))
+	for _, t := range tasks {
+		if t.Status != task.StatusPending {
+			continue
+		}
+		reasons, err := s.notReadyReasons(ctx, t.ID, byID)
+		if err != nil {
+			return nil, err
+		}
+		if len(reasons) == 0 {
+			ready = append(ready, t)
+		}
+	}
+	return ready, nil
+}
+
+// Why returns computed readiness information for one task.
+func (s *Service) Why(ctx context.Context, id string) (ReadinessData, error) {
+	t, err := s.Show(ctx, id)
+	if err != nil {
+		return ReadinessData{}, err
+	}
+	tasks, err := s.store.List(ctx)
+	if err != nil {
+		return ReadinessData{}, err
+	}
+	reasons, err := s.notReadyReasons(ctx, id, tasksByID(tasks))
+	if err != nil {
+		return ReadinessData{}, err
+	}
+	return ReadinessData{Task: t, Ready: t.Status == task.StatusPending && len(reasons) == 0, Reasons: reasons}, nil
 }
 
 // Explain returns task state and lifecycle history.
@@ -229,6 +327,77 @@ func filterByStatus(tasks []task.Task, status string) []task.Task {
 	return out
 }
 
+func tasksByID(tasks []task.Task) map[string]task.Task {
+	byID := make(map[string]task.Task, len(tasks))
+	for _, t := range tasks {
+		byID[t.ID] = t
+	}
+	return byID
+}
+
+func (s *Service) notReadyReasons(ctx context.Context, id string, tasks map[string]task.Task) ([]NotReadyReason, error) {
+	t, ok := tasks[id]
+	if !ok {
+		return nil, fmt.Errorf("task %s: %w", id, ErrNotFound)
+	}
+	block, err := s.store.BlockForTask(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	var reasons []NotReadyReason
+	if block != nil {
+		reasons = append(reasons, NotReadyReason{TaskID: id, Kind: "manual_block", Detail: block.Reason})
+	}
+	if t.ResourceKey != "" {
+		nowText := formatTime(s.now())
+		for _, active := range tasks {
+			if active.ID == id || active.Status != task.StatusWorking || active.ResourceKey != t.ResourceKey {
+				continue
+			}
+			if active.LeaseExpires == "" || active.LeaseExpires > nowText {
+				reasons = append(reasons, NotReadyReason{TaskID: id, Kind: "resource_locked", Detail: active.ID})
+				break
+			}
+		}
+	}
+	deps, err := s.store.Dependencies(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	for _, dep := range deps {
+		depTask, ok := tasks[dep.DependsOnID]
+		if !ok {
+			reasons = append(reasons, NotReadyReason{
+				TaskID: id,
+				Kind:   "dependency_missing",
+				Detail: dep.DependsOnID,
+			})
+			continue
+		}
+		switch depTask.Status {
+		case task.StatusDone:
+			continue
+		case task.StatusPending:
+			reasons = append(reasons, NotReadyReason{TaskID: id, Kind: "dependency_pending", Detail: dep.DependsOnID})
+		case task.StatusWorking:
+			reasons = append(reasons, NotReadyReason{TaskID: id, Kind: "dependency_working", Detail: dep.DependsOnID})
+		case task.StatusFailed:
+			reasons = append(reasons, NotReadyReason{TaskID: id, Kind: "dependency_failed", Detail: dep.DependsOnID})
+		default:
+			reasons = append(reasons, NotReadyReason{TaskID: id, Kind: "dependency_not_done", Detail: dep.DependsOnID})
+		}
+	}
+	return reasons, nil
+}
+
 func formatTime(now time.Time) string {
 	return now.UTC().Format(time.RFC3339)
+}
+
+func defaultWorkerID() string {
+	host, err := os.Hostname()
+	if err != nil || host == "" {
+		host = "localhost"
+	}
+	return fmt.Sprintf("%s:%d", host, os.Getpid())
 }

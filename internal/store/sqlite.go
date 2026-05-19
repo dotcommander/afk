@@ -68,6 +68,7 @@ func NewSQLite(ctx context.Context, paths Paths) (*SQLiteStore, error) {
 	if err != nil {
 		return nil, fmt.Errorf("store: open sqlite %s: %w", paths.SQLitePath, err)
 	}
+	db.SetMaxOpenConns(1)
 	s := &SQLiteStore{db: db}
 	if err := s.init(ctx, paths.JSONLPath); err != nil {
 		_ = db.Close()
@@ -107,6 +108,63 @@ ORDER BY ordinal, rowid`)
 	return tasks, nil
 }
 
+// Ready returns tasks that are currently eligible to be claimed, in scheduler order.
+func (s *SQLiteStore) Ready(ctx context.Context, opts ReadyOptions) ([]task.Task, error) {
+	now := opts.Now
+	if now.IsZero() {
+		now = time.Now()
+	}
+	rows, err := s.db.QueryContext(ctx, `
+SELECT id, created, status, body, started, lease_expires, finished, error,
+	priority, tags, cwd, source, agent, group_id, resource_key
+FROM tasks
+WHERE status = ?
+AND NOT EXISTS (
+	SELECT 1
+	FROM task_dependencies d
+	JOIN tasks prereq ON prereq.id = d.depends_on_id
+	WHERE d.task_id = tasks.id
+	AND prereq.status != ?
+)
+AND NOT EXISTS (
+	SELECT 1
+	FROM task_blocks b
+	WHERE b.task_id = tasks.id
+)
+AND (
+	resource_key = ''
+	OR NOT EXISTS (
+		SELECT 1
+		FROM tasks active
+		WHERE active.status = ?
+		AND active.resource_key = tasks.resource_key
+		AND active.id != tasks.id
+		AND (
+			active.lease_expires = ''
+			OR active.lease_expires > ?
+		)
+	)
+)
+ORDER BY ordinal, rowid`, string(task.StatusPending), string(task.StatusDone), string(task.StatusWorking), now.UTC().Format(time.RFC3339))
+	if err != nil {
+		return nil, fmt.Errorf("store: ready: %w", err)
+	}
+	defer rows.Close() //nolint:errcheck // rows.Err checked below
+
+	var tasks []task.Task
+	for rows.Next() {
+		t, err := scanTask(rows)
+		if err != nil {
+			return nil, err
+		}
+		tasks = append(tasks, t)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("store: ready rows: %w", err)
+	}
+	return tasks, nil
+}
+
 // Events returns durable lifecycle events for a task.
 func (s *SQLiteStore) Events(ctx context.Context, taskID string) ([]task.Event, error) {
 	rows, err := s.db.QueryContext(ctx, `
@@ -138,7 +196,7 @@ ORDER BY id`, taskID)
 // Attempts returns execution attempts for a task.
 func (s *SQLiteStore) Attempts(ctx context.Context, taskID string) ([]task.Attempt, error) {
 	rows, err := s.db.QueryContext(ctx, `
-SELECT id, task_id, started, finished, status, error
+SELECT id, task_id, started, finished, status, error, worker_id, agent
 FROM task_attempts
 WHERE task_id = ?
 ORDER BY id`, taskID)
@@ -151,7 +209,7 @@ ORDER BY id`, taskID)
 	for rows.Next() {
 		var attempt task.Attempt
 		var status string
-		if err := rows.Scan(&attempt.ID, &attempt.TaskID, &attempt.Started, &attempt.Finished, &status, &attempt.Error); err != nil {
+		if err := rows.Scan(&attempt.ID, &attempt.TaskID, &attempt.Started, &attempt.Finished, &status, &attempt.Error, &attempt.WorkerID, &attempt.Agent); err != nil {
 			return nil, fmt.Errorf("store: scan attempt: %w", err)
 		}
 		attempt.Status = task.Status(status)
@@ -328,6 +386,11 @@ VALUES (?, ?, ?, ?)`, id, string(task.EventPruned), nowString(), string(status))
 
 // ClaimNext atomically marks the first pending task working and returns it.
 func (s *SQLiteStore) ClaimNext(ctx context.Context, now time.Time, leaseExpires time.Time) (*task.Task, error) {
+	return s.ClaimNextForWorker(ctx, now, leaseExpires, "", "")
+}
+
+// ClaimNextForWorker atomically marks the first ready task working and records worker metadata.
+func (s *SQLiteStore) ClaimNextForWorker(ctx context.Context, now time.Time, leaseExpires time.Time, workerID, agent string) (*task.Task, error) {
 	started := now.UTC().Format(time.RFC3339)
 	lease := ""
 	if !leaseExpires.IsZero() {
@@ -346,12 +409,38 @@ WHERE id = (
 	SELECT id
 	FROM tasks
 	WHERE status = ?
+	AND NOT EXISTS (
+		SELECT 1
+		FROM task_dependencies d
+		JOIN tasks prereq ON prereq.id = d.depends_on_id
+		WHERE d.task_id = tasks.id
+		AND prereq.status != ?
+	)
+	AND NOT EXISTS (
+		SELECT 1
+		FROM task_blocks b
+		WHERE b.task_id = tasks.id
+	)
+	AND (
+		resource_key = ''
+		OR NOT EXISTS (
+			SELECT 1
+			FROM tasks active
+			WHERE active.status = ?
+			AND active.resource_key = tasks.resource_key
+			AND active.id != tasks.id
+			AND (
+				active.lease_expires = ''
+				OR active.lease_expires > ?
+			)
+		)
+	)
 	ORDER BY ordinal, rowid
 	LIMIT 1
 )
 RETURNING id, created, status, body, started, lease_expires, finished, error,
 	priority, tags, cwd, source, agent, group_id, resource_key`,
-		string(task.StatusWorking), started, lease, string(task.StatusPending))
+		string(task.StatusWorking), started, lease, string(task.StatusPending), string(task.StatusDone), string(task.StatusWorking), started)
 	t, err := scanTask(row)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -363,14 +452,218 @@ RETURNING id, created, status, body, started, lease_expires, finished, error,
 		return nil, err
 	}
 	if _, err := tx.ExecContext(ctx, `
-INSERT INTO task_attempts (task_id, started, status, error)
-VALUES (?, ?, ?, ?)`, t.ID, started, string(task.StatusWorking), ""); err != nil {
+INSERT INTO task_attempts (task_id, started, status, error, worker_id, agent)
+VALUES (?, ?, ?, ?, ?, ?)`, t.ID, started, string(task.StatusWorking), "", workerID, agent); err != nil {
 		return nil, fmt.Errorf("store: insert attempt: %w", err)
 	}
 	if err := commit(tx); err != nil {
 		return nil, err
 	}
 	return &t, nil
+}
+
+// Heartbeat extends the lease for a worker-owned active attempt.
+func (s *SQLiteStore) Heartbeat(ctx context.Context, taskID, workerID string, now time.Time, leaseExpires time.Time) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("store: begin heartbeat: %w", err)
+	}
+	defer rollback(tx)
+
+	t, err := getTask(ctx, tx, taskID)
+	if err != nil {
+		return err
+	}
+	if t.Status != task.StatusWorking {
+		return ErrInvalidState
+	}
+	var owner string
+	err = tx.QueryRowContext(ctx, `
+SELECT worker_id
+FROM task_attempts
+WHERE task_id = ? AND finished = ''
+ORDER BY id DESC
+LIMIT 1`, taskID).Scan(&owner)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrInvalidState
+		}
+		return fmt.Errorf("store: heartbeat owner %s: %w", taskID, err)
+	}
+	if owner != workerID {
+		return ErrWorkerMismatch
+	}
+	lease := ""
+	if !leaseExpires.IsZero() {
+		lease = leaseExpires.UTC().Format(time.RFC3339)
+	}
+	if _, err := tx.ExecContext(ctx, `
+UPDATE tasks
+SET lease_expires = ?
+WHERE id = ?`, lease, taskID); err != nil {
+		return fmt.Errorf("store: heartbeat update %s: %w", taskID, err)
+	}
+	if err := insertEvent(ctx, tx, taskID, task.EventHeartbeat, now.UTC().Format(time.RFC3339), workerID); err != nil {
+		return err
+	}
+	return commit(tx)
+}
+
+// AddDependency records that taskID is blocked by dependsOnID.
+func (s *SQLiteStore) AddDependency(ctx context.Context, taskID, dependsOnID string) error {
+	if taskID == "" || dependsOnID == "" || taskID == dependsOnID {
+		return ErrInvalidDependency
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("store: begin add dependency: %w", err)
+	}
+	defer rollback(tx)
+
+	if _, err := getTask(ctx, tx, taskID); err != nil {
+		return err
+	}
+	if _, err := getTask(ctx, tx, dependsOnID); err != nil {
+		return err
+	}
+	cycle, err := dependencyPathExists(ctx, tx, dependsOnID, taskID)
+	if err != nil {
+		return err
+	}
+	if cycle {
+		return ErrDependencyCycle
+	}
+
+	created := nowString()
+	if _, err := tx.ExecContext(ctx, `
+INSERT INTO task_dependencies (task_id, depends_on_id, created)
+VALUES (?, ?, ?)
+ON CONFLICT(task_id, depends_on_id) DO NOTHING`, taskID, dependsOnID, created); err != nil {
+		return fmt.Errorf("store: add dependency %s -> %s: %w", taskID, dependsOnID, err)
+	}
+	if err := insertEvent(ctx, tx, taskID, task.EventDependencyAdded, created, dependsOnID); err != nil {
+		return err
+	}
+	return commit(tx)
+}
+
+// RemoveDependency removes a blocked-by edge.
+func (s *SQLiteStore) RemoveDependency(ctx context.Context, taskID, dependsOnID string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("store: begin remove dependency: %w", err)
+	}
+	defer rollback(tx)
+
+	res, err := tx.ExecContext(ctx, `
+DELETE FROM task_dependencies
+WHERE task_id = ? AND depends_on_id = ?`, taskID, dependsOnID)
+	if err != nil {
+		return fmt.Errorf("store: remove dependency %s -> %s: %w", taskID, dependsOnID, err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("store: remove dependency rows affected: %w", err)
+	}
+	if n == 0 {
+		return ErrDependencyNotFound
+	}
+	if err := insertEvent(ctx, tx, taskID, task.EventDependencyRemoved, nowString(), dependsOnID); err != nil {
+		return err
+	}
+	return commit(tx)
+}
+
+// Dependencies returns the tasks that taskID is blocked by.
+func (s *SQLiteStore) Dependencies(ctx context.Context, taskID string) ([]task.Dependency, error) {
+	rows, err := s.db.QueryContext(ctx, `
+SELECT task_id, depends_on_id, created
+FROM task_dependencies
+WHERE task_id = ?
+ORDER BY created, depends_on_id`, taskID)
+	if err != nil {
+		return nil, fmt.Errorf("store: dependencies: %w", err)
+	}
+	defer rows.Close() //nolint:errcheck // rows.Err checked below
+
+	var deps []task.Dependency
+	for rows.Next() {
+		var dep task.Dependency
+		if err := rows.Scan(&dep.TaskID, &dep.DependsOnID, &dep.Created); err != nil {
+			return nil, fmt.Errorf("store: scan dependency: %w", err)
+		}
+		deps = append(deps, dep)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("store: dependency rows: %w", err)
+	}
+	return deps, nil
+}
+
+// Block records or updates a manual scheduling block.
+func (s *SQLiteStore) Block(ctx context.Context, taskID, reason string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("store: begin block: %w", err)
+	}
+	defer rollback(tx)
+
+	if _, err := getTask(ctx, tx, taskID); err != nil {
+		return err
+	}
+	created := nowString()
+	if _, err := tx.ExecContext(ctx, `
+INSERT INTO task_blocks (task_id, reason, created, created_by)
+VALUES (?, ?, ?, '')
+ON CONFLICT(task_id) DO UPDATE SET reason = excluded.reason, created = excluded.created`,
+		taskID, reason, created); err != nil {
+		return fmt.Errorf("store: block task %s: %w", taskID, err)
+	}
+	if err := insertEvent(ctx, tx, taskID, task.EventBlocked, created, reason); err != nil {
+		return err
+	}
+	return commit(tx)
+}
+
+// Unblock removes a manual scheduling block.
+func (s *SQLiteStore) Unblock(ctx context.Context, taskID string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("store: begin unblock: %w", err)
+	}
+	defer rollback(tx)
+
+	res, err := tx.ExecContext(ctx, `DELETE FROM task_blocks WHERE task_id = ?`, taskID)
+	if err != nil {
+		return fmt.Errorf("store: unblock task %s: %w", taskID, err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("store: unblock rows affected: %w", err)
+	}
+	if n == 0 {
+		return ErrBlockNotFound
+	}
+	if err := insertEvent(ctx, tx, taskID, task.EventUnblocked, nowString(), ""); err != nil {
+		return err
+	}
+	return commit(tx)
+}
+
+// BlockForTask returns the manual scheduling block for taskID, if present.
+func (s *SQLiteStore) BlockForTask(ctx context.Context, taskID string) (*task.Block, error) {
+	row := s.db.QueryRowContext(ctx, `
+SELECT task_id, reason, created, created_by
+FROM task_blocks
+WHERE task_id = ?`, taskID)
+	var block task.Block
+	if err := row.Scan(&block.TaskID, &block.Reason, &block.Created, &block.CreatedBy); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("store: block for task %s: %w", taskID, err)
+	}
+	return &block, nil
 }
 
 func (s *SQLiteStore) init(ctx context.Context, jsonlPath string) error {
@@ -418,9 +711,24 @@ CREATE TABLE IF NOT EXISTS task_attempts (
 	started TEXT NOT NULL,
 	finished TEXT NOT NULL DEFAULT '',
 	status TEXT NOT NULL,
-	error TEXT NOT NULL DEFAULT ''
+	error TEXT NOT NULL DEFAULT '',
+	worker_id TEXT NOT NULL DEFAULT '',
+	agent TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS task_attempts_task_idx ON task_attempts(task_id, id);
+CREATE TABLE IF NOT EXISTS task_dependencies (
+	task_id TEXT NOT NULL,
+	depends_on_id TEXT NOT NULL,
+	created TEXT NOT NULL,
+	PRIMARY KEY (task_id, depends_on_id)
+);
+CREATE INDEX IF NOT EXISTS task_dependencies_depends_on_idx ON task_dependencies(depends_on_id);
+CREATE TABLE IF NOT EXISTS task_blocks (
+	task_id TEXT PRIMARY KEY,
+	reason TEXT NOT NULL,
+	created TEXT NOT NULL,
+	created_by TEXT NOT NULL DEFAULT ''
+);
 `); err != nil {
 		return fmt.Errorf("store: create schema: %w", err)
 	}
@@ -503,6 +811,8 @@ func (s *SQLiteStore) migrateTaskMetadata(ctx context.Context) error {
 		{"group_id", `ALTER TABLE tasks ADD COLUMN group_id TEXT NOT NULL DEFAULT ''`},
 		{"resource_key", `ALTER TABLE tasks ADD COLUMN resource_key TEXT NOT NULL DEFAULT ''`},
 		{"lease_expires", `ALTER TABLE tasks ADD COLUMN lease_expires TEXT NOT NULL DEFAULT ''`},
+		{"task_attempts.worker_id", `ALTER TABLE task_attempts ADD COLUMN worker_id TEXT NOT NULL DEFAULT ''`},
+		{"task_attempts.agent", `ALTER TABLE task_attempts ADD COLUMN agent TEXT NOT NULL DEFAULT ''`},
 	}
 	for _, col := range columns {
 		if _, err := s.db.ExecContext(ctx, col.sql); err != nil && !isDuplicateColumn(err) {
@@ -545,6 +855,31 @@ WHERE id = ?`, id)
 		return task.Task{}, err
 	}
 	return t, nil
+}
+
+func dependencyPathExists(ctx context.Context, tx *sql.Tx, fromID, toID string) (bool, error) {
+	var found int
+	err := tx.QueryRowContext(ctx, `
+WITH RECURSIVE dependency_path(id) AS (
+	SELECT depends_on_id
+	FROM task_dependencies
+	WHERE task_id = ?
+	UNION
+	SELECT d.depends_on_id
+	FROM task_dependencies d
+	JOIN dependency_path p ON d.task_id = p.id
+)
+SELECT 1
+FROM dependency_path
+WHERE id = ?
+LIMIT 1`, fromID, toID).Scan(&found)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return false, nil
+		}
+		return false, fmt.Errorf("store: dependency path %s -> %s: %w", fromID, toID, err)
+	}
+	return true, nil
 }
 
 func nextOrdinal(ctx context.Context, tx *sql.Tx) (int, error) {

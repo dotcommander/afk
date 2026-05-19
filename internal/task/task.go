@@ -55,16 +55,21 @@ type AddOptions struct {
 type EventType string
 
 const (
-	EventAdded    EventType = "added"
-	EventClaimed  EventType = "claimed"
-	EventDone     EventType = "done"
-	EventFailed   EventType = "failed"
-	EventReset    EventType = "reset"
-	EventEdited   EventType = "edited"
-	EventRemoved  EventType = "removed"
-	EventPruned   EventType = "pruned"
-	EventRetried  EventType = "retried"
-	EventRequeued EventType = "requeued"
+	EventAdded             EventType = "added"
+	EventClaimed           EventType = "claimed"
+	EventDone              EventType = "done"
+	EventFailed            EventType = "failed"
+	EventReset             EventType = "reset"
+	EventEdited            EventType = "edited"
+	EventRemoved           EventType = "removed"
+	EventPruned            EventType = "pruned"
+	EventRetried           EventType = "retried"
+	EventRequeued          EventType = "requeued"
+	EventHeartbeat         EventType = "heartbeat"
+	EventBlocked           EventType = "blocked"
+	EventUnblocked         EventType = "unblocked"
+	EventDependencyAdded   EventType = "dependency_added"
+	EventDependencyRemoved EventType = "dependency_removed"
 )
 
 // Event records a task lifecycle transition.
@@ -84,6 +89,23 @@ type Attempt struct {
 	Finished string `json:"finished,omitzero"`
 	Status   Status `json:"status"`
 	Error    string `json:"error,omitzero"`
+	WorkerID string `json:"worker_id,omitzero"`
+	Agent    string `json:"agent,omitzero"`
+}
+
+// Dependency records that TaskID is blocked by DependsOnID.
+type Dependency struct {
+	TaskID      string `json:"task_id"`
+	DependsOnID string `json:"depends_on_id"`
+	Created     string `json:"created"`
+}
+
+// Block records a manual scheduling block for a task.
+type Block struct {
+	TaskID    string `json:"task_id"`
+	Reason    string `json:"reason"`
+	Created   string `json:"created"`
+	CreatedBy string `json:"created_by,omitzero"`
 }
 
 // ValidStatus reports whether s is a known status.

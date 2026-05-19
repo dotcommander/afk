@@ -103,6 +103,22 @@ func WriteCount(w io.Writer, tally map[task.Status]int) error {
 	return nil
 }
 
+// WriteDependencies renders blocked-by dependencies.
+func WriteDependencies(w io.Writer, deps []task.Dependency, asJSON bool) error {
+	if asJSON {
+		return WriteJSONLine(w, deps, "dependencies")
+	}
+	if len(deps) == 0 {
+		return nil
+	}
+	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(tw, "TASK\tBLOCKED_BY\tCREATED") //nolint:errcheck // tabwriter buffers; errors surface at Flush
+	for _, dep := range deps {
+		fmt.Fprintf(tw, "%s\t%s\t%s\n", dep.TaskID, dep.DependsOnID, dep.Created) //nolint:errcheck // tabwriter buffers; errors surface at Flush
+	}
+	return tw.Flush()
+}
+
 // WriteExplain renders a task and its durable lifecycle history.
 func WriteExplain(w io.Writer, t task.Task, events []task.Event, attempts []task.Attempt, asJSON bool) error {
 	if asJSON {
@@ -160,6 +176,16 @@ func WriteExplain(w io.Writer, t task.Task, events []task.Event, attempts []task
 		}
 		if attempt.Error != "" {
 			if _, err := fmt.Fprintf(w, "  error=%s", attempt.Error); err != nil {
+				return fmt.Errorf("explain: write: %w", err)
+			}
+		}
+		if attempt.WorkerID != "" {
+			if _, err := fmt.Fprintf(w, "  worker=%s", attempt.WorkerID); err != nil {
+				return fmt.Errorf("explain: write: %w", err)
+			}
+		}
+		if attempt.Agent != "" {
+			if _, err := fmt.Fprintf(w, "  agent=%s", attempt.Agent); err != nil {
 				return fmt.Errorf("explain: write: %w", err)
 			}
 		}

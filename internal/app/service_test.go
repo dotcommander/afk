@@ -120,6 +120,129 @@ func TestServiceAddWithOptionsStoresMetadata(t *testing.T) {
 	require.Equal(t, "repo:/tmp/repo", got.ResourceKey)
 }
 
+func TestServiceDependencies(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	svc := newService(t)
+
+	blocked, err := svc.Add(ctx, "blocked")
+	require.NoError(t, err)
+	prereq, err := svc.Add(ctx, "prereq")
+	require.NoError(t, err)
+
+	require.NoError(t, svc.AddDependency(ctx, blocked, prereq))
+	deps, err := svc.Dependencies(ctx, blocked)
+	require.NoError(t, err)
+	require.Len(t, deps, 1)
+	require.Equal(t, blocked, deps[0].TaskID)
+	require.Equal(t, prereq, deps[0].DependsOnID)
+
+	require.NoError(t, svc.RemoveDependency(ctx, blocked, prereq))
+	deps, err = svc.Dependencies(ctx, blocked)
+	require.NoError(t, err)
+	require.Empty(t, deps)
+}
+
+func TestServiceReadyAndWhy(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	svc := newService(t)
+
+	blocked, err := svc.Add(ctx, "blocked")
+	require.NoError(t, err)
+	prereq, err := svc.Add(ctx, "prereq")
+	require.NoError(t, err)
+	independent, err := svc.Add(ctx, "independent")
+	require.NoError(t, err)
+	require.NoError(t, svc.AddDependency(ctx, blocked, prereq))
+
+	ready, err := svc.Ready(ctx)
+	require.NoError(t, err)
+	require.Len(t, ready, 2)
+	require.Equal(t, prereq, ready[0].ID)
+	require.Equal(t, independent, ready[1].ID)
+
+	why, err := svc.Why(ctx, blocked)
+	require.NoError(t, err)
+	require.False(t, why.Ready)
+	require.Len(t, why.Reasons, 1)
+	require.Equal(t, "dependency_pending", why.Reasons[0].Kind)
+	require.Equal(t, prereq, why.Reasons[0].Detail)
+
+	require.NoError(t, svc.Done(ctx, prereq))
+	why, err = svc.Why(ctx, blocked)
+	require.NoError(t, err)
+	require.True(t, why.Ready)
+	require.Empty(t, why.Reasons)
+}
+
+func TestServiceWhyReportsFailedDependency(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	svc := newService(t)
+
+	blocked, err := svc.Add(ctx, "blocked")
+	require.NoError(t, err)
+	prereq, err := svc.Add(ctx, "prereq")
+	require.NoError(t, err)
+	require.NoError(t, svc.AddDependency(ctx, blocked, prereq))
+	require.NoError(t, svc.Fail(ctx, prereq, "boom"))
+
+	why, err := svc.Why(ctx, blocked)
+	require.NoError(t, err)
+	require.False(t, why.Ready)
+	require.Len(t, why.Reasons, 1)
+	require.Equal(t, "dependency_failed", why.Reasons[0].Kind)
+	require.Equal(t, prereq, why.Reasons[0].Detail)
+}
+
+func TestServiceManualBlockReadiness(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	svc := newService(t)
+
+	id, err := svc.Add(ctx, "blocked")
+	require.NoError(t, err)
+	require.NoError(t, svc.Block(ctx, id, "waiting"))
+
+	ready, err := svc.Ready(ctx)
+	require.NoError(t, err)
+	require.Empty(t, ready)
+
+	why, err := svc.Why(ctx, id)
+	require.NoError(t, err)
+	require.False(t, why.Ready)
+	require.Len(t, why.Reasons, 1)
+	require.Equal(t, "manual_block", why.Reasons[0].Kind)
+	require.Equal(t, "waiting", why.Reasons[0].Detail)
+
+	require.NoError(t, svc.Unblock(ctx, id))
+	why, err = svc.Why(ctx, id)
+	require.NoError(t, err)
+	require.True(t, why.Ready)
+}
+
+func TestServiceWhyReportsResourceLock(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	svc := newService(t)
+
+	_, err := svc.AddWithOptions(ctx, task.AddOptions{Body: "first", ResourceKey: "repo:x"})
+	require.NoError(t, err)
+	second, err := svc.AddWithOptions(ctx, task.AddOptions{Body: "second", ResourceKey: "repo:x"})
+	require.NoError(t, err)
+	claimed, err := svc.Pop(ctx)
+	require.NoError(t, err)
+	require.NotNil(t, claimed)
+
+	why, err := svc.Why(ctx, second)
+	require.NoError(t, err)
+	require.False(t, why.Ready)
+	require.Len(t, why.Reasons, 1)
+	require.Equal(t, "resource_locked", why.Reasons[0].Kind)
+	require.Equal(t, claimed.ID, why.Reasons[0].Detail)
+}
+
 func TestServiceNextAndPopEmptyQueue(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -132,6 +255,61 @@ func TestServiceNextAndPopEmptyQueue(t *testing.T) {
 	popped, err := svc.Pop(ctx)
 	require.NoError(t, err)
 	require.Nil(t, popped)
+}
+
+func TestServiceNextAgreesWithPop(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	svc := newService(t)
+
+	first, err := svc.Add(ctx, "first")
+	require.NoError(t, err)
+	_, err = svc.Add(ctx, "second")
+	require.NoError(t, err)
+
+	next, err := svc.Next(ctx)
+	require.NoError(t, err)
+	require.NotNil(t, next)
+	require.Equal(t, first, next.ID)
+
+	popped, err := svc.Pop(ctx)
+	require.NoError(t, err)
+	require.NotNil(t, popped)
+	require.Equal(t, next.ID, popped.ID)
+}
+
+func TestServicePopRecordsWorker(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	svc := newService(t)
+
+	id, err := svc.Add(ctx, "worker")
+	require.NoError(t, err)
+	popped, err := svc.PopWithLeaseForWorker(ctx, 0, "worker-1", "codex")
+	require.NoError(t, err)
+	require.Equal(t, id, popped.ID)
+
+	data, err := svc.Explain(ctx, id)
+	require.NoError(t, err)
+	require.Len(t, data.Attempts, 1)
+	require.Equal(t, "worker-1", data.Attempts[0].WorkerID)
+	require.Equal(t, "codex", data.Attempts[0].Agent)
+}
+
+func TestServiceHeartbeat(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	svc := newService(t)
+
+	id, err := svc.Add(ctx, "heartbeat")
+	require.NoError(t, err)
+	_, err = svc.PopWithLeaseForWorker(ctx, time.Minute, "worker-1", "codex")
+	require.NoError(t, err)
+	require.NoError(t, svc.Heartbeat(ctx, id, "worker-1", 30*time.Minute))
+
+	got, err := svc.Show(ctx, id)
+	require.NoError(t, err)
+	require.Equal(t, "2025-01-02T03:34:05Z", got.LeaseExpires)
 }
 
 func TestServiceMissingTask(t *testing.T) {

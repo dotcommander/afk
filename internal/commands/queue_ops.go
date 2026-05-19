@@ -38,6 +38,7 @@ func newPruneCmd(d *Deps) *cobra.Command {
 
 func newPopCmd(d *Deps) *cobra.Command {
 	var lease string
+	var workerID string
 
 	cmd := &cobra.Command{
 		Use:   "pop",
@@ -51,7 +52,7 @@ func newPopCmd(d *Deps) *cobra.Command {
 					return fmt.Errorf("parse lease: %w", err)
 				}
 			}
-			claimed, err := d.Service.PopWithLease(cmd.Context(), leaseDuration)
+			claimed, err := d.Service.PopWithLeaseForWorker(cmd.Context(), leaseDuration, workerID, "")
 			if err != nil {
 				return err
 			}
@@ -62,6 +63,7 @@ func newPopCmd(d *Deps) *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&lease, "lease", "", "lease duration for the claim (for example 30m)")
+	cmd.Flags().StringVar(&workerID, "worker", "", "worker id for the claim")
 	return cmd
 }
 
@@ -100,5 +102,27 @@ func newRequeueStaleCmd(d *Deps) *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&olderThan, "older-than", "1h", "requeue working tasks older than this duration when no lease is set")
+	return cmd
+}
+
+func newHeartbeatCmd(d *Deps) *cobra.Command {
+	var workerID string
+	var lease string
+
+	cmd := &cobra.Command{
+		Use:   "heartbeat <id>",
+		Short: "Extend a worker-owned task lease",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			leaseDuration, err := time.ParseDuration(lease)
+			if err != nil {
+				return fmt.Errorf("parse lease: %w", err)
+			}
+			return d.Service.Heartbeat(cmd.Context(), args[0], workerID, leaseDuration)
+		},
+	}
+	cmd.Flags().StringVar(&workerID, "worker", "", "worker id that owns the claim")
+	cmd.Flags().StringVar(&lease, "lease", "30m", "new lease duration from now")
+	_ = cmd.MarkFlagRequired("worker")
 	return cmd
 }

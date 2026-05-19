@@ -72,6 +72,20 @@ func TestWriteEmptyListNoOutput(t *testing.T) {
 	require.Empty(t, out.String())
 }
 
+func TestWriteDependencies(t *testing.T) {
+	t.Parallel()
+
+	deps := []task.Dependency{{TaskID: "blocked", DependsOnID: "prereq", Created: "2025-01-02T03:04:05Z"}}
+	var table bytes.Buffer
+	require.NoError(t, output.WriteDependencies(&table, deps, false))
+	require.Contains(t, table.String(), "BLOCKED_BY")
+	require.Contains(t, table.String(), "prereq")
+
+	var jsonOut bytes.Buffer
+	require.NoError(t, output.WriteDependencies(&jsonOut, deps, true))
+	require.Contains(t, jsonOut.String(), `"depends_on_id":"prereq"`)
+}
+
 func TestWriteExplainTextAndJSON(t *testing.T) {
 	t.Parallel()
 	tk := task.Task{ID: "1", Created: "2025-01-02T03:04:05Z", Status: task.StatusFailed, Body: "body"}

@@ -20,15 +20,25 @@ func newAddCmd(d *Deps) *cobra.Command {
 	var agent string
 	var groupID string
 	var resourceKey string
+	var blockedBy string
+	var after string
 
 	cmd := &cobra.Command{
 		Use:   "add <body...>",
 		Short: "Append a new pending task",
 		Args:  cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			dependsOnID, err := normalizeBlockedBy(blockedBy, after)
+			if err != nil {
+				return err
+			}
+			if dependsOnID != "" {
+				if _, err := d.Service.Show(cmd.Context(), dependsOnID); err != nil {
+					return err
+				}
+			}
 			resolvedCWD := cwd
 			if resolvedCWD == "" && !noCWD {
-				var err error
 				resolvedCWD, err = os.Getwd()
 				if err != nil {
 					return fmt.Errorf("resolve cwd: %w", err)
@@ -47,6 +57,11 @@ func newAddCmd(d *Deps) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			if dependsOnID != "" {
+				if err := d.Service.AddDependency(cmd.Context(), id, dependsOnID); err != nil {
+					return err
+				}
+			}
 			_, err = fmt.Fprintln(d.Stdout, id)
 			return err
 		},
@@ -59,5 +74,21 @@ func newAddCmd(d *Deps) *cobra.Command {
 	cmd.Flags().StringVar(&agent, "agent", "", "preferred agent")
 	cmd.Flags().StringVar(&groupID, "group", "", "task group id")
 	cmd.Flags().StringVar(&resourceKey, "resource", "", "task resource key")
+	cmd.Flags().StringVar(&blockedBy, "blocked-by", "", "task id this task is blocked by, or none")
+	cmd.Flags().StringVar(&after, "after", "", "alias for --blocked-by")
 	return cmd
+}
+
+func normalizeBlockedBy(blockedBy, after string) (string, error) {
+	if blockedBy != "" && after != "" && blockedBy != after {
+		return "", fmt.Errorf("--blocked-by and --after disagree")
+	}
+	value := blockedBy
+	if value == "" {
+		value = after
+	}
+	if value == "" || strings.EqualFold(value, "none") {
+		return "", nil
+	}
+	return value, nil
 }
