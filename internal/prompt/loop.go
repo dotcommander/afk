@@ -3,6 +3,7 @@ package prompt
 
 import (
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/dotcommander/afk/internal/task"
@@ -138,6 +139,17 @@ func promptExecutable(exe string) string {
 	return exe
 }
 
+// tildeRelative renders an absolute path under the user's home dir as a
+// ~-relative path so generated prompts stay machine-agnostic. Paths outside
+// the home dir (and any path when the home dir is unknown) pass through unchanged.
+func tildeRelative(absPath string) string {
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" || !strings.HasPrefix(absPath, home+"/") {
+		return absPath
+	}
+	return "~/" + absPath[len(home)+1:]
+}
+
 func writeLoopIntro(b *strings.Builder, exe string) {
 	fmt.Fprintf(b, "# Loop Tick - Process One Pending Task\n\n")
 	fmt.Fprintf(b, "Process exactly one queued task, then stop.\n\n")
@@ -149,7 +161,7 @@ func writeLoopQueueContract(b *strings.Builder, exe string, opts LoopOptions) {
 	fmt.Fprintf(b, "## Queue Contract\n\n")
 	fmt.Fprintf(b, "Use the `afk` queue CLI. The live queue is SQLite-backed")
 	if opts.SQLitePath != "" {
-		fmt.Fprintf(b, " at `%s`", opts.SQLitePath)
+		fmt.Fprintf(b, " at `%s`", tildeRelative(opts.SQLitePath))
 	}
 	fmt.Fprintf(b, ".\n\n")
 	fmt.Fprintf(b, "Do not read, write, patch, edit, or repair the queue database directly.")

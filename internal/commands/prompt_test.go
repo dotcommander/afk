@@ -49,6 +49,23 @@ func TestPromptCommandWritesOutputFile(t *testing.T) {
 	require.Contains(t, out, "Do not pick up another task this tick")
 }
 
+func TestPromptCmd_ExeNotAbsolute(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	queuePath := filepath.Join(dir, "tasks.sqlite")
+	var stdout bytes.Buffer
+	d := testDeps(&stdout)
+	root := NewRoot(d, "test")
+	root.SetArgs([]string{"--queue", queuePath, "prompt"})
+
+	require.NoError(t, root.Execute())
+	out := stdout.String()
+	require.Contains(t, out, "afk pop")
+	require.NotContains(t, out, "/Users/")
+	require.NotContains(t, out, "/home/")
+}
+
 func testDeps(stdout *bytes.Buffer) *Deps {
 	return testDepsWithWriters(stdout, &bytes.Buffer{})
 }

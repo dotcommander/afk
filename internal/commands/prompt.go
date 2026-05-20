@@ -20,10 +20,7 @@ func newPromptCmd(d *Deps) *cobra.Command {
 			"skipStoreInit": "true",
 		},
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			exe, err := os.Executable()
-			if err != nil {
-				exe = "afk"
-			}
+			exe := "afk"
 			var body string
 			if taskID != "" {
 				data, err := d.Service.Explain(cmd.Context(), taskID)

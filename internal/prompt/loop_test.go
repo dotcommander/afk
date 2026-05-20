@@ -1,6 +1,8 @@
 package prompt_test
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -8,6 +10,25 @@ import (
 	"github.com/dotcommander/afk/internal/task"
 	"github.com/stretchr/testify/require"
 )
+
+func TestLoopOutput_ExeIsBareName(t *testing.T) {
+	t.Parallel()
+
+	out := prompt.Loop(prompt.LoopOptions{ExecutablePath: "afk"})
+
+	require.Contains(t, out, "afk pop")
+	require.NotContains(t, out, "/Users/")
+	require.NotContains(t, out, "/home/")
+	// Every bash block command must start with the bare name, not a slash-prefixed path.
+	for _, line := range strings.Split(out, "\n") {
+		if strings.HasPrefix(line, "```") || line == "" {
+			continue
+		}
+		// Lines immediately following ```bash open the block; check they don't start with /
+		// We verify the positive form: any occurrence of "```bash\n/" would be wrong.
+	}
+	require.NotContains(t, out, "```bash\n/")
+}
 
 func TestLoopIncludesCurrentQueueInstructions(t *testing.T) {
 	t.Parallel()
@@ -37,6 +58,29 @@ func TestLoopFallsBackToAfkExecutable(t *testing.T) {
 
 	require.True(t, strings.Contains(out, "```bash\nafk pop\n```"))
 	require.Contains(t, out, "SQLite-backed")
+}
+
+func TestLoopOutput_QueuePathTilde(t *testing.T) {
+	t.Parallel()
+
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Skip("cannot determine home dir:", err)
+	}
+
+	absPath := filepath.Join(home, ".claude/queue/tasks.sqlite")
+	out := prompt.Loop(prompt.LoopOptions{SQLitePath: absPath})
+
+	require.Contains(t, out, "~/.claude/queue/tasks.sqlite")
+	require.NotContains(t, out, absPath)
+}
+
+func TestLoopOutput_QueuePathCustom(t *testing.T) {
+	t.Parallel()
+
+	out := prompt.Loop(prompt.LoopOptions{SQLitePath: "/tmp/test.sqlite"})
+
+	require.Contains(t, out, "/tmp/test.sqlite")
 }
 
 func TestTaskPromptIncludesContextHistoryAndFinalization(t *testing.T) {
