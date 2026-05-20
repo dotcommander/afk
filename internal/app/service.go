@@ -194,9 +194,9 @@ func (s *Service) Edit(ctx context.Context, id, body string) error {
 	})
 }
 
-// Done marks a task done.
-func (s *Service) Done(ctx context.Context, id string) error {
-	return s.store.Update(ctx, id, task.EventDone, "", func(t *task.Task) bool {
+// Done marks a task done with an optional completion note.
+func (s *Service) Done(ctx context.Context, id, note string) error {
+	return s.store.Update(ctx, id, task.EventDone, note, func(t *task.Task) bool {
 		return t.MarkDone(s.now())
 	})
 }

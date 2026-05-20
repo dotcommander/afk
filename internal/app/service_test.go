@@ -71,7 +71,7 @@ func TestServiceLifecycle(t *testing.T) {
 	require.Equal(t, task.StatusWorking, popped.Status)
 	require.Equal(t, fixed.Format(time.RFC3339), popped.Started)
 
-	require.NoError(t, svc.Done(ctx, id))
+	require.NoError(t, svc.Done(ctx, id, ""))
 	got, err := svc.Show(ctx, id)
 	require.NoError(t, err)
 	require.Equal(t, task.StatusDone, got.Status)
@@ -244,7 +244,7 @@ func TestServiceReadyAndWhy(t *testing.T) {
 	require.Equal(t, "dependency_pending", why.Reasons[0].Kind)
 	require.Equal(t, prereq, why.Reasons[0].Detail)
 
-	require.NoError(t, svc.Done(ctx, prereq))
+	require.NoError(t, svc.Done(ctx, prereq, ""))
 	why, err = svc.Why(ctx, blocked)
 	require.NoError(t, err)
 	require.True(t, why.Ready)
@@ -411,7 +411,7 @@ func TestServicePromote(t *testing.T) {
 	require.NotNil(t, next)
 	require.Equal(t, second, next.ID)
 
-	require.NoError(t, svc.Done(ctx, second))
+	require.NoError(t, svc.Done(ctx, second, ""))
 	require.ErrorIs(t, svc.Promote(ctx, second), store.ErrInvalidState)
 	require.ErrorIs(t, svc.Promote(ctx, "missing"), store.ErrNotFound)
 	next, err = svc.Next(ctx)
@@ -468,7 +468,7 @@ func TestServiceRetryRequeueStaleAndPruneByTag(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, claimed)
 	require.Equal(t, failed, claimed.ID)
-	require.NoError(t, svc.Done(ctx, failed))
+	require.NoError(t, svc.Done(ctx, failed, ""))
 	claimed, err = svc.Pop(ctx)
 	require.NoError(t, err)
 	require.NotNil(t, claimed)
@@ -766,6 +766,54 @@ func TestServiceAddDependencyRejectsCycles(t *testing.T) {
 	require.True(t, errors.Is(err, store.ErrDependencyCycle), "expected ErrDependencyCycle, got %v", err)
 }
 
+func TestDone_WithNote(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	svc := newService(t)
+
+	id, err := svc.Add(ctx, "task with note")
+	require.NoError(t, err)
+	_, err = svc.Pop(ctx)
+	require.NoError(t, err)
+
+	require.NoError(t, svc.Done(ctx, id, "completed the thing"))
+
+	data, err := svc.Explain(ctx, id)
+	require.NoError(t, err)
+	var found bool
+	for _, e := range data.Events {
+		if e.Type == task.EventDone {
+			require.Equal(t, "completed the thing", e.Message)
+			found = true
+		}
+	}
+	require.True(t, found, "expected an EventDone event")
+}
+
+func TestDone_WithoutNote(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	svc := newService(t)
+
+	id, err := svc.Add(ctx, "task without note")
+	require.NoError(t, err)
+	_, err = svc.Pop(ctx)
+	require.NoError(t, err)
+
+	require.NoError(t, svc.Done(ctx, id, ""))
+
+	data, err := svc.Explain(ctx, id)
+	require.NoError(t, err)
+	var found bool
+	for _, e := range data.Events {
+		if e.Type == task.EventDone {
+			require.Equal(t, "", e.Message)
+			found = true
+		}
+	}
+	require.True(t, found, "expected an EventDone event")
+}
+
 // TestWhy_ReadyMatchesStoreReady asserts the invariant: Why(id).Ready == (id is present in Ready(ctx) output).
 func TestWhy_ReadyMatchesStoreReady(t *testing.T) {
 	t.Parallel()
@@ -823,7 +871,7 @@ func TestWhy_ReadyMatchesStoreReady(t *testing.T) {
 
 		id, err := svc.Add(ctx, "task to complete")
 		require.NoError(t, err)
-		require.NoError(t, svc.Done(ctx, id))
+		require.NoError(t, svc.Done(ctx, id, ""))
 
 		why, err := svc.Why(ctx, id)
 		require.NoError(t, err)

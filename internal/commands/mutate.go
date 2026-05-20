@@ -19,11 +19,11 @@ func newEditCmd(d *Deps) *cobra.Command {
 
 func newDoneCmd(d *Deps) *cobra.Command {
 	return &cobra.Command{
-		Use:   "done <id>",
+		Use:   "done <id> [note...]",
 		Short: "Mark a task as done",
-		Args:  cobra.ExactArgs(1),
+		Args:  cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return d.Service.Done(cmd.Context(), args[0])
+			return d.Service.Done(cmd.Context(), args[0], strings.Join(args[1:], " "))
 		},
 	}
 }

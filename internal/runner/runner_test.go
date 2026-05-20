@@ -386,15 +386,15 @@ func TestRunnerHelperProcess(_ *testing.T) {
 
 	switch action {
 	case "done":
-		err = svc.Done(ctx, id)
+		err = svc.Done(ctx, id, "")
 	case "done-sleep":
-		err = svc.Done(ctx, id)
+		err = svc.Done(ctx, id, "")
 		if err == nil {
 			time.Sleep(1200 * time.Millisecond)
 		}
 	case "sleep-done":
 		time.Sleep(1200 * time.Millisecond)
-		err = svc.Done(ctx, id)
+		err = svc.Done(ctx, id, "")
 	default:
 		_ = st.Close()
 		os.Exit(2)
