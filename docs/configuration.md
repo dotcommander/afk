@@ -24,16 +24,13 @@ AFK_QUEUE=/tmp/tasks.sqlite afk count     # environment
 afk count                                 # default
 ```
 
-## legacy jsonl import
+## queue path normalization
 
-On first use, `afk` imports tasks from `~/.claude/queue/tasks.jsonl` into SQLite when the SQLite database is empty. JSONL is import-only — new writes go to SQLite. Hand-edits to the JSONL file are not replayed after the import completes.
-
-If you pass `--queue <path>.jsonl`, `afk` treats it as the legacy path and stores the SQLite database next to it with the same basename:
+SQLite is the only queue backend. A `--queue`/`AFK_QUEUE` path with a non-`.sqlite` extension is normalized to a sibling `.sqlite` database with the same basename:
 
 ```sh
 afk --queue /tmp/tasks.jsonl ls
-# imports /tmp/tasks.jsonl once into /tmp/tasks.sqlite
-# subsequent commands write to /tmp/tasks.sqlite
+# uses /tmp/tasks.sqlite
 ```
 
 ## environment variables
@@ -41,8 +38,11 @@ afk --queue /tmp/tasks.jsonl ls
 | Variable | Purpose |
 |---|---|
 | `AFK_QUEUE` | Override the default queue path. Used by `afk` and by subprocesses spawned by `afk run`. |
+| `AFK_TASK_ID` | Set **by `afk run`** into the worker subprocess — the ID of the task being executed. |
+| `AFK_TASK_BODY` | Set **by `afk run`** into the worker subprocess — the body text of the task being executed. |
+| `AFK_TASK_CWD` | Set **by `afk run`** into the worker subprocess — the working directory of the task being executed. |
 
-`afk run` sets `AFK_QUEUE` for every `--exec` subprocess so nested `afk done`, `afk fail`, and `afk explain` calls hit the same queue.
+`afk run` sets `AFK_QUEUE` for every `--exec` subprocess so nested `afk done`, `afk fail`, and `afk explain` calls hit the same queue. It also sets `AFK_TASK_ID`, `AFK_TASK_BODY`, and `AFK_TASK_CWD` so worker commands can read task fields from the environment without relying on the `{{id}}`/`{{body}}`/`{{cwd}}` template placeholders.
 
 ## inspect the configuration
 

@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"syscall"
 	"text/tabwriter"
 	"time"
 
@@ -19,6 +20,7 @@ import (
 const (
 	defaultHeartbeatMinInterval = time.Second
 	maxDryRunCommandRunes       = 1000
+	cleanupTimeout              = 5 * time.Second
 )
 
 // Options controls one runner invocation.
@@ -162,11 +164,27 @@ func runTask(ctx context.Context, service *app.Service, t task.Task, opts Option
 	if t.CWD != "" {
 		cmd.Dir = t.CWD
 	}
+	env := os.Environ()
 	if opts.QueuePath != "" {
-		cmd.Env = append(os.Environ(), "AFK_QUEUE="+opts.QueuePath)
+		env = append(env, "AFK_QUEUE="+opts.QueuePath)
 	}
+	env = append(env,
+		"AFK_TASK_ID="+t.ID,
+		"AFK_TASK_BODY="+t.Body,
+		"AFK_TASK_CWD="+t.CWD,
+	)
+	cmd.Env = env
 	cmd.Stdout = opts.Stdout
 	cmd.Stderr = opts.Stderr
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	// Default CommandContext cancel kills only the shell; its children
+	// (afk done, agent CLIs) would be orphaned. Kill the whole group.
+	cmd.Cancel = func() error {
+		if cmd.Process == nil {
+			return nil
+		}
+		return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+	}
 
 	hbDone := make(chan struct{})
 	hbErr := make(chan error, 1)
@@ -178,7 +196,8 @@ func runTask(ctx context.Context, service *app.Service, t task.Task, opts Option
 		return err
 	}
 
-	cleanupCtx := context.WithoutCancel(ctx)
+	cleanupCtx, cancelCleanup := context.WithTimeout(context.WithoutCancel(ctx), cleanupTimeout)
+	defer cancelCleanup()
 	current, showErr := service.Show(cleanupCtx, t.ID)
 	if showErr != nil {
 		return showErr
@@ -244,7 +263,7 @@ func taskNoLongerWorking(ctx context.Context, service *app.Service, taskID strin
 
 func firstHeartbeatErr(errs <-chan error) error {
 	for err := range errs {
-		if err != nil && !errors.Is(err, context.Canceled) {
+		if err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
 			return err
 		}
 	}
@@ -253,12 +272,18 @@ func firstHeartbeatErr(errs <-chan error) error {
 
 func renderCommand(template string, t task.Task, queuePath string) string {
 	replacer := strings.NewReplacer(
-		"{{id}}", t.ID,
-		"{{cwd}}", t.CWD,
-		"{{body}}", t.Body,
-		"{{queue}}", queuePath,
+		"{{id}}", shellQuote(t.ID),
+		"{{cwd}}", shellQuote(t.CWD),
+		"{{body}}", shellQuote(t.Body),
+		"{{queue}}", shellQuote(queuePath),
 	)
 	return replacer.Replace(template)
+}
+
+// shellQuote wraps s in POSIX single quotes so the shell treats it as one
+// literal word. Embedded single quotes are closed, escaped, and reopened.
+func shellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
 func truncateRunes(s string, limit int) string {

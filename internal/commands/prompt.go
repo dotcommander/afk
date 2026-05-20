@@ -35,7 +35,6 @@ func newPromptCmd(d *Deps) *cobra.Command {
 				body = prompt.Loop(prompt.LoopOptions{
 					ExecutablePath: exe,
 					SQLitePath:     d.QueuePaths.SQLitePath,
-					JSONLPath:      d.QueuePaths.JSONLPath,
 				})
 			}
 			if outputPath == "" {

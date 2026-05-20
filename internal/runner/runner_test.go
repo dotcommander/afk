@@ -24,7 +24,6 @@ func TestRunFailsInvalidClaimWithoutExecutingCommand(t *testing.T) {
 	ctx := context.Background()
 	st, err := store.NewSQLite(ctx, store.Paths{
 		SQLitePath: filepath.Join(t.TempDir(), "tasks.sqlite"),
-		JSONLPath:  filepath.Join(t.TempDir(), "tasks.jsonl"),
 	})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, st.Close()) })
@@ -60,7 +59,6 @@ func TestDryRunBoundsRenderedCommand(t *testing.T) {
 	ctx := context.Background()
 	st, err := store.NewSQLite(ctx, store.Paths{
 		SQLitePath: filepath.Join(t.TempDir(), "tasks.sqlite"),
-		JSONLPath:  filepath.Join(t.TempDir(), "tasks.jsonl"),
 	})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, st.Close()) })
@@ -267,13 +265,81 @@ func TestRunIgnoresHeartbeatAfterTaskFinalized(t *testing.T) {
 	require.Equal(t, task.StatusDone, got.Status)
 }
 
+func TestRunTask_KillsProcessGroupOnCancel(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	svc, st, queuePath := newRunnerService(t)
+	require.NoError(t, st.Add(ctx, task.Task{
+		ID:      "pgkill",
+		Created: time.Now().UTC().Format(time.RFC3339),
+		Status:  task.StatusPending,
+		Body:    "pgkill",
+	}))
+
+	// Temp file the grandchild will append to in a tight loop.
+	tmpFile := filepath.Join(t.TempDir(), "grandchild.out")
+
+	// The exec template spawns a grandchild that writes to tmpFile in a loop,
+	// then sleeps so the shell (parent) stays alive. The runner should kill
+	// the whole process group on cancel, stopping the grandchild too.
+	execTemplate := fmt.Sprintf(
+		`/bin/sh -c 'while true; do echo x >> %s; sleep 0.05; done &' && sleep 30`,
+		tmpFile,
+	)
+
+	runErr := make(chan error, 1)
+	go func() {
+		runErr <- runner.Run(ctx, svc, runner.Options{
+			Limit:        1,
+			ExecTemplate: execTemplate,
+			QueuePath:    queuePath,
+			Stdout:       &bytes.Buffer{},
+			Stderr:       &bytes.Buffer{},
+		})
+	}()
+
+	// Wait until the grandchild has written at least once before cancelling.
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		info, statErr := os.Stat(tmpFile)
+		if statErr == nil && info.Size() > 0 {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+
+	// Cancel the runner context, triggering group kill.
+	cancel()
+
+	select {
+	case <-runErr:
+	case <-time.After(5 * time.Second):
+		t.Fatal("runner did not return after context cancel")
+	}
+
+	// Record file size immediately after kill, then wait and confirm it stopped growing.
+	info1, err := os.Stat(tmpFile)
+	require.NoError(t, err)
+	size1 := info1.Size()
+
+	time.Sleep(200 * time.Millisecond)
+
+	info2, err := os.Stat(tmpFile)
+	require.NoError(t, err)
+	size2 := info2.Size()
+
+	require.Equal(t, size1, size2, "grandchild process kept writing after group kill — process group was not killed")
+}
+
 func newRunnerService(t *testing.T) (*app.Service, *store.SQLiteStore, string) {
 	t.Helper()
 	ctx := context.Background()
 	queuePath := filepath.Join(t.TempDir(), "tasks.sqlite")
 	st, err := store.NewSQLite(ctx, store.Paths{
 		SQLitePath: queuePath,
-		JSONLPath:  filepath.Join(t.TempDir(), "tasks.jsonl"),
 	})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, st.Close()) })

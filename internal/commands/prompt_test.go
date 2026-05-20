@@ -45,7 +45,7 @@ func TestPromptCommandWritesOutputFile(t *testing.T) {
 	require.NoError(t, err)
 	out := string(body)
 	require.Contains(t, out, filepath.Join(dir, "tasks.sqlite"))
-	require.Contains(t, out, queuePath)
+	require.NotContains(t, out, queuePath)
 	require.Contains(t, out, "Do not pick up another task this tick")
 }
 

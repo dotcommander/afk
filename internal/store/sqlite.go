@@ -3,7 +3,6 @@ package store
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net/url"
@@ -13,14 +12,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/dotcommander/afk/internal/queue"
 	"github.com/dotcommander/afk/internal/task"
 	_ "modernc.org/sqlite" // register the sqlite database/sql driver
 )
 
-const importedJSONLKey = "imported_jsonl"
-
-const sqliteBusyRetryDelay = 25 * time.Millisecond
 const schedulerOrderSQL = `
 CASE lower(trim(priority))
 	WHEN 'urgent' THEN 0
@@ -29,48 +24,43 @@ CASE lower(trim(priority))
 	ELSE 2
 END, ordinal, rowid`
 
-// SQLiteStore persists tasks in SQLite. JSONL is used only as an import source.
+// SQLiteStore persists tasks in SQLite.
 type SQLiteStore struct {
 	db *sql.DB
 }
 
-// Paths identifies the SQLite DB path and legacy JSONL import path.
+// Paths identifies the SQLite DB path.
 type Paths struct {
 	SQLitePath string
-	JSONLPath  string
 }
 
-// ResolvePaths derives SQLite and legacy JSONL paths from a user-provided path.
+// defaultRelPath is the SQLite queue path relative to the user's home dir.
+const defaultRelPath = ".claude/queue/tasks.sqlite"
+
+// ResolvePaths derives the SQLite path from a user-provided path. A path with
+// a non-`.sqlite` extension (including a stale `.jsonl` path) is normalized to
+// a sibling `.sqlite` database; any other path is used as-is.
 func ResolvePaths(path string) Paths {
 	if path == "" {
-		jsonl, _ := queue.DefaultPath()
-		return Paths{
-			SQLitePath: replaceExt(jsonl, ".sqlite"),
-			JSONLPath:  jsonl,
-		}
+		sqlite, _ := DefaultPath()
+		return Paths{SQLitePath: sqlite}
 	}
-	if strings.HasSuffix(path, ".jsonl") {
-		return Paths{
-			SQLitePath: replaceExt(path, ".sqlite"),
-			JSONLPath:  path,
-		}
+	if ext := filepath.Ext(path); ext != "" && ext != ".sqlite" {
+		return Paths{SQLitePath: strings.TrimSuffix(path, ext) + ".sqlite"}
 	}
-	return Paths{
-		SQLitePath: path,
-		JSONLPath:  replaceExt(path, ".jsonl"),
-	}
+	return Paths{SQLitePath: path}
 }
 
 // DefaultPath returns the default SQLite queue path.
 func DefaultPath() (string, error) {
-	jsonl, err := queue.DefaultPath()
+	home, err := os.UserHomeDir()
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("store: resolve home dir: %w", err)
 	}
-	return replaceExt(jsonl, ".sqlite"), nil
+	return filepath.Join(home, defaultRelPath), nil
 }
 
-// NewSQLite opens a SQLite-backed store and imports legacy JSONL if needed.
+// NewSQLite opens a SQLite-backed store.
 func NewSQLite(ctx context.Context, paths Paths) (*SQLiteStore, error) {
 	if err := os.MkdirAll(filepath.Dir(paths.SQLitePath), 0o750); err != nil {
 		return nil, fmt.Errorf("store: mkdir sqlite dir: %w", err)
@@ -81,7 +71,7 @@ func NewSQLite(ctx context.Context, paths Paths) (*SQLiteStore, error) {
 	}
 	db.SetMaxOpenConns(1)
 	s := &SQLiteStore{db: db}
-	if err := s.init(ctx, paths.JSONLPath); err != nil {
+	if err := s.init(ctx); err != nil {
 		_ = db.Close()
 		return nil, err
 	}
@@ -430,7 +420,13 @@ WHERE id = ?`,
 
 // Delete removes the task with id.
 func (s *SQLiteStore) Delete(ctx context.Context, id string) error {
-	res, err := s.db.ExecContext(ctx, `DELETE FROM tasks WHERE id = ?`, id)
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("store: begin delete: %w", err)
+	}
+	defer rollback(tx)
+
+	res, err := tx.ExecContext(ctx, `DELETE FROM tasks WHERE id = ?`, id)
 	if err != nil {
 		return fmt.Errorf("store: delete task %s: %w", id, err)
 	}
@@ -441,48 +437,59 @@ func (s *SQLiteStore) Delete(ctx context.Context, id string) error {
 	if n == 0 {
 		return fmt.Errorf("task %s: %w", id, ErrNotFound)
 	}
-	if _, err := s.db.ExecContext(ctx, `
-INSERT INTO task_events (task_id, type, at, message)
-VALUES (?, ?, ?, ?)`, id, string(task.EventRemoved), nowString(), ""); err != nil {
-		return fmt.Errorf("store: record remove event: %w", err)
+	if err := insertEvent(ctx, tx, id, task.EventRemoved, "", ""); err != nil {
+		return err
 	}
-	return nil
+	return commit(tx)
 }
 
 // Prune removes all tasks with a listed status.
 func (s *SQLiteStore) Prune(ctx context.Context, statuses []task.Status) error {
 	for _, status := range statuses {
-		rows, err := s.db.QueryContext(ctx, `SELECT id FROM tasks WHERE status = ?`, string(status))
-		if err != nil {
-			return fmt.Errorf("store: list prune %s: %w", status, err)
-		}
-		var ids []string
-		for rows.Next() {
-			var id string
-			if err := rows.Scan(&id); err != nil {
-				_ = rows.Close()
-				return fmt.Errorf("store: scan prune id: %w", err)
-			}
-			ids = append(ids, id)
-		}
-		if err := rows.Close(); err != nil {
-			return fmt.Errorf("store: close prune ids: %w", err)
-		}
-		if err := rows.Err(); err != nil {
-			return fmt.Errorf("store: prune ids: %w", err)
-		}
-		if _, err := s.db.ExecContext(ctx, `DELETE FROM tasks WHERE status = ?`, string(status)); err != nil {
-			return fmt.Errorf("store: prune %s: %w", status, err)
-		}
-		for _, id := range ids {
-			if _, err := s.db.ExecContext(ctx, `
-INSERT INTO task_events (task_id, type, at, message)
-VALUES (?, ?, ?, ?)`, id, string(task.EventPruned), nowString(), string(status)); err != nil {
-				return fmt.Errorf("store: record prune event: %w", err)
-			}
+		if err := s.pruneStatus(ctx, status); err != nil {
+			return err
 		}
 	}
 	return nil
+}
+
+// pruneStatus deletes every task with status and records a Pruned event for
+// each, all in one transaction so a crash cannot lose the audit events.
+func (s *SQLiteStore) pruneStatus(ctx context.Context, status task.Status) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("store: begin prune %s: %w", status, err)
+	}
+	defer rollback(tx)
+
+	rows, err := tx.QueryContext(ctx, `SELECT id FROM tasks WHERE status = ?`, string(status))
+	if err != nil {
+		return fmt.Errorf("store: list prune %s: %w", status, err)
+	}
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			_ = rows.Close()
+			return fmt.Errorf("store: scan prune id: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Close(); err != nil {
+		return fmt.Errorf("store: close prune ids: %w", err)
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("store: prune ids: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM tasks WHERE status = ?`, string(status)); err != nil {
+		return fmt.Errorf("store: prune %s: %w", status, err)
+	}
+	for _, id := range ids {
+		if err := insertEvent(ctx, tx, id, task.EventPruned, "", string(status)); err != nil {
+			return err
+		}
+	}
+	return commit(tx)
 }
 
 // Promote moves a pending task ahead of other tasks with the same effective priority.
@@ -865,379 +872,4 @@ func sqliteDSN(path string) string {
 	q.Set("_txlock", "immediate")
 	u.RawQuery = q.Encode()
 	return u.String()
-}
-
-func (s *SQLiteStore) init(ctx context.Context, jsonlPath string) error {
-	if err := s.execWithBusyRetry(ctx, `
-CREATE TABLE IF NOT EXISTS tasks (
-	id TEXT PRIMARY KEY,
-	created TEXT NOT NULL,
-	status TEXT NOT NULL,
-	body TEXT NOT NULL,
-	started TEXT NOT NULL DEFAULT '',
-	finished TEXT NOT NULL DEFAULT '',
-	error TEXT NOT NULL DEFAULT '',
-	lease_expires TEXT NOT NULL DEFAULT '',
-	priority TEXT NOT NULL DEFAULT '',
-	tags TEXT NOT NULL DEFAULT '[]',
-	cwd TEXT NOT NULL DEFAULT '',
-	source TEXT NOT NULL DEFAULT '',
-	agent TEXT NOT NULL DEFAULT '',
-	group_id TEXT NOT NULL DEFAULT '',
-	resource_key TEXT NOT NULL DEFAULT '',
-	ordinal INTEGER NOT NULL
-);
-CREATE INDEX IF NOT EXISTS tasks_status_order_idx ON tasks(status, ordinal);
-CREATE TABLE IF NOT EXISTS metadata (
-	key TEXT PRIMARY KEY,
-	value TEXT NOT NULL
-);
-CREATE TABLE IF NOT EXISTS task_events (
-	id INTEGER PRIMARY KEY AUTOINCREMENT,
-	task_id TEXT NOT NULL,
-	type TEXT NOT NULL,
-	at TEXT NOT NULL,
-	message TEXT NOT NULL DEFAULT ''
-);
-CREATE INDEX IF NOT EXISTS task_events_task_idx ON task_events(task_id, id);
-CREATE TABLE IF NOT EXISTS task_attempts (
-	id INTEGER PRIMARY KEY AUTOINCREMENT,
-	task_id TEXT NOT NULL,
-	started TEXT NOT NULL,
-	finished TEXT NOT NULL DEFAULT '',
-	status TEXT NOT NULL,
-	error TEXT NOT NULL DEFAULT '',
-	worker_id TEXT NOT NULL DEFAULT '',
-	agent TEXT NOT NULL DEFAULT ''
-);
-CREATE INDEX IF NOT EXISTS task_attempts_task_idx ON task_attempts(task_id, id);
-CREATE TABLE IF NOT EXISTS task_dependencies (
-	task_id TEXT NOT NULL,
-	depends_on_id TEXT NOT NULL,
-	created TEXT NOT NULL,
-	PRIMARY KEY (task_id, depends_on_id)
-);
-CREATE INDEX IF NOT EXISTS task_dependencies_depends_on_idx ON task_dependencies(depends_on_id);
-CREATE TABLE IF NOT EXISTS task_blocks (
-	task_id TEXT PRIMARY KEY,
-	reason TEXT NOT NULL,
-	created TEXT NOT NULL,
-	created_by TEXT NOT NULL DEFAULT ''
-);
-`); err != nil {
-		return fmt.Errorf("store: create schema: %w", err)
-	}
-	if err := retrySQLiteBusy(ctx, s.migrateTaskMetadata); err != nil {
-		return err
-	}
-	return s.importJSONL(ctx, jsonlPath)
-}
-
-func (s *SQLiteStore) execWithBusyRetry(ctx context.Context, query string, args ...any) error {
-	return retrySQLiteBusy(ctx, func(ctx context.Context) error {
-		_, err := s.db.ExecContext(ctx, query, args...)
-		return err
-	})
-}
-
-func retrySQLiteBusy(ctx context.Context, fn func(context.Context) error) error {
-	var err error
-	for {
-		err = fn(ctx)
-		if !isSQLiteBusy(err) {
-			return err
-		}
-		if waitErr := waitSQLiteBusyRetry(ctx); waitErr != nil {
-			return err
-		}
-	}
-}
-
-func waitSQLiteBusyRetry(ctx context.Context) error {
-	timer := time.NewTimer(sqliteBusyRetryDelay)
-	defer timer.Stop()
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	case <-timer.C:
-		return nil
-	}
-}
-
-func (s *SQLiteStore) importJSONL(ctx context.Context, jsonlPath string) error {
-	if jsonlPath == "" {
-		return nil
-	}
-	if _, err := os.Stat(jsonlPath); err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return nil
-		}
-		return fmt.Errorf("store: stat jsonl import path: %w", err)
-	}
-	var imported string
-	err := s.db.QueryRowContext(ctx, `SELECT value FROM metadata WHERE key = ?`, importedJSONLKey).Scan(&imported)
-	if err != nil && !errors.Is(err, sql.ErrNoRows) {
-		return fmt.Errorf("store: read import metadata: %w", err)
-	}
-	if imported == jsonlPath {
-		return nil
-	}
-
-	var count int
-	if err := s.db.QueryRowContext(ctx, `SELECT count(*) FROM tasks`).Scan(&count); err != nil {
-		return fmt.Errorf("store: count tasks: %w", err)
-	}
-	if count > 0 {
-		return markImported(ctx, s.db, jsonlPath)
-	}
-
-	tasks, err := queue.New(jsonlPath).Load(ctx)
-	if err != nil {
-		return err
-	}
-	if len(tasks) == 0 {
-		return markImported(ctx, s.db, jsonlPath)
-	}
-
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("store: begin import: %w", err)
-	}
-	defer rollback(tx)
-	for i, t := range tasks {
-		if _, err := tx.ExecContext(ctx, `
-INSERT INTO tasks (
-	id, created, status, body, started, finished, error, ordinal,
-	priority, tags, cwd, source, agent, group_id, resource_key
-)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-			t.ID, t.Created, string(t.Status), t.Body, t.Started, t.Finished, t.Error, i+1,
-			t.Priority, encodeTags(t.Tags), t.CWD, t.Source, t.Agent, t.GroupID, t.ResourceKey); err != nil {
-			return fmt.Errorf("store: import task %s: %w", t.ID, err)
-		}
-	}
-	if _, err := tx.ExecContext(ctx, `
-INSERT INTO metadata (key, value) VALUES (?, ?)
-ON CONFLICT(key) DO UPDATE SET value = excluded.value`, importedJSONLKey, jsonlPath); err != nil {
-		return fmt.Errorf("store: write import metadata: %w", err)
-	}
-	return commit(tx)
-}
-
-func (s *SQLiteStore) migrateTaskMetadata(ctx context.Context) error {
-	columns := []struct {
-		name string
-		sql  string
-	}{
-		{"priority", `ALTER TABLE tasks ADD COLUMN priority TEXT NOT NULL DEFAULT ''`},
-		{"tags", `ALTER TABLE tasks ADD COLUMN tags TEXT NOT NULL DEFAULT '[]'`},
-		{"cwd", `ALTER TABLE tasks ADD COLUMN cwd TEXT NOT NULL DEFAULT ''`},
-		{"source", `ALTER TABLE tasks ADD COLUMN source TEXT NOT NULL DEFAULT ''`},
-		{"agent", `ALTER TABLE tasks ADD COLUMN agent TEXT NOT NULL DEFAULT ''`},
-		{"group_id", `ALTER TABLE tasks ADD COLUMN group_id TEXT NOT NULL DEFAULT ''`},
-		{"resource_key", `ALTER TABLE tasks ADD COLUMN resource_key TEXT NOT NULL DEFAULT ''`},
-		{"lease_expires", `ALTER TABLE tasks ADD COLUMN lease_expires TEXT NOT NULL DEFAULT ''`},
-		{"task_attempts.worker_id", `ALTER TABLE task_attempts ADD COLUMN worker_id TEXT NOT NULL DEFAULT ''`},
-		{"task_attempts.agent", `ALTER TABLE task_attempts ADD COLUMN agent TEXT NOT NULL DEFAULT ''`},
-	}
-	for _, col := range columns {
-		if _, err := s.db.ExecContext(ctx, col.sql); err != nil && !isDuplicateColumn(err) {
-			return fmt.Errorf("store: migrate %s: %w", col.name, err)
-		}
-	}
-	return nil
-}
-
-type taskScanner interface {
-	Scan(dest ...any) error
-}
-
-func scanTask(row taskScanner) (task.Task, error) {
-	var t task.Task
-	var status string
-	var tags string
-	if err := row.Scan(
-		&t.ID, &t.Created, &status, &t.Body, &t.Started, &t.LeaseExpires, &t.Finished, &t.Error,
-		&t.Priority, &tags, &t.CWD, &t.Source, &t.Agent, &t.GroupID, &t.ResourceKey,
-	); err != nil {
-		return task.Task{}, fmt.Errorf("store: scan task: %w", err)
-	}
-	t.Status = task.Status(status)
-	t.Tags = decodeTags(tags)
-	return t, nil
-}
-
-func getTask(ctx context.Context, tx *sql.Tx, id string) (task.Task, error) {
-	row := tx.QueryRowContext(ctx, `
-SELECT id, created, status, body, started, lease_expires, finished, error,
-	priority, tags, cwd, source, agent, group_id, resource_key
-FROM tasks
-WHERE id = ?`, id)
-	t, err := scanTask(row)
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return task.Task{}, fmt.Errorf("task %s: %w", id, ErrNotFound)
-		}
-		return task.Task{}, err
-	}
-	return t, nil
-}
-
-func dependencyPathExists(ctx context.Context, tx *sql.Tx, fromID, toID string) (bool, error) {
-	var found int
-	err := tx.QueryRowContext(ctx, `
-WITH RECURSIVE dependency_path(id) AS (
-	SELECT depends_on_id
-	FROM task_dependencies
-	WHERE task_id = ?
-	UNION
-	SELECT d.depends_on_id
-	FROM task_dependencies d
-	JOIN dependency_path p ON d.task_id = p.id
-)
-SELECT 1
-FROM dependency_path
-WHERE id = ?
-LIMIT 1`, fromID, toID).Scan(&found)
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return false, nil
-		}
-		return false, fmt.Errorf("store: dependency path %s -> %s: %w", fromID, toID, err)
-	}
-	return true, nil
-}
-
-func nextOrdinal(ctx context.Context, tx *sql.Tx) (int, error) {
-	var ordinal int
-	if err := tx.QueryRowContext(ctx, `SELECT COALESCE(MAX(ordinal), 0) + 1 FROM tasks`).Scan(&ordinal); err != nil {
-		return 0, fmt.Errorf("store: next ordinal: %w", err)
-	}
-	return ordinal, nil
-}
-
-func minOrdinal(ctx context.Context, tx *sql.Tx) (int, error) {
-	var ordinal int
-	if err := tx.QueryRowContext(ctx, `SELECT COALESCE(MIN(ordinal), 1) FROM tasks`).Scan(&ordinal); err != nil {
-		return 0, fmt.Errorf("store: min ordinal: %w", err)
-	}
-	return ordinal, nil
-}
-
-func encodeTags(tags []string) string {
-	if len(tags) == 0 {
-		return "[]"
-	}
-	b, err := json.Marshal(tags)
-	if err != nil {
-		return "[]"
-	}
-	return string(b)
-}
-
-func decodeTags(raw string) []string {
-	if raw == "" {
-		return nil
-	}
-	var tags []string
-	if err := json.Unmarshal([]byte(raw), &tags); err != nil {
-		return nil
-	}
-	return tags
-}
-
-func isDuplicateColumn(err error) bool {
-	return strings.Contains(err.Error(), "duplicate column name")
-}
-
-func isDuplicateTaskID(err error) bool {
-	return strings.Contains(err.Error(), "UNIQUE constraint failed: tasks.id")
-}
-
-func isSQLiteBusy(err error) bool {
-	if err == nil {
-		return false
-	}
-	message := strings.ToLower(err.Error())
-	return strings.Contains(message, "sqlite_busy") ||
-		strings.Contains(message, "database is locked")
-}
-
-func markImported(ctx context.Context, db *sql.DB, jsonlPath string) error {
-	if _, err := db.ExecContext(ctx, `
-INSERT INTO metadata (key, value) VALUES (?, ?)
-ON CONFLICT(key) DO UPDATE SET value = excluded.value`, importedJSONLKey, jsonlPath); err != nil {
-		return fmt.Errorf("store: write import metadata: %w", err)
-	}
-	return nil
-}
-
-func insertEvent(ctx context.Context, tx *sql.Tx, taskID string, event task.EventType, at, message string) error {
-	if at == "" {
-		at = nowString()
-	}
-	if _, err := tx.ExecContext(ctx, `
-INSERT INTO task_events (task_id, type, at, message)
-VALUES (?, ?, ?, ?)`, taskID, string(event), at, message); err != nil {
-		return fmt.Errorf("store: insert event %s for %s: %w", event, taskID, err)
-	}
-	return nil
-}
-
-func updateAttemptForEvent(ctx context.Context, tx *sql.Tx, t task.Task, event task.EventType, at, message string) error {
-	switch event {
-	case task.EventDone, task.EventFailed:
-		if _, err := tx.ExecContext(ctx, `
-UPDATE task_attempts
-SET finished = ?, status = ?, error = ?
-WHERE id = (
-	SELECT id FROM task_attempts
-	WHERE task_id = ? AND finished = ''
-	ORDER BY id DESC
-	LIMIT 1
-)`, at, string(t.Status), message, t.ID); err != nil {
-			return fmt.Errorf("store: finish attempt %s: %w", t.ID, err)
-		}
-	case task.EventReset:
-		if _, err := tx.ExecContext(ctx, `
-UPDATE task_attempts
-SET finished = ?, status = ?, error = ?
-WHERE task_id = ? AND finished = ''`, at, string(task.StatusPending), "", t.ID); err != nil {
-			return fmt.Errorf("store: reset attempt %s: %w", t.ID, err)
-		}
-	}
-	return nil
-}
-
-func eventTime(t task.Task) string {
-	if t.Finished != "" {
-		return t.Finished
-	}
-	if t.Started != "" {
-		return t.Started
-	}
-	return nowString()
-}
-
-func nowString() string {
-	return time.Now().UTC().Format(time.RFC3339)
-}
-
-func commit(tx *sql.Tx) error {
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("store: commit: %w", err)
-	}
-	return nil
-}
-
-func rollback(tx *sql.Tx) {
-	_ = tx.Rollback()
-}
-
-func replaceExt(path, ext string) string {
-	current := filepath.Ext(path)
-	if current == "" {
-		return path + ext
-	}
-	return strings.TrimSuffix(path, current) + ext
 }

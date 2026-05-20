@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"time"
 
 	"github.com/dotcommander/afk/internal/store"
@@ -138,7 +139,7 @@ func RemoveRejectionAt(path string, idx int) (RejectionRecord, error) {
 		return RejectionRecord{}, ErrRejectionIndexOutOfRange
 	}
 	removed := records[idx]
-	remaining := append(records[:idx:idx], records[idx+1:]...)
+	remaining := slices.Delete(records, idx, idx+1)
 	if err := writeRejections(path, remaining); err != nil {
 		return RejectionRecord{}, err
 	}

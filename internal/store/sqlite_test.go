@@ -11,7 +11,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dotcommander/afk/internal/queue"
 	"github.com/dotcommander/afk/internal/store"
 	"github.com/dotcommander/afk/internal/task"
 	"github.com/stretchr/testify/require"
@@ -21,7 +20,6 @@ func newStore(t *testing.T) *store.SQLiteStore {
 	t.Helper()
 	s, err := store.NewSQLite(context.Background(), store.Paths{
 		SQLitePath: filepath.Join(t.TempDir(), "tasks.sqlite"),
-		JSONLPath:  filepath.Join(t.TempDir(), "tasks.jsonl"),
 	})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, s.Close()) })
@@ -824,6 +822,40 @@ func TestSQLiteStorePruneAndNotFound(t *testing.T) {
 	require.Equal(t, "keep", tasks[0].ID)
 }
 
+func TestPrune_RecordsPrunedEvents(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	s := newStore(t)
+
+	// Add tasks in terminal statuses and one pending (must survive).
+	require.NoError(t, s.Add(ctx, task.Task{ID: "d1", Status: task.StatusDone, Body: "done one"}))
+	require.NoError(t, s.Add(ctx, task.Task{ID: "d2", Status: task.StatusDone, Body: "done two"}))
+	require.NoError(t, s.Add(ctx, task.Task{ID: "f1", Status: task.StatusFailed, Body: "fail one"}))
+	require.NoError(t, s.Add(ctx, task.Task{ID: "keep", Status: task.StatusPending, Body: "keep"}))
+
+	require.NoError(t, s.Prune(ctx, []task.Status{task.StatusDone, task.StatusFailed}))
+
+	// Surviving task is untouched.
+	tasks, err := s.List(ctx)
+	require.NoError(t, err)
+	require.Len(t, tasks, 1)
+	require.Equal(t, "keep", tasks[0].ID)
+
+	// Each pruned task must have a Pruned event whose message is the status string.
+	for id, wantStatus := range map[string]task.Status{
+		"d1": task.StatusDone,
+		"d2": task.StatusDone,
+		"f1": task.StatusFailed,
+	} {
+		events, err := s.Events(ctx, id)
+		require.NoError(t, err, "events for %s", id)
+		require.True(t, len(events) >= 2, "expected at least 2 events for %s, got %d", id, len(events))
+		last := events[len(events)-1]
+		require.Equal(t, task.EventPruned, last.Type, "last event type for %s", id)
+		require.Equal(t, string(wantStatus), last.Message, "last event message for %s", id)
+	}
+}
+
 func TestSQLiteStorePruneByTag(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -831,7 +863,6 @@ func TestSQLiteStorePruneByTag(t *testing.T) {
 	dir := t.TempDir()
 	s, err := store.NewSQLite(ctx, store.Paths{
 		SQLitePath: filepath.Join(dir, "tasks.sqlite"),
-		JSONLPath:  filepath.Join(dir, "tasks.jsonl"),
 	})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, s.Close()) })
@@ -869,37 +900,6 @@ func TestSQLiteStorePruneByTag(t *testing.T) {
 	})
 }
 
-func TestSQLiteStoreImportsLegacyJSONLOnce(t *testing.T) {
-	t.Parallel()
-	ctx := context.Background()
-	dir := t.TempDir()
-	jsonlPath := filepath.Join(dir, "tasks.jsonl")
-	sqlitePath := filepath.Join(dir, "tasks.sqlite")
-	legacy := queue.New(jsonlPath)
-	require.NoError(t, legacy.Save(ctx, []task.Task{
-		{ID: "a", Created: "2025-01-01T00:00:00Z", Status: task.StatusPending, Body: "first"},
-		{ID: "b", Created: "2025-01-02T00:00:00Z", Status: task.StatusDone, Body: "second"},
-	}))
-
-	s, err := store.NewSQLite(ctx, store.Paths{SQLitePath: sqlitePath, JSONLPath: jsonlPath})
-	require.NoError(t, err)
-	tasks, err := s.List(ctx)
-	require.NoError(t, err)
-	require.Len(t, tasks, 2)
-	require.Equal(t, "a", tasks[0].ID)
-	require.NoError(t, s.Close())
-
-	require.NoError(t, legacy.Save(ctx, []task.Task{
-		{ID: "c", Created: "2025-01-03T00:00:00Z", Status: task.StatusPending, Body: "third"},
-	}))
-	s, err = store.NewSQLite(ctx, store.Paths{SQLitePath: sqlitePath, JSONLPath: jsonlPath})
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, s.Close()) })
-	tasks, err = s.List(ctx)
-	require.NoError(t, err)
-	require.Len(t, tasks, 2)
-}
-
 func TestSQLiteStoreMigratesOldSchema(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -918,53 +918,6 @@ func TestSQLiteStoreMigratesOldSchema(t *testing.T) {
 	require.Equal(t, []string{"x"}, tasks[0].Tags)
 }
 
-func TestSQLiteStoreDoesNotImportJSONLIntoNonEmptyDB(t *testing.T) {
-	t.Parallel()
-	ctx := context.Background()
-	dir := t.TempDir()
-	jsonlPath := filepath.Join(dir, "tasks.jsonl")
-	sqlitePath := filepath.Join(dir, "tasks.sqlite")
-
-	s, err := store.NewSQLite(ctx, store.Paths{SQLitePath: sqlitePath, JSONLPath: ""})
-	require.NoError(t, err)
-	require.NoError(t, s.Add(ctx, task.Task{ID: "sqlite", Status: task.StatusPending, Body: "db"}))
-	require.NoError(t, s.Close())
-
-	require.NoError(t, queue.New(jsonlPath).Save(ctx, []task.Task{
-		{ID: "jsonl", Created: "2025-01-01T00:00:00Z", Status: task.StatusPending, Body: "jsonl"},
-	}))
-	s, err = store.NewSQLite(ctx, store.Paths{SQLitePath: sqlitePath, JSONLPath: jsonlPath})
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, s.Close()) })
-	tasks, err := s.List(ctx)
-	require.NoError(t, err)
-	require.Len(t, tasks, 1)
-	require.Equal(t, "sqlite", tasks[0].ID)
-}
-
-func TestSQLiteStoreMissingJSONLDoesNotMarkImported(t *testing.T) {
-	t.Parallel()
-	ctx := context.Background()
-	dir := t.TempDir()
-	jsonlPath := filepath.Join(dir, "tasks.jsonl")
-	sqlitePath := filepath.Join(dir, "tasks.sqlite")
-
-	s, err := store.NewSQLite(ctx, store.Paths{SQLitePath: sqlitePath, JSONLPath: jsonlPath})
-	require.NoError(t, err)
-	require.NoError(t, s.Close())
-
-	require.NoError(t, queue.New(jsonlPath).Save(ctx, []task.Task{
-		{ID: "late", Created: "2025-01-01T00:00:00Z", Status: task.StatusPending, Body: "late"},
-	}))
-	s, err = store.NewSQLite(ctx, store.Paths{SQLitePath: sqlitePath, JSONLPath: jsonlPath})
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, s.Close()) })
-	tasks, err := s.List(ctx)
-	require.NoError(t, err)
-	require.Len(t, tasks, 1)
-	require.Equal(t, "late", tasks[0].ID)
-}
-
 func TestSQLiteStoreCreatesParentDirectory(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -973,7 +926,6 @@ func TestSQLiteStoreCreatesParentDirectory(t *testing.T) {
 	s, err := store.NewSQLite(ctx, store.Paths{SQLitePath: dbPath})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, s.Close()) })
-	require.NoFileExists(t, filepath.Join(filepath.Dir(dbPath), "tasks.jsonl"))
 
 	require.NoError(t, s.Add(ctx, task.Task{ID: "1", Status: task.StatusPending}))
 	require.FileExists(t, dbPath)
@@ -982,21 +934,47 @@ func TestSQLiteStoreCreatesParentDirectory(t *testing.T) {
 func TestResolvePaths(t *testing.T) {
 	t.Parallel()
 
+	// A stale `.jsonl` path normalizes to a sibling `.sqlite` database.
 	paths := store.ResolvePaths("/tmp/tasks.jsonl")
 	require.Equal(t, "/tmp/tasks.sqlite", paths.SQLitePath)
-	require.Equal(t, "/tmp/tasks.jsonl", paths.JSONLPath)
 
+	// A `.sqlite` path is used as-is.
 	paths = store.ResolvePaths("/tmp/tasks.sqlite")
 	require.Equal(t, "/tmp/tasks.sqlite", paths.SQLitePath)
-	require.Equal(t, "/tmp/tasks.jsonl", paths.JSONLPath)
 
+	// An extensionless path is used as-is.
 	paths = store.ResolvePaths("/tmp/tasks")
 	require.Equal(t, "/tmp/tasks", paths.SQLitePath)
-	require.Equal(t, "/tmp/tasks.jsonl", paths.JSONLPath)
 
+	// Any other extension normalizes to a sibling `.sqlite` database.
+	paths = store.ResolvePaths("/tmp/tasks.db")
+	require.Equal(t, "/tmp/tasks.sqlite", paths.SQLitePath)
+
+	// An empty path falls back to the default SQLite location.
 	defaultPath, err := store.DefaultPath()
 	require.NoError(t, err)
 	require.True(t, strings.HasSuffix(defaultPath, ".claude/queue/tasks.sqlite"))
+	require.Equal(t, defaultPath, store.ResolvePaths("").SQLitePath)
+}
+
+func TestDelete_RecordsRemovedEvent(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	s := newStore(t)
+
+	require.NoError(t, s.Add(ctx, task.Task{ID: "del-1", Status: task.StatusPending, Body: "to delete"}))
+	require.NoError(t, s.Delete(ctx, "del-1"))
+
+	events, err := s.Events(ctx, "del-1")
+	require.NoError(t, err)
+	var found bool
+	for _, e := range events {
+		if e.Type == task.EventRemoved {
+			found = true
+			break
+		}
+	}
+	require.True(t, found, "expected EventRemoved in events after Delete")
 }
 
 func requireIDs(t *testing.T, tasks []task.Task, ids ...string) {

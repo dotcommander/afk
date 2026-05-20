@@ -27,7 +27,6 @@ func newServiceWithNow(t *testing.T, now func() time.Time) *app.Service {
 	t.Helper()
 	s, err := store.NewSQLite(context.Background(), store.Paths{
 		SQLitePath: filepath.Join(t.TempDir(), "tasks.sqlite"),
-		JSONLPath:  filepath.Join(t.TempDir(), "tasks.jsonl"),
 	})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, s.Close()) })
@@ -40,7 +39,6 @@ func newServiceWithSidecar(t *testing.T) (*app.Service, string) {
 	sidecar := filepath.Join(dir, "rejected.jsonl")
 	s, err := store.NewSQLite(context.Background(), store.Paths{
 		SQLitePath: filepath.Join(dir, "tasks.sqlite"),
-		JSONLPath:  filepath.Join(dir, "tasks.jsonl"),
 	})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, s.Close()) })
@@ -127,7 +125,7 @@ func TestServiceRetriesDuplicateIDOnAdd(t *testing.T) {
 }
 
 type duplicateOnFirstAddStore struct {
-	store.Store
+	app.Store
 	tasks    []task.Task
 	addCalls int
 }
@@ -658,7 +656,6 @@ func TestSidecarPathDerivation(t *testing.T) {
 	t.Parallel()
 	paths := store.Paths{
 		SQLitePath: "/home/user/.claude/queue/tasks.sqlite",
-		JSONLPath:  "/home/user/.claude/queue/tasks.jsonl",
 	}
 	require.Equal(t, "/home/user/.claude/queue/rejected.jsonl", app.SidecarPath(paths))
 	require.Equal(t, "", app.SidecarPath(store.Paths{}))
@@ -748,4 +745,94 @@ func TestAddWithOptionsForceInvalidTaskInsertsAndRecordsSidecar(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, records, 1)
 	require.Equal(t, "fix the thing", records[0].Body)
+}
+
+func TestServiceAddDependencyRejectsCycles(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	svc := newService(t)
+
+	a, err := svc.Add(ctx, "task a")
+	require.NoError(t, err)
+	b, err := svc.Add(ctx, "task b")
+	require.NoError(t, err)
+
+	// A depends on B — valid, no cycle.
+	require.NoError(t, svc.AddDependency(ctx, a, b))
+
+	// B depends on A — closes the cycle; must be rejected.
+	err = svc.AddDependency(ctx, b, a)
+	require.Error(t, err)
+	require.True(t, errors.Is(err, store.ErrDependencyCycle), "expected ErrDependencyCycle, got %v", err)
+}
+
+// TestWhy_ReadyMatchesStoreReady asserts the invariant: Why(id).Ready == (id is present in Ready(ctx) output).
+func TestWhy_ReadyMatchesStoreReady(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	t.Run("plain pending task is ready", func(t *testing.T) {
+		t.Parallel()
+		svc := newService(t)
+
+		id, err := svc.Add(ctx, "independent pending task")
+		require.NoError(t, err)
+
+		why, err := svc.Why(ctx, id)
+		require.NoError(t, err)
+		require.True(t, why.Ready)
+
+		ready, err := svc.Ready(ctx)
+		require.NoError(t, err)
+		found := false
+		for _, r := range ready {
+			if r.ID == id {
+				found = true
+				break
+			}
+		}
+		require.True(t, found, "id must be present in Ready() output when Why().Ready is true")
+	})
+
+	t.Run("pending task blocked by unfinished dep is not ready", func(t *testing.T) {
+		t.Parallel()
+		svc := newService(t)
+
+		prereq, err := svc.Add(ctx, "prereq task")
+		require.NoError(t, err)
+		blocked, err := svc.Add(ctx, "blocked downstream task")
+		require.NoError(t, err)
+		require.NoError(t, svc.AddDependency(ctx, blocked, prereq))
+
+		why, err := svc.Why(ctx, blocked)
+		require.NoError(t, err)
+		require.False(t, why.Ready)
+		require.NotEmpty(t, why.Reasons, "Reasons must be non-empty when blocked by a dependency")
+		require.Equal(t, "dependency_pending", why.Reasons[0].Kind)
+
+		ready, err := svc.Ready(ctx)
+		require.NoError(t, err)
+		for _, r := range ready {
+			require.NotEqual(t, blocked, r.ID, "blocked id must be absent from Ready() output")
+		}
+	})
+
+	t.Run("done task is not ready", func(t *testing.T) {
+		t.Parallel()
+		svc := newService(t)
+
+		id, err := svc.Add(ctx, "task to complete")
+		require.NoError(t, err)
+		require.NoError(t, svc.Done(ctx, id))
+
+		why, err := svc.Why(ctx, id)
+		require.NoError(t, err)
+		require.False(t, why.Ready)
+
+		ready, err := svc.Ready(ctx)
+		require.NoError(t, err)
+		for _, r := range ready {
+			require.NotEqual(t, id, r.ID, "done id must be absent from Ready() output")
+		}
+	})
 }

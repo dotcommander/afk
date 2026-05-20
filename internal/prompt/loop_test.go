@@ -15,7 +15,6 @@ func TestLoopIncludesCurrentQueueInstructions(t *testing.T) {
 	out := prompt.Loop(prompt.LoopOptions{
 		ExecutablePath: "/tmp/afk",
 		SQLitePath:     "/tmp/tasks.sqlite",
-		JSONLPath:      "/tmp/tasks.jsonl",
 	})
 
 	require.Contains(t, out, "/tmp/afk pop")
@@ -27,8 +26,8 @@ func TestLoopIncludesCurrentQueueInstructions(t *testing.T) {
 	require.Contains(t, out, "If the task has `cwd`, treat it as the likely working directory")
 	require.Contains(t, out, "Do not read, write, patch, edit, or repair the queue database directly")
 	require.Contains(t, out, "Do not pick up another task this tick")
-	require.Contains(t, out, "/tmp/tasks.jsonl")
-	require.Contains(t, out, "writes to a sibling `.sqlite` database")
+	require.NotContains(t, out, "tasks.jsonl")
+	require.NotContains(t, out, "Migration Note")
 }
 
 func TestLoopFallsBackToAfkExecutable(t *testing.T) {

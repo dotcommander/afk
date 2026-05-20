@@ -18,7 +18,6 @@ const (
 type LoopOptions struct {
 	ExecutablePath string
 	SQLitePath     string
-	JSONLPath      string
 }
 
 // Task renders a focused execution prompt for one task.
@@ -129,7 +128,6 @@ func Loop(opts LoopOptions) string {
 	writeLoopFinalize(&b, exe)
 	writeLoopStop(&b)
 	writeLoopRecovery(&b, exe)
-	writeLoopMigration(&b, opts)
 	return b.String()
 }
 
@@ -155,9 +153,6 @@ func writeLoopQueueContract(b *strings.Builder, exe string, opts LoopOptions) {
 	}
 	fmt.Fprintf(b, ".\n\n")
 	fmt.Fprintf(b, "Do not read, write, patch, edit, or repair the queue database directly.")
-	if opts.JSONLPath != "" {
-		fmt.Fprintf(b, " Do not hand-edit legacy `%s`; it is import-only compatibility data.", opts.JSONLPath)
-	}
 	fmt.Fprintf(b, "\n\n")
 	fmt.Fprintf(b, "Useful inspection commands:\n\n")
 	writeCommand(b, exe, "count")
@@ -227,16 +222,6 @@ func writeLoopRecovery(b *strings.Builder, exe string) {
 	fmt.Fprintf(b, "\nReset only when intentionally recovering an orphaned claim:\n\n")
 	writeCommand(b, exe, "reset <id>")
 	fmt.Fprintf(b, "\nDo not reset a task that another active worker may still be handling. If ownership is unclear, stop and report the `working` task id instead of resetting it.\n\n")
-}
-
-func writeLoopMigration(b *strings.Builder, opts LoopOptions) {
-	fmt.Fprintf(b, "## Migration Note\n\n")
-	if opts.JSONLPath != "" {
-		fmt.Fprintf(b, "`afk` imports `%s` into SQLite on first use when the SQLite database is empty. After import, new writes go to the SQLite database.\n\n", opts.JSONLPath)
-	} else {
-		fmt.Fprintf(b, "`afk` can import a legacy JSONL queue into SQLite on first use when the SQLite database is empty. After import, new writes go to the SQLite database.\n\n")
-	}
-	fmt.Fprintf(b, "If `--queue` or `AFK_QUEUE` points to a `.jsonl` path, `afk` treats that path as the legacy import source and writes to a sibling `.sqlite` database with the same basename.\n")
 }
 
 func writeCommand(b *strings.Builder, exe, args string) {

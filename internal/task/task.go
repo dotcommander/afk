@@ -20,7 +20,7 @@ const (
 // ErrInvalidStatus reports an unknown task status.
 var ErrInvalidStatus = errors.New("invalid task status")
 
-// Task is the JSONL schema. Field order matches the existing /qadd producer.
+// Task is the persisted task schema, also used for JSON CLI output.
 type Task struct {
 	ID           string   `json:"id"`
 	Created      string   `json:"created"`

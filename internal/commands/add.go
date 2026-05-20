@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -114,18 +113,28 @@ func runAddCommand(cmd *cobra.Command, d *Deps, input addCommandInput, mode addC
 		return writeAddDryRunResult(d, mode.asJSON)
 	}
 	if mode.force {
-		if v := os.Getenv("AFK_ALLOW_FORCE"); v != "1" {
-			cmd.SilenceUsage = true
-			return fmt.Errorf("--force requires AFK_ALLOW_FORCE=1 in environment (current: %q)", v)
-		}
-		fmt.Fprintln(d.Stderr, "warning: --force bypassing validation")
-		id, err := d.Service.AddWithOptionsForce(cmd.Context(), opts)
-		if err != nil {
-			cmd.SilenceUsage = true
-			return err
-		}
-		return writeAddResult(d, id, mode.asJSON)
+		return runAddForce(cmd, d, opts, mode.asJSON)
 	}
+	return runAddNormal(cmd, d, opts, dependsOnID, mode.asJSON)
+}
+
+func runAddForce(cmd *cobra.Command, d *Deps, opts task.AddOptions, asJSON bool) error {
+	if v := os.Getenv("AFK_ALLOW_FORCE"); v != "1" {
+		cmd.SilenceUsage = true
+		return fmt.Errorf("--force requires AFK_ALLOW_FORCE=1 in environment (current: %q)", v)
+	}
+	if _, err := fmt.Fprintln(d.Stderr, "warning: --force bypassing validation"); err != nil {
+		return err
+	}
+	id, err := d.Service.AddWithOptionsForce(cmd.Context(), opts)
+	if err != nil {
+		cmd.SilenceUsage = true
+		return err
+	}
+	return writeAddResult(d, id, asJSON)
+}
+
+func runAddNormal(cmd *cobra.Command, d *Deps, opts task.AddOptions, dependsOnID string, asJSON bool) error {
 	if dependsOnID != "" {
 		if _, err := d.Service.Show(cmd.Context(), dependsOnID); err != nil {
 			return err
@@ -140,108 +149,10 @@ func runAddCommand(cmd *cobra.Command, d *Deps, input addCommandInput, mode addC
 			return err
 		}
 	}
-	if err := writeAddTTYConfirmation(d.Stderr, id, opts, mode.asJSON); err != nil {
+	if err := writeAddTTYConfirmation(d.Stderr, id, opts, asJSON); err != nil {
 		return err
 	}
-	return writeAddResult(d, id, mode.asJSON)
-}
-
-func buildAddCommandOptions(input addCommandInput) (task.AddOptions, string, error) {
-	dependsOnID, err := normalizeBlockedBy(input.blockedBy, input.after)
-	if err != nil {
-		return task.AddOptions{}, "", err
-	}
-	resolvedCWD, err := resolveAddCWD(input.cwd, input.noCWD)
-	if err != nil {
-		return task.AddOptions{}, "", err
-	}
-	defaults := inferAddDefaults(resolvedCWD)
-	tags := input.tags
-	if len(tags) == 0 && defaults.repoTag != "" {
-		tags = []string{defaults.repoTag}
-	}
-	source := input.source
-	if source == "" {
-		source = "cli"
-	}
-	resourceKey := input.resourceKey
-	if strings.EqualFold(strings.TrimSpace(resourceKey), "none") {
-		resourceKey = ""
-	} else if resourceKey == "" {
-		resourceKey = defaults.resourceKey
-	}
-	return task.AddOptions{
-		Body:        strings.Join(input.args, " "),
-		Priority:    input.priority,
-		Tags:        tags,
-		CWD:         resolvedCWD,
-		Source:      source,
-		Agent:       input.agent,
-		GroupID:     input.groupID,
-		ResourceKey: resourceKey,
-	}, dependsOnID, nil
-}
-
-func resolveAddCWD(cwd string, noCWD bool) (string, error) {
-	if noCWD {
-		return "", nil
-	}
-	if cwd != "" {
-		resolvedCWD, err := filepath.Abs(cwd)
-		if err != nil {
-			return "", fmt.Errorf("resolve cwd: %w", err)
-		}
-		return resolvedCWD, nil
-	}
-	resolvedCWD, err := os.Getwd()
-	if err != nil {
-		return "", fmt.Errorf("resolve cwd: %w", err)
-	}
-	return resolvedCWD, nil
-}
-
-type addDefaults struct {
-	repoTag     string
-	resourceKey string
-}
-
-func inferAddDefaults(cwd string) addDefaults {
-	if cwd == "" {
-		return addDefaults{}
-	}
-	root, ok := findGitRoot(cwd)
-	if !ok {
-		return addDefaults{}
-	}
-	defaults := addDefaults{resourceKey: "repo:" + root}
-	if name := filepath.Base(root); name != "" && name != "." && name != string(filepath.Separator) {
-		defaults.repoTag = "repo:" + name
-	}
-	return defaults
-}
-
-func findGitRoot(cwd string) (string, bool) {
-	abs, err := filepath.Abs(cwd)
-	if err != nil {
-		return "", false
-	}
-	info, err := os.Stat(abs)
-	if err != nil {
-		return "", false
-	}
-	if !info.IsDir() {
-		abs = filepath.Dir(abs)
-	}
-	for {
-		if _, err := os.Stat(filepath.Join(abs, ".git")); err == nil {
-			return abs, true
-		}
-		parent := filepath.Dir(abs)
-		if parent == abs {
-			return "", false
-		}
-		abs = parent
-	}
+	return writeAddResult(d, id, asJSON)
 }
 
 func writeAddDryRunResult(d *Deps, asJSON bool) error {
@@ -338,20 +249,6 @@ func isGeneratedAdd(opts task.AddOptions) bool {
 		}
 	}
 	return false
-}
-
-func normalizeBlockedBy(blockedBy, after string) (string, error) {
-	if blockedBy != "" && after != "" && blockedBy != after {
-		return "", fmt.Errorf("--blocked-by and --after disagree")
-	}
-	value := blockedBy
-	if value == "" {
-		value = after
-	}
-	if value == "" || strings.EqualFold(value, "none") {
-		return "", nil
-	}
-	return value, nil
 }
 
 // runAddDiagnose runs ValidateAddOptionsAll and reports every failure on its

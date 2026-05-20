@@ -12,7 +12,7 @@ afk run --exec 'afk prompt --task {{id}}' --limit 1
 
 Tasks stay in `pending`, `working`, `done`, or `failed`. Scheduler state such as dependencies, manual blocks, leases, and resource locks is stored separately so the task lifecycle stays simple.
 
-On first use, `afk` imports existing tasks from `~/.claude/queue/tasks.jsonl` into SQLite when the database is empty. JSONL remains an import format only; new writes go to SQLite.
+The queue is stored in a single SQLite database. There is no JSONL backend.
 
 For task-shaped docs see [`docs/`](docs/index.md):
 
@@ -189,7 +189,16 @@ Template variables:
 | `{{body}}` | Task body. |
 | `{{queue}}` | Resolved SQLite queue path. |
 
-The runner also sets `AFK_QUEUE` for subprocesses so nested `afk` commands use the same queue.
+The runner also sets the following environment variables for every subprocess:
+
+| Variable | Value |
+|---|---|
+| `AFK_QUEUE` | Resolved SQLite queue path (for nested `afk` calls). |
+| `AFK_TASK_ID` | ID of the task being executed. |
+| `AFK_TASK_BODY` | Body text of the task. |
+| `AFK_TASK_CWD` | Working directory of the task. |
+
+These complement the template placeholders — worker commands can read task fields from the environment without parsing the `--exec` template.
 
 Important failure behavior: if the command exits while the task is still `working`, `afk run` marks the task failed. Worker commands should call `afk done <id>` or `afk fail <id> <reason>` when they finish the real work.
 
@@ -250,7 +259,7 @@ Queue database path resolution order:
 2. `AFK_QUEUE` environment variable
 3. `~/.claude/queue/tasks.sqlite`
 
-For migration compatibility, a path ending in `.jsonl` is treated as the legacy import path and stored next to a `.sqlite` database with the same basename. For example, `--queue /tmp/tasks.jsonl` writes to `/tmp/tasks.sqlite` and imports `/tmp/tasks.jsonl` once.
+A `--queue`/`AFK_QUEUE` path with a non-`.sqlite` extension is normalized to a sibling `.sqlite` database with the same basename. For example, `--queue /tmp/tasks.jsonl` uses `/tmp/tasks.sqlite`.
 
 ## Command Reference
 
@@ -292,8 +301,7 @@ For migration compatibility, a path ending in `.jsonl` is treated as the legacy 
 - `cmd/afk`: process setup and signal-aware command execution.
 - `internal/commands`: Cobra commands, argument parsing, and presentation wiring.
 - `internal/app`: task use cases such as add, list, pop, run, done, fail, reset, and prune.
-- `internal/store`: persistence boundary; the SQLite implementation owns atomic claim/update operations and one-time JSONL import.
-- `internal/queue`: legacy JSONL queue type used by the one-time SQLite import path.
+- `internal/store`: persistence boundary; the SQLite implementation owns atomic claim/update operations.
 - `internal/task`: persisted task schema, statuses, metadata, events, attempts, dependencies, and blocks.
 - `internal/runner`: built-in command-template runner.
 - `internal/output`: human and JSON/JSONL CLI rendering.

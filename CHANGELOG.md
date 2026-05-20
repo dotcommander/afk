@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Other
+
+- Remove legacy `~/.claude/queue/tasks.jsonl` import support. SQLite is the only queue backend; a non-`.sqlite` queue path is normalized to a sibling `.sqlite` database.
+
 ## v0.1.2 (2026-05-19)
 
 ### Features
