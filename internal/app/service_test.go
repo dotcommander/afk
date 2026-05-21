@@ -318,7 +318,7 @@ func TestServiceWhyReportsResourceLock(t *testing.T) {
 	require.Equal(t, claimed.ID, why.Reasons[0].Detail)
 }
 
-func TestServiceWhyIgnoresExpiredResourceLease(t *testing.T) {
+func TestServiceWhyKeepsExpiredResourceLeaseLockedUntilRequeue(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	now := fixed
@@ -334,6 +334,15 @@ func TestServiceWhyIgnoresExpiredResourceLease(t *testing.T) {
 
 	now = now.Add(2 * time.Second)
 	why, err := svc.Why(ctx, second)
+	require.NoError(t, err)
+	require.False(t, why.Ready)
+	require.Len(t, why.Reasons, 1)
+	require.Equal(t, "resource_locked", why.Reasons[0].Kind)
+	require.Equal(t, claimed.ID, why.Reasons[0].Detail)
+
+	_, err = svc.RequeueStale(ctx, time.Minute)
+	require.NoError(t, err)
+	why, err = svc.Why(ctx, second)
 	require.NoError(t, err)
 	require.True(t, why.Ready)
 	require.Empty(t, why.Reasons)

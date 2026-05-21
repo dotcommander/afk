@@ -110,11 +110,7 @@ ORDER BY ordinal, rowid`)
 }
 
 // Ready returns tasks that are currently eligible to be claimed, in scheduler order.
-func (s *SQLiteStore) Ready(ctx context.Context, opts ReadyOptions) ([]task.Task, error) {
-	now := opts.Now
-	if now.IsZero() {
-		now = time.Now()
-	}
+func (s *SQLiteStore) Ready(ctx context.Context, _ ReadyOptions) ([]task.Task, error) {
 	rows, err := s.db.QueryContext(ctx, `
 SELECT id, created, status, body, started, lease_expires, finished, error,
 	priority, tags, cwd, source, agent, group_id, resource_key
@@ -140,13 +136,9 @@ AND (
 		WHERE active.status = ?
 		AND active.resource_key = tasks.resource_key
 		AND active.id != tasks.id
-		AND (
-			active.lease_expires = ''
-			OR active.lease_expires > ?
-		)
 	)
 )
-ORDER BY `+schedulerOrderSQL, string(task.StatusPending), string(task.StatusDone), string(task.StatusWorking), now.UTC().Format(time.RFC3339))
+ORDER BY `+schedulerOrderSQL, string(task.StatusPending), string(task.StatusDone), string(task.StatusWorking))
 	if err != nil {
 		return nil, fmt.Errorf("store: ready: %w", err)
 	}
@@ -619,10 +611,6 @@ WHERE id = (
 			WHERE active.status = ?
 			AND active.resource_key = tasks.resource_key
 			AND active.id != tasks.id
-			AND (
-				active.lease_expires = ''
-				OR active.lease_expires > ?
-			)
 		)
 	)
 	ORDER BY `+schedulerOrderSQL+`
@@ -630,7 +618,7 @@ WHERE id = (
 )
 RETURNING id, created, status, body, started, lease_expires, finished, error,
 	priority, tags, cwd, source, agent, group_id, resource_key`,
-		string(task.StatusWorking), started, lease, string(task.StatusPending), string(task.StatusDone), string(task.StatusWorking), started)
+		string(task.StatusWorking), started, lease, string(task.StatusPending), string(task.StatusDone), string(task.StatusWorking))
 	t, err := scanTask(row)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {

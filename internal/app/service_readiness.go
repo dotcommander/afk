@@ -49,14 +49,11 @@ func (s *Service) manualBlockReasons(ctx context.Context, id string) ([]NotReady
 
 func (s *Service) resourceLockReasons(id string, t task.Task, tasks map[string]task.Task) []NotReadyReason {
 	if t.ResourceKey != "" {
-		nowText := formatTime(s.now())
 		for _, active := range tasks {
 			if active.ID == id || active.Status != task.StatusWorking || active.ResourceKey != t.ResourceKey {
 				continue
 			}
-			if active.LeaseExpires == "" || active.LeaseExpires > nowText {
-				return []NotReadyReason{{TaskID: id, Kind: "resource_locked", Detail: active.ID}}
-			}
+			return []NotReadyReason{{TaskID: id, Kind: "resource_locked", Detail: active.ID}}
 		}
 	}
 	return nil

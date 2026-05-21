@@ -545,10 +545,19 @@ func TestSQLiteStoreExpiredLeaseRequeueReleasesResourceLock(t *testing.T) {
 	require.NoError(t, s.Add(ctx, task.Task{ID: "second", Status: task.StatusPending, Body: "second", ResourceKey: "repo:x"}))
 	_, err := s.ClaimNext(ctx, now.Add(-time.Hour), now.Add(-30*time.Minute))
 	require.NoError(t, err)
+
+	ready, err := s.Ready(ctx, store.ReadyOptions{Now: now})
+	require.NoError(t, err)
+	require.Empty(t, ready)
+
+	claimed, err := s.ClaimNext(ctx, now, time.Time{})
+	require.NoError(t, err)
+	require.Nil(t, claimed)
+
 	_, err = s.RequeueStale(ctx, time.Minute, now)
 	require.NoError(t, err)
 
-	ready, err := s.Ready(ctx, store.ReadyOptions{Now: now})
+	ready, err = s.Ready(ctx, store.ReadyOptions{Now: now})
 	require.NoError(t, err)
 	require.Len(t, ready, 2)
 	require.Equal(t, "first", ready[0].ID)
