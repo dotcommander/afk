@@ -41,3 +41,44 @@ func newRunCmd(d *Deps) *cobra.Command {
 	cmd.Flags().IntVar(&opts.Workers, "workers", 1, "number of parallel workers; only 1 is supported in this version")
 	return cmd
 }
+
+// drainDefaultLimit is the default task cap for `afk drain` — a bounded loop
+// stops here unless --limit overrides it. 0 means drain until the queue empties.
+const drainDefaultLimit = 10
+
+func newDrainCmd(d *Deps) *cobra.Command {
+	var opts runner.Options
+	var lease string
+	var maxMinutes int
+
+	cmd := &cobra.Command{
+		Use:   "drain",
+		Short: "Claim and execute ready tasks in a bounded loop with a poison guard",
+		Long: "Claim ready tasks and run the --exec worker command in a loop until " +
+			"the queue empties or --limit tasks are processed (default 10). Before " +
+			"each claim, any ready task that has already failed 3 times is blocked " +
+			"so a repeatedly failing task cannot stall the drain.",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			leaseDuration, err := time.ParseDuration(lease)
+			if err != nil {
+				return fmt.Errorf("parse lease: %w", err)
+			}
+			opts.Lease = leaseDuration
+			if maxMinutes > 0 {
+				opts.MaxDuration = time.Duration(maxMinutes) * time.Minute
+			}
+			opts.QueuePath = d.QueuePaths.SQLitePath
+			opts.Stdout = d.Stdout
+			opts.Stderr = d.Stderr
+			return runner.Drain(cmd.Context(), d.Service, opts)
+		},
+	}
+	cmd.Flags().BoolVar(&opts.DryRun, "dry-run", false, "show runnable and waiting tasks without claiming")
+	cmd.Flags().IntVar(&opts.Limit, "limit", drainDefaultLimit, "maximum tasks to process; 0 means drain the whole queue")
+	cmd.Flags().IntVar(&maxMinutes, "max-minutes", 0, "maximum drain runtime in minutes")
+	cmd.Flags().StringVar(&lease, "lease", "30m", "lease duration for each claim")
+	cmd.Flags().StringVar(&opts.WorkerID, "worker", "", "worker id for claims and heartbeats")
+	cmd.Flags().StringVar(&opts.ExecTemplate, "exec", "", "shell command template using {{id}}, {{cwd}}, and {{body}}")
+	cmd.Flags().IntVar(&opts.Workers, "workers", 1, "number of parallel workers; only 1 is supported in this version")
+	return cmd
+}

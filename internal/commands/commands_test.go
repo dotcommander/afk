@@ -665,6 +665,58 @@ func TestRunCommandExecutesOnlyReadyTaskAndFailsIfUnfinalized(t *testing.T) {
 	require.Contains(t, run("show", blocked), "Status: pending")
 }
 
+func TestDrainCommandProcessesReadyTasksAndStopsAtLimit(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	queuePath := filepath.Join(dir, "tasks.sqlite")
+	stdout, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	d := testDepsWithWriters(stdout, stderr)
+
+	run := func(args ...string) string {
+		t.Helper()
+		stdout.Reset()
+		stderr.Reset()
+		root := NewRoot(d, "test")
+		root.SetArgs(append([]string{"--queue", queuePath}, args...))
+		require.NoError(t, root.Execute(), "stderr: %s", stderr.String())
+		return stdout.String()
+	}
+
+	first := strings.TrimSpace(run("add", "--no-cwd", "first"))
+	second := strings.TrimSpace(run("add", "--no-cwd", "second"))
+
+	// The exec command does not finalize the task, so the drain loop marks
+	// each processed task failed; --limit 1 must stop after the first.
+	stdout.Reset()
+	stderr.Reset()
+	root := NewRoot(d, "test")
+	root.SetArgs([]string{
+		"--queue", queuePath,
+		"drain", "--limit", "1",
+		"--exec", "true",
+		"--worker", "drain-1", "--lease", "1m",
+	})
+	require.NoError(t, root.Execute(), "stderr: %s", stderr.String())
+
+	require.Contains(t, run("show", first), "Status: failed")
+	require.Contains(t, run("show", first), "runner command exited without finalizing task")
+	require.Contains(t, run("show", second), "Status: pending")
+}
+
+func TestDrainCommandRejectsUnsupportedWorkers(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	stdout, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	root := NewRoot(testDepsWithWriters(stdout, stderr), "test")
+	root.SetArgs([]string{"--queue", filepath.Join(dir, "tasks.sqlite"), "drain", "--workers", "2", "--exec", "true"})
+
+	err := root.Execute()
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "--workers > 1")
+}
+
 func TestRunCommandRejectsUnsupportedWorkers(t *testing.T) {
 	t.Parallel()
 
@@ -735,6 +787,82 @@ func TestCommandsMissingTaskReturnsError(t *testing.T) {
 	err := root.Execute()
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "not found")
+}
+
+func TestStatusCommand(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	queuePath := filepath.Join(dir, "tasks.sqlite")
+	stdout, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	d := testDepsWithWriters(stdout, stderr)
+
+	run := func(args ...string) string {
+		t.Helper()
+		stdout.Reset()
+		stderr.Reset()
+		root := NewRoot(d, "test")
+		root.SetArgs(append([]string{"--queue", queuePath}, args...))
+		require.NoError(t, root.Execute(), "stderr: %s", stderr.String())
+		return stdout.String()
+	}
+
+	firstID := strings.TrimSpace(run("add", "--no-cwd", "first task"))
+	secondID := strings.TrimSpace(run("add", "--no-cwd", "second task"))
+	doneID := strings.TrimSpace(run("add", "--no-cwd", "done task"))
+	run("done", doneID)
+
+	// pop claims the first ready task; capture its id from the JSON line.
+	var popped map[string]any
+	require.NoError(t, json.Unmarshal([]byte(strings.TrimSpace(run("pop", "--worker", "worker-1", "--lease", "30m"))), &popped))
+	workingID, ok := popped["id"].(string)
+	require.True(t, ok)
+	require.Equal(t, firstID, workingID)
+	pendingID := secondID
+
+	text := run("status")
+	require.Contains(t, text, "pending: 1")
+	require.Contains(t, text, "working: 1")
+	require.Contains(t, text, "done: 1")
+	require.Contains(t, text, "Pending:")
+	require.Contains(t, text, pendingID)
+	require.Contains(t, text, "Working:")
+	require.Contains(t, text, workingID)
+
+	var doc map[string]any
+	require.NoError(t, json.Unmarshal([]byte(strings.TrimSpace(run("status", "--json"))), &doc))
+	require.Equal(t, float64(1), doc["pending"])
+	require.Equal(t, float64(1), doc["working"])
+	require.Equal(t, float64(1), doc["done"])
+	require.Equal(t, float64(0), doc["failed"])
+	require.Equal(t, float64(3), doc["total"])
+
+	tasks, ok := doc["tasks"].(map[string]any)
+	require.True(t, ok)
+	pending, ok := tasks["pending"].([]any)
+	require.True(t, ok)
+	require.Len(t, pending, 1)
+	require.Equal(t, pendingID, pending[0].(map[string]any)["id"])
+	working, ok := tasks["working"].([]any)
+	require.True(t, ok)
+	require.Len(t, working, 1)
+	require.Equal(t, workingID, working[0].(map[string]any)["id"])
+}
+
+func TestStatusCommandEmptyQueue(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	queuePath := filepath.Join(dir, "tasks.sqlite")
+	stdout, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	root := NewRoot(testDepsWithWriters(stdout, stderr), "test")
+	root.SetArgs([]string{"--queue", queuePath, "status"})
+
+	require.NoError(t, root.Execute(), "stderr: %s", stderr.String())
+	out := stdout.String()
+	require.Contains(t, out, "pending: 0")
+	require.Contains(t, out, "Pending:")
+	require.Contains(t, out, "  none")
 }
 
 func testDepsWithWriters(stdout, stderr *bytes.Buffer) *Deps {

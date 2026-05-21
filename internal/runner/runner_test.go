@@ -334,6 +334,91 @@ func TestRunTask_KillsProcessGroupOnCancel(t *testing.T) {
 	require.Equal(t, size1, size2, "grandchild process kept writing after group kill — process group was not killed")
 }
 
+func TestDrainProcessesReadyTasksUpToLimit(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	svc, st, queuePath := newRunnerService(t)
+	for _, id := range []string{"d1", "d2", "d3"} {
+		require.NoError(t, st.Add(ctx, task.Task{
+			ID:      id,
+			Created: time.Now().UTC().Format(time.RFC3339),
+			Status:  task.StatusPending,
+			Body:    id,
+		}))
+	}
+
+	var stdout bytes.Buffer
+	require.NoError(t, runner.Drain(ctx, svc, runner.Options{
+		Limit:        2,
+		ExecTemplate: helperCommand(queuePath, "{{id}}", "done"),
+		QueuePath:    queuePath,
+		Stdout:       &stdout,
+	}))
+
+	done := 0
+	for _, id := range []string{"d1", "d2", "d3"} {
+		got, err := svc.Show(ctx, id)
+		require.NoError(t, err)
+		if got.Status == task.StatusDone {
+			done++
+		}
+	}
+	require.Equal(t, 2, done, "drain --limit 2 must process exactly two tasks")
+}
+
+func TestDrainRejectsInvalidOptions(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	svc, _, _ := newRunnerService(t)
+
+	err := runner.Drain(ctx, svc, runner.Options{Workers: 2})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "--workers > 1")
+
+	err = runner.Drain(ctx, svc, runner.Options{})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "--exec is required")
+}
+
+func TestDrainBlocksPoisonTask(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	svc, st, queuePath := newRunnerService(t)
+	require.NoError(t, st.Add(ctx, task.Task{
+		ID:      "poison",
+		Created: time.Now().UTC().Format(time.RFC3339),
+		Status:  task.StatusPending,
+		Body:    "poison",
+	}))
+
+	// Fail and retry the task three times so it carries 3 failed attempts
+	// while remaining pending — exactly the poison-guard trigger.
+	for i := 0; i < 3; i++ {
+		_, err := svc.PopWithLease(ctx, time.Minute)
+		require.NoError(t, err)
+		require.NoError(t, svc.Fail(ctx, "poison", "boom"))
+		require.NoError(t, svc.Retry(ctx, "poison"))
+	}
+
+	var stdout bytes.Buffer
+	require.NoError(t, runner.Drain(ctx, svc, runner.Options{
+		Limit:        5,
+		ExecTemplate: helperCommand(queuePath, "{{id}}", "done"),
+		QueuePath:    queuePath,
+		Stdout:       &stdout,
+	}))
+
+	require.Contains(t, stdout.String(), "blocked poison")
+	require.Contains(t, stdout.String(), "poison: 3 failed attempts")
+
+	why, err := svc.Why(ctx, "poison")
+	require.NoError(t, err)
+	require.False(t, why.Ready, "poisoned task must not be ready after drain blocks it")
+}
+
 func newRunnerService(t *testing.T) (*app.Service, *store.SQLiteStore, string) {
 	t.Helper()
 	ctx := context.Background()
