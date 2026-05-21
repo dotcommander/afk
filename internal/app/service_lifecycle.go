@@ -37,6 +37,15 @@ func (s *Service) Reset(ctx context.Context, id string) error {
 
 // Retry resets a failed task to pending while preserving attempt history.
 func (s *Service) Retry(ctx context.Context, id string) error {
+	tk, err := s.Show(ctx, id)
+	if err != nil {
+		return err
+	}
+	if tk.Status == task.StatusFailed {
+		if err := task.ValidateBody(tk.Body); err != nil {
+			return err
+		}
+	}
 	return s.store.Update(ctx, id, task.EventRetried, "", func(t *task.Task) bool {
 		if t.Status != task.StatusFailed {
 			return false

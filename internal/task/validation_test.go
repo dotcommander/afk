@@ -27,6 +27,43 @@ func TestValidateBodyRejectsInvalidTasks(t *testing.T) {
 	}
 }
 
+func TestValidateBodyRejectsHumanInTheLoopTasks(t *testing.T) {
+	t.Parallel()
+
+	for _, body := range []string{
+		"HITL GATE FIRST: post this question to the user via AskUserQuestion before any code.",
+		"WAIT for user answer before proceeding with implementation.",
+		"This candidate is HITL-dependent and cannot run unattended.",
+	} {
+		body := body
+		t.Run(body, func(t *testing.T) {
+			t.Parallel()
+			err := task.ValidateBody(body)
+			require.Error(t, err)
+			require.True(t, errors.Is(err, task.ErrInvalidTask), "got %v", err)
+			require.Contains(t, err.Error(), "human-in-the-loop")
+		})
+	}
+}
+
+func TestValidateBodyRejectsVaguePolishTasks(t *testing.T) {
+	t.Parallel()
+
+	for _, body := range []string{
+		"work on polishing the game play",
+		"Work on polishing the gameplay.",
+	} {
+		body := body
+		t.Run(body, func(t *testing.T) {
+			t.Parallel()
+			err := task.ValidateBody(body)
+			require.Error(t, err)
+			require.True(t, errors.Is(err, task.ErrInvalidTask), "got %v", err)
+			require.Contains(t, err.Error(), "vague or non-actionable")
+		})
+	}
+}
+
 func TestValidateAddOptionsRequiresEvidenceForGeneratedTasks(t *testing.T) {
 	t.Parallel()
 

@@ -157,6 +157,16 @@ func ValidateBody(body string) error {
 			return invalid("not actionable software work")
 		}
 	}
+	for _, phrase := range invalidAutonomyPhrases {
+		if strings.Contains(normalized, phrase) {
+			return invalid("requires human-in-the-loop decision")
+		}
+	}
+	for _, phrase := range invalidVagueSoftwarePhrases {
+		if strings.Contains(normalized, phrase) {
+			return invalid("vague or non-actionable software work")
+		}
+	}
 	for _, phrase := range invalidBodyPhrases {
 		if strings.Contains(normalized, phrase) {
 			return invalid("physical or personal-service request")
@@ -213,6 +223,22 @@ var invalidBodyPhrases = []string{
 	"pick my nose",
 	"brush my teeth",
 	"wash my hair",
+}
+
+var invalidAutonomyPhrases = []string{
+	"askuserquestion",
+	"hitl gate",
+	"hitl-dependent",
+	"human in the loop",
+	"post this question to the user",
+	"wait for answer",
+	"wait for user answer",
+}
+
+var invalidVagueSoftwarePhrases = []string{
+	"polish the game play",
+	"polish the gameplay",
+	"work on polishing",
 }
 
 var invalidGeneratedPhrases = []string{

@@ -481,6 +481,26 @@ func TestServiceRetryRequeueStaleAndPruneByTag(t *testing.T) {
 	require.ErrorIs(t, err, app.ErrNotFound)
 }
 
+func TestServiceRetryRejectsInvalidFailedBody(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	svc := newService(t)
+
+	id, err := svc.AddWithOptionsForce(ctx, task.AddOptions{
+		Body: "HITL GATE FIRST: post this question to the user via AskUserQuestion.",
+	})
+	require.NoError(t, err)
+	require.NoError(t, svc.Fail(ctx, id, "invalid autonomy contract"))
+
+	err = svc.Retry(ctx, id)
+	require.Error(t, err)
+	require.True(t, errors.Is(err, task.ErrInvalidTask), "got %v", err)
+
+	got, err := svc.Show(ctx, id)
+	require.NoError(t, err)
+	require.Equal(t, task.StatusFailed, got.Status)
+}
+
 func TestServiceHeartbeat(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
