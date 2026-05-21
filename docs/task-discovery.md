@@ -50,7 +50,7 @@ an idea.
 2. Gather bounded evidence that matches the path.
 3. Check the queue for duplicates.
 4. Convert evidence into queueable mini-specs.
-5. Rank strong candidates and reject weak leads.
+5. Rank strong candidates by impact and reject weak leads.
 6. Validate task bodies with `afk add --dry-run`.
 7. Ask one enqueue confirmation.
 
@@ -103,16 +103,14 @@ pending or working tasks. Queue inspection may initialize the configured queue;
 
 Useful task sources by path kind:
 
-- `repo`: dirty or untracked files that look intentionally unfinished; failing
-  tests, lint, builds, or documented verification commands; TODO/FIXME markers
-  with enough local context; repeated code paths that can be collapsed without
-  changing behavior; public behavior without focused tests.
-- `web`: broken asset paths, missing smoke checks, stale screenshots, routes
-  not reflected in docs, forms without focused validation, or mismatches between
-  package scripts and documented commands.
-- `docs`: stale docs where CLI help, examples, APIs, or behavior disagree with
-  source; broken relative links; missing indexes; duplicated content blocks; old
-  generated output that can be refreshed deterministically.
+- `repo`: real bugs, broken workflows, unsafe reads, context propagation gaps,
+  state handling risks, runtime/build blockers, deployment traps, high-friction
+  local-dev blockers, or measured duplication with current risk.
+- `web`: broken auth/session/cache/data flows, runtime or deployment blockers,
+  bad form handling, route/action bugs, user-visible asset failures, or config
+  and environment traps.
+- `docs`: docs/source contradictions only when they mislead execution, setup,
+  deployment, or operator behavior. Otherwise rank docs last.
 - `kb`: orphaned notes, duplicate titles, missing frontmatter, uncategorized
   high-value notes, stale local indexes, or broken internal links.
 - `media`: missing subtitles, thumbnails, playlists, sidecars, or catalog
@@ -130,6 +128,26 @@ Useful task sources by path kind:
 Stale reports are evidence leads, not evidence. If a report claims a problem but
 current code, tests, or docs show it was already fixed, list it under
 `Rejected` instead of producing a task.
+
+## ranking priorities
+
+Rank by practical impact before ease:
+
+1. Core behavior or correctness: real bugs, broken workflows, bad state handling,
+   auth/session/cache/data issues, race or stale-state hazards.
+2. High-impact product or operator value: missing workflow pieces, broken UX
+   paths, deployment/runtime blockers, local-dev blockers, config/env traps.
+3. Safety or hardening: unsafe IO, unbounded reads, auth validation gaps, bad
+   error handling, data loss risks.
+4. Performance or reliability: cache stampedes, N+1 queries, resource leaks,
+   retry/backoff issues, expensive hot paths.
+5. Maintainability with measured payoff: small duplication removal only when
+   current code proves risk or friction.
+6. Tests/docs only as enablers: include them when they unblock or verify a
+   higher-impact change, or when the issue is a broken command or docs/source
+   contradiction.
+7. Pure test gaps or docs polish: last priority; do not present them as primary
+   discoveries when stronger codebase tasks exist.
 
 ## scoring
 
@@ -176,6 +194,7 @@ Before suggesting or enqueueing a task:
 6. Drop refactors that do not remove measured duplication, unblock a fix, reduce
    a known maintenance hazard, or add focused coverage around existing behavior.
 7. Drop candidates based only on old reports, vague TODOs, or style preference.
+8. Drop pure test or docs polish while higher-impact codebase work is available.
 
 ## task body shape
 
