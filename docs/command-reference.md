@@ -59,7 +59,6 @@ See [workers.md](workers.md).
 |---|---|
 | `afk explain <id>` | Show task metadata, events, and attempts. Add `--json`. |
 | `afk doctor` | Check queue health, queue path, and binary install. |
-| `afk discover` | Print the task-discovery workflow stub without opening or creating the queue. |
 
 ## prompts
 
@@ -67,6 +66,7 @@ See [workers.md](workers.md).
 |---|---|
 | `afk prompt` | Emit the loop instructions for Claude Code as Markdown. |
 | `afk prompt --task <id>` | Emit a focused prompt for one queued task. |
+| `afk prompt --discover` | Emit task-discovery workflow Markdown. |
 | `afk prompt --output PATH` | Write the prompt to a file instead of stdout. |
 
 ## global flags

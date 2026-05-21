@@ -22,6 +22,45 @@ For normal repo work, the plain command carries the useful metadata by default:
 - inside a git repository, `resource` is `repo:<git-root>` so workers do not concurrently claim work against the same repo.
 - inside a git repository, a `repo:<directory-name>` tag is added when no tags are supplied.
 
+### capture a task for later
+
+Use `afk add` when you are busy but have a concrete task in mind:
+
+```sh
+cd /Users/you/code/my-project
+afk add "Fix the settings save bug. Success: settings persist after refresh. Verify with go test ./..."
+```
+
+The command prints the task id and leaves the task in `pending`:
+
+```text
+42
+```
+
+Because the command ran from the project root, a later worker can recover the
+working directory and the inferred repo resource lock from the task metadata.
+Check the captured task:
+
+```sh
+afk show 42
+afk ready --limit 1
+```
+
+If you are adding the task from another directory, use `--cwd` so the worker
+still starts from the right project:
+
+```sh
+afk add --cwd /Users/you/code/my-project \
+  "Fix the settings save bug. Success: settings persist after refresh. Verify with go test ./..."
+```
+
+For urgent work, add priority at capture time:
+
+```sh
+afk add --cwd /Users/you/code/my-project --priority high \
+  "Fix the production config regression. Success: config loads locally. Verify with go test ./..."
+```
+
 Validate a generated task without mutating the queue:
 
 ```sh

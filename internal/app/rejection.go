@@ -17,14 +17,16 @@ import (
 
 // RejectionRecord is one line in the rejected.jsonl sidecar.
 type RejectionRecord struct {
-	Ts     time.Time `json:"ts"`
-	Reason string    `json:"reason"`
-	Body   string    `json:"body"`
-	Tags   []string  `json:"tags,omitempty"`
-	Source string    `json:"source,omitempty"`
-	CWD    string    `json:"cwd,omitempty"`
-	Agent  string    `json:"agent,omitempty"`
-	Group  string    `json:"group,omitempty"`
+	Ts          time.Time `json:"ts"`
+	Reason      string    `json:"reason"`
+	Body        string    `json:"body"`
+	Tags        []string  `json:"tags,omitempty"`
+	Source      string    `json:"source,omitempty"`
+	CWD         string    `json:"cwd,omitempty"`
+	Priority    string    `json:"priority,omitempty"`
+	ResourceKey string    `json:"resource_key,omitempty"`
+	Agent       string    `json:"agent,omitempty"`
+	Group       string    `json:"group,omitempty"`
 }
 
 // SidecarPath returns the rejected.jsonl path next to the SQLite DB.
@@ -45,14 +47,16 @@ func RecordRejection(sidecarPath string, opts task.AddOptions, reason error, now
 		return fmt.Errorf("record rejection: empty sidecar path")
 	}
 	rec := RejectionRecord{
-		Ts:     now.UTC(),
-		Reason: reason.Error(),
-		Body:   opts.Body,
-		Tags:   opts.Tags,
-		Source: opts.Source,
-		CWD:    opts.CWD,
-		Agent:  opts.Agent,
-		Group:  opts.GroupID,
+		Ts:          now.UTC(),
+		Reason:      reason.Error(),
+		Body:        opts.Body,
+		Tags:        opts.Tags,
+		Source:      opts.Source,
+		CWD:         opts.CWD,
+		Priority:    opts.Priority,
+		ResourceKey: opts.ResourceKey,
+		Agent:       opts.Agent,
+		Group:       opts.GroupID,
 	}
 	line, err := json.Marshal(rec)
 	if err != nil {

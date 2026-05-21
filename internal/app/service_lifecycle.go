@@ -42,7 +42,7 @@ func (s *Service) Retry(ctx context.Context, id string) error {
 		return err
 	}
 	if tk.Status == task.StatusFailed {
-		if err := task.ValidateBody(tk.Body); err != nil {
+		if err := task.ValidateAddOptions(task.AddOptionsFromTask(tk)); err != nil {
 			return err
 		}
 	}
@@ -60,8 +60,13 @@ func (s *Service) Remove(ctx context.Context, id string) error {
 	return s.store.Delete(ctx, id)
 }
 
-// Prune removes tasks matching statuses.
-func (s *Service) Prune(ctx context.Context, statuses []task.Status) error {
+// Prune removes tasks matching statuses and returns the number deleted.
+func (s *Service) Prune(ctx context.Context, statuses []task.Status) (int, error) {
+	for _, status := range statuses {
+		if !task.ValidStatus(status) {
+			return 0, task.ErrInvalidStatus
+		}
+	}
 	return s.store.Prune(ctx, statuses)
 }
 

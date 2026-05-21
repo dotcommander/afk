@@ -27,11 +27,9 @@ func (s *Service) RemoveRejected(idx int) (RejectionRecord, error) {
 }
 
 // RetryRejected re-runs AddWithOptions for the rejection at idx (0-based)
-// using the body/tags/cwd/source captured at rejection time. On success the
-// new task is returned and the record is removed from the sidecar. On
-// validation failure the sidecar is untouched so the operator can continue to
-// triage. The Agent and Group fields are intentionally NOT replayed — they
-// were not part of AddOptions at rejection time.
+// using the metadata captured at rejection time. On success the new task is
+// returned and the record is removed from the sidecar. On validation failure the
+// sidecar is untouched so the operator can continue to triage.
 func (s *Service) RetryRejected(ctx context.Context, idx int) (task.Task, error) {
 	if s.sidecarPath == "" {
 		return task.Task{}, ErrSidecarDisabled
@@ -45,10 +43,14 @@ func (s *Service) RetryRejected(ctx context.Context, idx int) (task.Task, error)
 	}
 	rec := records[idx]
 	opts := task.AddOptions{
-		Body:   rec.Body,
-		Tags:   rec.Tags,
-		CWD:    rec.CWD,
-		Source: rec.Source,
+		Body:        rec.Body,
+		Priority:    rec.Priority,
+		Tags:        rec.Tags,
+		CWD:         rec.CWD,
+		Source:      rec.Source,
+		Agent:       rec.Agent,
+		GroupID:     rec.Group,
+		ResourceKey: rec.ResourceKey,
 	}
 	id, err := s.AddWithOptions(ctx, opts)
 	if err != nil {

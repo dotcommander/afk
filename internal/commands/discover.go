@@ -12,22 +12,22 @@ var discoverStubText string
 
 func newDiscoverCmd(d *Deps) *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "discover",
-		Short: "Print task-discovery workflow guidance",
-		Args: func(cmd *cobra.Command, args []string) error {
-			if len(args) == 0 {
-				return nil
-			}
-			cmd.SilenceUsage = true
-			return fmt.Errorf("afk discover accepts no arguments; run it from the target path and follow the printed workflow")
-		},
+		Use:    "discover",
+		Short:  "Print task-discovery workflow guidance",
+		Hidden: true,
+		Args:   cobra.ArbitraryArgs,
 		Annotations: map[string]string{
 			"skipStoreInit": "true",
 		},
-		RunE: func(_ *cobra.Command, _ []string) error {
-			_, err := fmt.Fprint(d.Stdout, discoverStubText)
-			return err
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cmd.SilenceUsage = true
+			return fmt.Errorf("afk discover has moved; use afk prompt --discover")
 		},
 	}
 	return cmd
+}
+
+func writeDiscoverPrompt(d *Deps) error {
+	_, err := fmt.Fprint(d.Stdout, discoverStubText)
+	return err
 }

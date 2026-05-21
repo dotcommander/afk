@@ -18,7 +18,7 @@ afk done <id>
 | [scheduling.md](scheduling.md) | Dependencies, manual blocks, resource locks, readiness. |
 | [workers.md](workers.md) | Claim work, hold leases, heartbeat, recover stale claims. |
 | [runner.md](runner.md) | `afk run` worker loop and command templates. |
-| [task-discovery.md](task-discovery.md) | Use `afk discover` and path-specific local probes to mine AFK-ready candidate tasks. |
+| [task-discovery.md](task-discovery.md) | Use `afk prompt --discover` and local probes to mine AFK-ready candidate tasks from review material. |
 | [configuration.md](configuration.md) | Queue path resolution and environment variables. |
 | [command-reference.md](command-reference.md) | Every subcommand, one row each. |
 

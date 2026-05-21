@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/dotcommander/afk/internal/app"
 	"github.com/dotcommander/afk/internal/task"
 )
 
@@ -20,8 +21,8 @@ func buildAddCommandOptions(input addCommandInput) (task.AddOptions, string, err
 	}
 	defaults := inferAddDefaults(resolvedCWD)
 	tags := input.tags
-	if len(tags) == 0 && defaults.repoTag != "" {
-		tags = []string{defaults.repoTag}
+	if len(tags) == 0 && defaults.RepoTag != "" {
+		tags = []string{defaults.RepoTag}
 	}
 	source := input.source
 	if source == "" {
@@ -31,7 +32,7 @@ func buildAddCommandOptions(input addCommandInput) (task.AddOptions, string, err
 	if strings.EqualFold(strings.TrimSpace(resourceKey), "none") {
 		resourceKey = ""
 	} else if resourceKey == "" {
-		resourceKey = defaults.resourceKey
+		resourceKey = defaults.ResourceKey
 	}
 	return task.AddOptions{
 		Body:        strings.Join(input.args, " "),
@@ -63,48 +64,8 @@ func resolveAddCWD(cwd string, noCWD bool) (string, error) {
 	return resolvedCWD, nil
 }
 
-type addDefaults struct {
-	repoTag     string
-	resourceKey string
-}
-
-func inferAddDefaults(cwd string) addDefaults {
-	if cwd == "" {
-		return addDefaults{}
-	}
-	root, ok := findGitRoot(cwd)
-	if !ok {
-		return addDefaults{}
-	}
-	defaults := addDefaults{resourceKey: "repo:" + root}
-	if name := filepath.Base(root); name != "" && name != "." && name != string(filepath.Separator) {
-		defaults.repoTag = "repo:" + name
-	}
-	return defaults
-}
-
-func findGitRoot(cwd string) (string, bool) {
-	abs, err := filepath.Abs(cwd)
-	if err != nil {
-		return "", false
-	}
-	info, err := os.Stat(abs)
-	if err != nil {
-		return "", false
-	}
-	if !info.IsDir() {
-		abs = filepath.Dir(abs)
-	}
-	for {
-		if _, err := os.Stat(filepath.Join(abs, ".git")); err == nil {
-			return abs, true
-		}
-		parent := filepath.Dir(abs)
-		if parent == abs {
-			return "", false
-		}
-		abs = parent
-	}
+func inferAddDefaults(cwd string) app.AddDefaults {
+	return app.InferAddDefaults(cwd)
 }
 
 func normalizeBlockedBy(blockedBy, after string) (string, error) {

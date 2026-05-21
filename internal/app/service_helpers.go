@@ -3,6 +3,7 @@ package app
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"sort"
 	"time"
 
@@ -78,6 +79,53 @@ func workerOrDefault(workerID string) string {
 		return workerID
 	}
 	return defaultWorkerID()
+}
+
+// AddDefaults are inferred from a task working directory.
+type AddDefaults struct {
+	RepoTag     string
+	ResourceKey string
+}
+
+// InferAddDefaults returns repo-scoped metadata for tasks rooted in a git
+// checkout. Callers decide whether explicit user-provided values override it.
+func InferAddDefaults(cwd string) AddDefaults {
+	if cwd == "" {
+		return AddDefaults{}
+	}
+	root, ok := findGitRoot(cwd)
+	if !ok {
+		return AddDefaults{}
+	}
+	defaults := AddDefaults{ResourceKey: "repo:" + root}
+	if name := filepath.Base(root); name != "" && name != "." && name != string(filepath.Separator) {
+		defaults.RepoTag = "repo:" + name
+	}
+	return defaults
+}
+
+func findGitRoot(cwd string) (string, bool) {
+	abs, err := filepath.Abs(cwd)
+	if err != nil {
+		return "", false
+	}
+	info, err := os.Stat(abs)
+	if err != nil {
+		return "", false
+	}
+	if !info.IsDir() {
+		abs = filepath.Dir(abs)
+	}
+	for {
+		if _, err := os.Stat(filepath.Join(abs, ".git")); err == nil {
+			return abs, true
+		}
+		parent := filepath.Dir(abs)
+		if parent == abs {
+			return "", false
+		}
+		abs = parent
+	}
 }
 
 func defaultWorkerID() string {

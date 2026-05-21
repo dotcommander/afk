@@ -7,7 +7,9 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"path/filepath"
 
+	"github.com/dotcommander/afk/internal/app"
 	"github.com/dotcommander/afk/internal/task"
 )
 
@@ -111,10 +113,22 @@ func (s *Server) handleCreate(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, fmt.Errorf("decode body: %w", err))
 		return
 	}
+	cwd := in.CWD
+	if cwd != "" {
+		abs, err := filepath.Abs(cwd)
+		if err != nil {
+			writeErr(w, http.StatusBadRequest, fmt.Errorf("resolve cwd: %w", err))
+			return
+		}
+		cwd = abs
+	}
+	defaults := app.InferAddDefaults(cwd)
 	id, err := s.svc.AddWithOptions(r.Context(), task.AddOptions{
-		Body:   in.Body,
-		CWD:    in.CWD,
-		Source: "web",
+		Body:        in.Body,
+		Tags:        defaultTags(defaults),
+		CWD:         cwd,
+		Source:      "web",
+		ResourceKey: defaults.ResourceKey,
 	})
 	if err != nil {
 		if errors.Is(err, task.ErrInvalidTask) {
@@ -125,6 +139,13 @@ func (s *Server) handleCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusCreated, map[string]string{"id": id})
+}
+
+func defaultTags(defaults app.AddDefaults) []string {
+	if defaults.RepoTag == "" {
+		return nil
+	}
+	return []string{defaults.RepoTag}
 }
 
 // handlePrune serves POST /api/prune.
@@ -140,13 +161,19 @@ func (s *Server) handlePrune(w http.ResponseWriter, r *http.Request) {
 	if len(in.Statuses) > 0 {
 		statuses = make([]task.Status, len(in.Statuses))
 		for i, s := range in.Statuses {
-			statuses[i] = task.Status(s)
+			status := task.Status(s)
+			if !task.ValidStatus(status) {
+				writeErr(w, http.StatusBadRequest, fmt.Errorf("%w: %q", task.ErrInvalidStatus, s))
+				return
+			}
+			statuses[i] = status
 		}
 	}
 
-	if err := s.svc.Prune(r.Context(), statuses); err != nil {
+	n, err := s.svc.Prune(r.Context(), statuses)
+	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "pruned": n})
 }

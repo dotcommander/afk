@@ -66,6 +66,57 @@ func TestPromptCmd_ExeNotAbsolute(t *testing.T) {
 	require.NotContains(t, out, "/home/")
 }
 
+func TestPromptCommandDiscoverWritesStdoutWithoutCreatingQueue(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	queuePath := filepath.Join(dir, "tasks.sqlite")
+	var stdout bytes.Buffer
+	d := testDeps(&stdout)
+	root := NewRoot(d, "test")
+	root.SetArgs([]string{"--queue", queuePath, "prompt", "--discover"})
+
+	require.NoError(t, root.Execute())
+	out := stdout.String()
+	require.Contains(t, out, "No Shallow Batch Passes")
+	require.Contains(t, out, "package.json: prefer check, then test, then build")
+	require.NoFileExists(t, queuePath)
+}
+
+func TestPromptCommandDiscoverRejectsPathArgument(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	queuePath := filepath.Join(dir, "tasks.sqlite")
+	var stdout bytes.Buffer
+	d := testDeps(&stdout)
+	root := NewRoot(d, "test")
+	root.SetArgs([]string{"--queue", queuePath, "prompt", "--discover", filepath.Join(dir, "project")})
+
+	err := root.Execute()
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "prompt --discover does not accept path arguments")
+	require.Empty(t, stdout.String())
+	require.NoFileExists(t, queuePath)
+}
+
+func TestPromptCommandDiscoverConflictsWithTask(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	queuePath := filepath.Join(dir, "tasks.sqlite")
+	var stdout bytes.Buffer
+	d := testDeps(&stdout)
+	root := NewRoot(d, "test")
+	root.SetArgs([]string{"--queue", queuePath, "prompt", "--discover", "--task", "1"})
+
+	err := root.Execute()
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "--task and --discover are mutually exclusive")
+	require.Empty(t, stdout.String())
+	require.NoFileExists(t, queuePath)
+}
+
 func testDeps(stdout *bytes.Buffer) *Deps {
 	return testDepsWithWriters(stdout, &bytes.Buffer{})
 }

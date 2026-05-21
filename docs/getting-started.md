@@ -42,6 +42,31 @@ afk ready --limit 1
 
 `afk ready --limit 1` shows the task `afk pop` will claim next without mutating anything.
 
+## capture work while busy
+
+When you already know the work but cannot do it now, add the task from the
+project root:
+
+```sh
+cd /Users/you/code/my-project
+afk add "Fix the settings save bug. Success: settings persist after refresh. Verify with go test ./..."
+```
+
+Running from the project root records enough context for a later worker:
+
+- `cwd` is the current project directory.
+- `source` is `cli`.
+- inside a git repo, `resource` is `repo:<git-root>` so two workers do not claim tasks against the same repo at once.
+
+If you are not in the project directory, pass the project path explicitly:
+
+```sh
+afk add --cwd /Users/you/code/my-project \
+  "Fix the settings save bug. Success: settings persist after refresh. Verify with go test ./..."
+```
+
+The task stays `pending` until you or a runner claims it.
+
 ## claim and finish
 
 Claim the next ready task with a 30-minute lease:
@@ -80,6 +105,6 @@ The second task stays `pending` and is excluded from `afk ready` until the first
 ## next steps
 
 - Read [tasks.md](tasks.md) for metadata flags (`--tag`, `--priority`, `--source`, `--cwd`).
-- Run `afk discover` or read [task-discovery.md](task-discovery.md) to mine concrete candidate tasks from a local path.
+- Run `afk prompt --discover`, or read [task-discovery.md](task-discovery.md), to mine concrete high-impact candidate tasks from review material.
 - Read [runner.md](runner.md) for `afk run`, the built-in worker loop.
 - Read [command-reference.md](command-reference.md) for the full surface.

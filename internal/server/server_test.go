@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -297,6 +299,7 @@ func TestPOSTPruneReturnsOK(t *testing.T) {
 	var body map[string]any
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
 	require.Equal(t, true, body["ok"])
+	require.Equal(t, float64(1), body["pruned"])
 }
 
 func TestPOSTPruneRemovesDoneTasks(t *testing.T) {
@@ -318,6 +321,50 @@ func TestPOSTPruneRemovesDoneTasks(t *testing.T) {
 	after, err := svc.List(ctx, "done")
 	require.NoError(t, err)
 	require.Empty(t, after, "prune must remove done tasks")
+}
+
+func TestPOSTPruneRejectsInvalidStatus(t *testing.T) {
+	t.Parallel()
+
+	h, _, _ := newServerFixture(t)
+	rec := httptest.NewRecorder()
+	req := withCSRF(t, h, httptest.NewRequest(http.MethodPost, "/api/prune", strings.NewReader(`{"statuses":["faield"]}`)))
+	req.Header.Set("Content-Type", "application/json")
+	h.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusBadRequest, rec.Code)
+	var body map[string]any
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	require.Contains(t, body["error"], "invalid task status")
+}
+
+func TestPOSTCreateInfersRepoDefaults(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	h, svc, _ := newServerFixture(t)
+	repoDir := t.TempDir()
+	require.NoError(t, os.Mkdir(filepath.Join(repoDir, ".git"), 0o755))
+
+	body := `{"body":"created from dashboard","cwd":` + strconv.Quote(repoDir) + `}`
+	rec := httptest.NewRecorder()
+	req := withCSRF(t, h, httptest.NewRequest(http.MethodPost, "/api/tasks", strings.NewReader(body)))
+	req.Header.Set("Content-Type", "application/json")
+	h.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusCreated, rec.Code)
+	var created map[string]string
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &created))
+	id := created["id"]
+	require.NotEmpty(t, id)
+
+	got, err := svc.Show(ctx, id)
+	require.NoError(t, err)
+	require.Equal(t, "created from dashboard", got.Body)
+	require.Equal(t, repoDir, got.CWD)
+	require.Equal(t, "web", got.Source)
+	require.Equal(t, "repo:"+repoDir, got.ResourceKey)
+	require.Contains(t, got.Tags, "repo:"+filepath.Base(repoDir))
 }
 
 func TestPOSTFailTransitionsTaskToFailed(t *testing.T) {

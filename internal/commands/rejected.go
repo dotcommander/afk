@@ -40,6 +40,9 @@ func newRejectedLsCmd(d *Deps) *cobra.Command {
 		Short: "List rejected tasks",
 		Args:  cobra.NoArgs,
 		RunE: func(_ *cobra.Command, _ []string) error {
+			if err := warnDeprecated(d.Stderr, "afk rejected ls", "afk add --diagnose and afk add --dry-run"); err != nil {
+				return err
+			}
 			records, err := d.Service.ListRejected()
 			if err != nil {
 				return err
@@ -66,6 +69,9 @@ func newRejectedShowCmd(d *Deps) *cobra.Command {
 		Short: "Show a single rejected task in full",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := warnDeprecated(d.Stderr, "afk rejected show", "afk add --diagnose and afk add --dry-run"); err != nil {
+				return err
+			}
 			idx, err := parseRejectedIndex(args[0])
 			if err != nil {
 				return err
@@ -151,6 +157,9 @@ func newRejectedRetryCmd(d *Deps) *cobra.Command {
 		Short: "Re-attempt validation on a rejected task; on success it is added and removed from the sidecar",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := warnDeprecated(d.Stderr, "afk rejected retry", "afk add --diagnose and afk add"); err != nil {
+				return err
+			}
 			idx, err := parseRejectedIndex(args[0])
 			if err != nil {
 				return err
@@ -172,6 +181,9 @@ func newRejectedRmCmd(d *Deps) *cobra.Command {
 		Short: "Discard a rejected task from the sidecar",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := warnDeprecated(d.Stderr, "afk rejected rm", "afk add --diagnose and afk add --dry-run"); err != nil {
+				return err
+			}
 			idx, err := parseRejectedIndex(args[0])
 			if err != nil {
 				return err

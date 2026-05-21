@@ -61,6 +61,9 @@ func newCountCmd(d *Deps) *cobra.Command {
 		Short:  "Print per-status tallies",
 		Hidden: true,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			if err := warnDeprecated(d.Stderr, "afk count", "afk status"); err != nil {
+				return err
+			}
 			tally, err := d.Service.Count(cmd.Context())
 			if err != nil {
 				return err
@@ -101,6 +104,9 @@ func newNextCmd(d *Deps) *cobra.Command {
 		Short:  "Print the first pending task as JSON",
 		Hidden: true,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			if err := warnDeprecated(d.Stderr, "afk next", "afk ready --limit 1 --json"); err != nil {
+				return err
+			}
 			next, err := d.Service.Next(cmd.Context())
 			if err != nil {
 				return err

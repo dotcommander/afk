@@ -57,6 +57,11 @@ func newPromoteCmd(d *Deps) *cobra.Command {
 		Short:   "Promote a pending task to the top of its priority group",
 		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if cmd.CalledAs() == "top" {
+				if err := warnDeprecated(d.Stderr, "afk top", "afk promote"); err != nil {
+					return err
+				}
+			}
 			if err := d.Service.Promote(cmd.Context(), args[0]); err != nil {
 				return err
 			}

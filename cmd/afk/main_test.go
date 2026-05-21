@@ -10,7 +10,7 @@ import (
 
 func TestRunExecutesRootCommand(t *testing.T) {
 	queuePath := filepath.Join(t.TempDir(), "tasks.sqlite")
-	withArgs(t, "afk", "--queue", queuePath, "discover")
+	withArgs(t, "afk", "--queue", queuePath, "prompt", "--discover")
 
 	require.NoError(t, run())
 	require.NoFileExists(t, queuePath)

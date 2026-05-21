@@ -30,6 +30,9 @@ func Drain(ctx context.Context, service *app.Service, opts Options) error {
 		opts.Stderr = io.Discard
 	}
 	if opts.DryRun {
+		if err := validateRunnerShapeOptions(opts); err != nil {
+			return err
+		}
 		return writeDryRun(ctx, opts.Stdout, service, opts)
 	}
 	if err := validateRunOptions(opts); err != nil {

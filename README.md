@@ -52,6 +52,17 @@ afk ready --limit 1
 afk explain 1
 ```
 
+Find high-impact work when you do not know what to queue yet:
+
+```sh
+afk prompt --discover
+```
+
+`afk prompt --discover` is read-only. It prints a workflow for reviewing the
+material you give a coding agent, running declared checks such as
+`bun run check`, `bun run build`, or `go test ./...`, and shaping only concrete
+findings into AFK-ready tasks.
+
 Claim and finish one task manually:
 
 ```sh
@@ -292,8 +303,8 @@ A `--queue`/`AFK_QUEUE` path with a non-`.sqlite` extension is normalized to a s
 | `afk prune [--status LIST]` | Remove tasks by status. Defaults to `done,failed`. |
 | `afk prompt [--output PATH]` | Generate loop instruction Markdown. |
 | `afk prompt --task <id>` | Generate a focused prompt for one queued task. |
+| `afk prompt --discover` | Generate task-discovery workflow Markdown. |
 | `afk doctor` | Check queue health and installation basics. |
-| `afk discover` | Print the task-discovery workflow stub without opening or creating the queue. |
 
 ## Web Dashboard
 

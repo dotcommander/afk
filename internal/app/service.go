@@ -227,7 +227,13 @@ func (s *Service) Next(ctx context.Context) (*task.Task, error) {
 
 // Edit replaces a task body.
 func (s *Service) Edit(ctx context.Context, id, body string) error {
-	if err := task.ValidateBody(body); err != nil {
+	current, err := s.Show(ctx, id)
+	if err != nil {
+		return err
+	}
+	opts := task.AddOptionsFromTask(current)
+	opts.Body = body
+	if err := task.ValidateAddOptions(opts); err != nil {
 		return err
 	}
 	return s.store.Update(ctx, id, task.EventEdited, "", func(t *task.Task) bool {

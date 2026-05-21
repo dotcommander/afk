@@ -46,6 +46,10 @@ func newServiceWithSidecar(t *testing.T) (*app.Service, string) {
 	return svc, sidecar
 }
 
+func validDiscoveryBody(path string) string {
+	return "[discovery:repo:file] Fix the focused issue. Evidence: " + path + ":1. Scope: " + path + ". Success: focused issue is fixed. Verify with go test ./... Reject-if: evidence no longer matches."
+}
+
 func TestServiceLifecycle(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -82,7 +86,9 @@ func TestServiceLifecycle(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 1, tally[task.StatusFailed])
 
-	require.NoError(t, svc.Prune(ctx, []task.Status{task.StatusFailed}))
+	pruned, err := svc.Prune(ctx, []task.Status{task.StatusFailed})
+	require.NoError(t, err)
+	require.Equal(t, 1, pruned)
 	tasks, err = svc.List(ctx, "")
 	require.NoError(t, err)
 	require.Empty(t, tasks)
@@ -109,6 +115,28 @@ func TestServiceFilteringEditingAndCollisionIDs(t *testing.T) {
 	done, err := svc.List(ctx, string(task.StatusDone))
 	require.NoError(t, err)
 	require.Empty(t, done)
+}
+
+func TestServiceEditPreservesGeneratedTaskValidation(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	svc := newService(t)
+
+	id, err := svc.AddWithOptions(ctx, task.AddOptions{
+		Body:   validDiscoveryBody("/tmp/repo/file.go"),
+		Tags:   []string{"discovery"},
+		CWD:    "/tmp/repo",
+		Source: "task-discovery",
+	})
+	require.NoError(t, err)
+
+	err = svc.Edit(ctx, id, "fix focused software issue")
+	require.Error(t, err)
+	require.True(t, errors.Is(err, task.ErrInvalidTask), "got %v", err)
+
+	got, err := svc.Show(ctx, id)
+	require.NoError(t, err)
+	require.Equal(t, validDiscoveryBody("/tmp/repo/file.go"), got.Body)
 }
 
 func TestServiceRetriesDuplicateIDOnAdd(t *testing.T) {
@@ -510,6 +538,29 @@ func TestServiceRetryRejectsInvalidFailedBody(t *testing.T) {
 	require.Equal(t, task.StatusFailed, got.Status)
 }
 
+func TestServiceRetryRejectsInvalidGeneratedTaskShape(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	svc := newService(t)
+
+	id, err := svc.AddWithOptionsForce(ctx, task.AddOptions{
+		Body:   "[discovery:repo:file] fix focused software issue",
+		Tags:   []string{"discovery"},
+		CWD:    "/tmp/repo",
+		Source: "task-discovery",
+	})
+	require.NoError(t, err)
+	require.NoError(t, svc.Fail(ctx, id, "invalid discovery contract"))
+
+	err = svc.Retry(ctx, id)
+	require.Error(t, err)
+	require.True(t, errors.Is(err, task.ErrInvalidTask), "got %v", err)
+
+	got, err := svc.Show(ctx, id)
+	require.NoError(t, err)
+	require.Equal(t, task.StatusFailed, got.Status)
+}
+
 func TestServiceHeartbeat(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -748,6 +799,51 @@ func TestRejectedMethodsErrorWhenSidecarDisabled(t *testing.T) {
 	require.ErrorIs(t, err, app.ErrSidecarDisabled)
 	_, err = svc.RetryRejected(context.Background(), 0)
 	require.ErrorIs(t, err, app.ErrSidecarDisabled)
+}
+
+func TestRetryRejectedPreservesCapturedMetadata(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	svc, sidecar := newServiceWithSidecar(t)
+	opts := task.AddOptions{
+		Body:        validDiscoveryBody("/tmp/repo/file.go"),
+		Priority:    "high",
+		Tags:        []string{"discovery"},
+		CWD:         "/tmp/repo",
+		Source:      "task-discovery",
+		Agent:       "codex",
+		GroupID:     "group-1",
+		ResourceKey: "repo:/tmp/repo",
+	}
+	require.NoError(t, app.RecordRejection(sidecar, opts, errors.New("previous validation failure"), fixed))
+
+	created, err := svc.RetryRejected(ctx, 0)
+	require.NoError(t, err)
+	require.Equal(t, opts.Body, created.Body)
+	require.Equal(t, opts.Priority, created.Priority)
+	require.Equal(t, opts.Tags, created.Tags)
+	require.Equal(t, opts.CWD, created.CWD)
+	require.Equal(t, opts.Source, created.Source)
+	require.Equal(t, opts.Agent, created.Agent)
+	require.Equal(t, opts.GroupID, created.GroupID)
+	require.Equal(t, opts.ResourceKey, created.ResourceKey)
+
+	remaining, err := svc.ListRejected()
+	require.NoError(t, err)
+	require.Empty(t, remaining)
+}
+
+func TestRetryRejectedSupportsOldSidecarRecords(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	svc, sidecar := newServiceWithSidecar(t)
+	require.NoError(t, os.WriteFile(sidecar, []byte(`{"ts":"2025-01-02T03:04:05Z","reason":"old","body":"fix the focused software issue"}`+"\n"), 0o600))
+
+	created, err := svc.RetryRejected(ctx, 0)
+	require.NoError(t, err)
+	require.Equal(t, "fix the focused software issue", created.Body)
+	require.Empty(t, created.Priority)
+	require.Empty(t, created.ResourceKey)
 }
 
 func TestAddWithOptionsForceValidTaskBehavesLikeNormalAdd(t *testing.T) {

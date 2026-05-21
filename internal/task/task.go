@@ -56,6 +56,21 @@ type AddOptions struct {
 	ResourceKey string
 }
 
+// AddOptionsFromTask returns the validation-relevant add metadata for an
+// already persisted task.
+func AddOptionsFromTask(t Task) AddOptions {
+	return AddOptions{
+		Body:        t.Body,
+		Priority:    t.Priority,
+		Tags:        append([]string(nil), t.Tags...),
+		CWD:         t.CWD,
+		Source:      t.Source,
+		Agent:       t.Agent,
+		GroupID:     t.GroupID,
+		ResourceKey: t.ResourceKey,
+	}
+}
+
 // EventType is a durable lifecycle event name.
 type EventType string
 

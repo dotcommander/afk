@@ -96,6 +96,14 @@ func TestRunRejectsInvalidOptions(t *testing.T) {
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "--limit must be non-negative")
 
+	err = runner.Run(ctx, svc, runner.Options{DryRun: true, Workers: 2})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "--workers > 1")
+
+	err = runner.Run(ctx, svc, runner.Options{DryRun: true, Limit: -1})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "--limit must be non-negative")
+
 	err = runner.Run(ctx, svc, runner.Options{})
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "--exec is required")
@@ -374,6 +382,10 @@ func TestDrainRejectsInvalidOptions(t *testing.T) {
 	svc, _, _ := newRunnerService(t)
 
 	err := runner.Drain(ctx, svc, runner.Options{Workers: 2})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "--workers > 1")
+
+	err = runner.Drain(ctx, svc, runner.Options{DryRun: true, Workers: 2})
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "--workers > 1")
 

@@ -1,7 +1,7 @@
 # task discovery
 
 ```sh
-afk discover
+afk prompt --discover
 afk ready
 afk explain <id>
 rg -n "TODO|FIXME|HACK|XXX|OPTIMIZE" .
@@ -9,10 +9,54 @@ rg -n "TODO|FIXME|HACK|XXX|OPTIMIZE" .
 
 AFK drains work quickly when queued tasks are concrete. The bottleneck is finding
 the next useful task without inventing vague work. Use task discovery as a
-numbered path-assessment workflow: classify the local path, inspect evidence
-that matches what the path actually contains, convert candidates into mini-specs,
+numbered review workflow: classify the target, inspect evidence
+that matches what the material actually contains, convert candidates into mini-specs,
 validate the task bodies, then ask one confirmation question before enqueueing.
-`afk discover` prints this workflow stub without opening or creating the queue.
+`afk prompt --discover` prints this workflow stub without opening or creating the queue.
+
+## find high-impact project work
+
+Use discovery when you do not know what to work on yet and want critical or
+high-impact candidates from a project:
+
+```sh
+afk prompt --discover
+```
+
+The command is read-only. It prints a workflow for a coding agent or human
+reviewer. A serious repo or web review should use Level 2
+feature/command review, which means:
+
+- classify the target from actual files, not just the directory name
+- inspect manifests, local guidance, entrypoints, and primary implementation
+  surfaces
+- run the declared deterministic check before deciding there is no task, such
+  as `bun run check`, `bun run build`, `go test ./...`, `php artisan test`, or
+  the nearest documented parser/validation command
+- inspect failures enough to distinguish AFK-ready work from stale installs,
+  broad suites, product choices, or low-impact noise
+- return only concrete candidates with current evidence, exact scope, exact
+  verification, and under-one-hour execution shape
+
+If the review finds candidates, validate each task body before enqueueing:
+
+```sh
+afk add --dry-run --cwd /Users/you/code/my-project \
+  --source task-discovery \
+  --tag discovery \
+  --resource repo:/Users/you/code/my-project \
+  "[discovery:repo:settings-save] Fix the settings save bug. Evidence: /Users/you/code/my-project/internal/settings/store.go:42. Scope: /Users/you/code/my-project/internal/settings. Success: settings persist after refresh. Verify with go test ./... Reject-if: settings persistence moved out of this package."
+```
+
+After validation, enqueue only the accepted candidates:
+
+```sh
+afk add --cwd /Users/you/code/my-project \
+  --source task-discovery \
+  --tag discovery \
+  --resource repo:/Users/you/code/my-project \
+  "[discovery:repo:settings-save] Fix the settings save bug. Evidence: /Users/you/code/my-project/internal/settings/store.go:42. Scope: /Users/you/code/my-project/internal/settings. Success: settings persist after refresh. Verify with go test ./... Reject-if: settings persistence moved out of this package."
+```
 
 ## discovery contract
 
@@ -24,7 +68,7 @@ A discovery pass produces candidates, not opinions. Every candidate must include
 | Type | `fix`, `refactor`, `docs-sync`, `test-gap`, or `hardening`. |
 | Evidence | File and line, command output, failing check, queue history, or doc mismatch. |
 | Current proof | The current code, command, docs, or queue output that proves the task is still real. |
-| Path kind | Stable free-form label for the path purpose; common values are `repo`, `docs`, `kb`, `web`, `media`, `data`, or `path`. |
+| Kind | Stable free-form label for the target purpose; common values are `repo`, `docs`, `kb`, `web`, `media`, `data`, or `workspace`. |
 | Scope | Exact package, command, doc, directory, media set, index, or behavior to touch. |
 | Files | Absolute paths when the candidate references files. |
 | Success | Observable done state the worker can prove. |
@@ -46,8 +90,8 @@ an idea.
 
 ## workflow
 
-1. Classify the path.
-2. Gather bounded evidence that matches the path.
+1. Classify the target and choose review depth.
+2. Gather bounded evidence that matches the target.
 3. Check the queue for duplicates.
 4. Convert evidence into queueable mini-specs.
 5. Rank strong candidates by impact and reject weak leads.
@@ -55,10 +99,26 @@ an idea.
    with `afk import --dry-run`.
 7. Ask one enqueue confirmation.
 
+Choose and report review depth before candidate generation:
+
+- Level 1 triage is a shallow inventory. Use it only when the user asks for a
+  quick pass, the target is unknown or mixed, or a deeper review is not feasible.
+  Label the output as triage and emit few or no candidates unless a current
+  failure is already proven.
+- Level 2 feature/command review is required for serious repo or web discovery,
+  and for broad batches such as "each directory under X" unless the user
+  explicitly asks for triage.
+- A structurally valid artifact is not proof of careful discovery. Do not call a
+  pass complete until the evidence budget for the chosen depth has been met for
+  every target.
+
 Quality gates are mandatory before a candidate is shown:
 
 - Current evidence: current tests, command output, code, docs, queue history, or
   CLI behavior must support the candidate.
+- Corroboration: TODO/FIXME/HACK/XXX text is only a lead. Promote it only when
+  nearby implementation, caller, tests, docs, config, command output, or a
+  contract surface proves current impact.
 - Non-stale validation: old audits, reports, `.work/` notes, and TODOs must be
   rechecked against current code before use.
 - Atomic scope: one behavior, one package, one docs/source mismatch, or one
@@ -73,8 +133,8 @@ Quality gates are mandatory before a candidate is shown:
 
 ## signal sources
 
-Start by classifying the path before model brainstorming. The first question is
-not "what code task is here?" It is "what is this path primarily for?"
+Start by classifying the target before model brainstorming. The first question
+is not "what code task is here?" It is "what is this material primarily for?"
 
 Useful purpose classes and conventional kind labels:
 
@@ -84,7 +144,7 @@ Useful purpose classes and conventional kind labels:
 - `kb`: knowledge base, notes corpus, Markdown vault, research folder, or index.
 - `media`: music, video, subtitles, thumbnails, playlists, or sidecar metadata.
 - `data`: CSV/JSON/SQLite/datasets, schemas, imports, exports, or generated data.
-- `path`: mixed or unclear local collection that needs scoped subdirectory tasks.
+- `workspace`: mixed or unclear local collection that needs scoped subdirectory tasks.
 
 Start with bounded deterministic local probes:
 
@@ -103,9 +163,37 @@ afk ls --status working --json
 
 Run queue checks before suggesting candidates so discovery does not duplicate
 pending or working tasks. Queue inspection may initialize the configured queue;
-`afk discover` itself does not.
+`afk prompt --discover` itself does not.
 
-Useful task sources by path kind:
+For Level 2 repo or web discovery, gather this minimum evidence before accepting
+or rejecting candidates:
+
+- Inspect local guidance plus manifest files.
+- Gather target-selection signals before choosing files: recent churn, complex
+  or large files, test coverage, imports/callers, and current marker or command
+  pain.
+- Inspect at least one command, route, feature map, or package script surface.
+- Inspect at least three core source files tied to primary behavior, unless
+  fewer exist.
+- Inspect at least one contract surface such as README command docs, tests,
+  fixtures, schemas, config examples, screenshots, or sample data.
+- Run the narrowest declared deterministic check from the manifest or docs, such
+  as `npm run check`, `bun run check`, `go test ./...`, `php artisan test`,
+  `pytest`, or a documented parser/import validation.
+- Record an explicit skip reason only when the check has a concrete blocker such
+  as missing dependency, credentials, network, cost, sandbox restriction, or no
+  matching command.
+- Record rejected leads with reasons, including why TODO/backlog hits were not
+  promoted.
+
+Do not let batch breadth become a reason to skip the target's own declared gate.
+If `package.json`, `go.mod`, `composer.json`, `pyproject.toml`, `justfile`,
+`Makefile`, `README`, or local guidance names a check/build/test command, prefer
+running that command before saying `no strong candidate`. A skipped declared gate
+makes the target low-confidence or triage-only; it is not evidence that there
+are no strong candidates.
+
+Useful task sources by target kind:
 
 - `repo`: real bugs, broken workflows, unsafe reads, context propagation gaps,
   state handling risks, runtime/build blockers, deployment traps, high-friction
@@ -122,8 +210,8 @@ Useful task sources by path kind:
   checked without guessing artistic intent.
 - `data`: schema/sample mismatch, stale generated exports, missing validation
   command, duplicate rows, broken import scripts, or checksum/index drift.
-- `path`: mixed folders where each candidate can be scoped to one subdirectory
-  and one path purpose.
+- `workspace`: mixed folders where each candidate can be scoped to one
+  subdirectory and one purpose.
 - Queue history: failed AFK tasks whose `afk explain <id>` shows an actionable
   cause; long-pending or manually blocked tasks with clear dependency state.
 - Work notes under `.work/`, specs, and architecture docs that already name
@@ -195,6 +283,20 @@ Prefer 3-7 strong candidates. Up to 10 is acceptable; do not pad with weak work.
 Queue candidates with strong current proof after the user confirms. Otherwise
 present the ranked candidates for review and do not mutate the queue.
 
+If every lead is low-impact or uncorroborated, say `no strong candidate` and
+explain what was inspected. Do not pad the output with easy TODO cleanup, docs
+polish, dependency drift, or generic tests.
+
+If a declared local gate fails, first ask whether a small fix can make the gate
+pass without product choices or broad refactoring. Broken declared checks are
+often better AFK candidates than TODO markers because they have exact
+verification.
+
+If a TODO or product promise points at a missing behavior but the
+destination/provider/architecture is absent, reject or mark it provisional rather
+than forcing an ambiguous task. Prefer the narrower failing check when one
+exists.
+
 ## dedupe and rejection
 
 Before suggesting or enqueueing a task:
@@ -226,7 +328,7 @@ task-discovery` or `--tag discovery` is present. Generated task bodies must star
 with `[discovery:<kind>:<topic>]` and include `Evidence:`, `Scope:`, `Success:`,
 `Reject-if:`, and a verification command or deterministic local check. The
 `<kind>` segment is a stable free-form routing label; `repo`, `docs`, `kb`,
-`web`, `media`, `data`, and `path` are conventions, not a closed validator
+`web`, `media`, `data`, and `workspace` are conventions, not a closed validator
 taxonomy. Vague or churn-prone generated bodies are rejected.
 
 Prefer structured metadata:
@@ -272,6 +374,11 @@ with `spec:` tags must include `Evidence:`, `Scope:`, `Success:`, `Verify:`,
 and `Reject-if:` sections, and must carry an absolute `cwd` or absolute paths in
 the body.
 
+Dry-run validation proves that a task body or import document is admissible. It
+does not prove that discovery was deep, complete, or valuable. Likewise, a batch
+artifact audit can prove artifact shape without proving that the underlying
+directory was carefully evaluated.
+
 Verification examples:
 
 - `repo`: `go test ./...`, `bun test`, `php -l path/file.php`, or a documented
@@ -312,6 +419,25 @@ Interactive discovery reports should use:
 
 Reply `add all`, `add 1 3`, or `no`.
 ```
+
+Batch discovery reports must also include:
+
+- target count and artifact count
+- accepted candidate count and no-strong-candidate count
+- rejected or provisional lead count
+- deterministic checks run and checks skipped with reasons
+- low-confidence or triage-only targets
+- whether validation covered task shape only, artifact shape only, or actual
+  behavior
+
+When comparing a focused pass with an earlier breadth pass, preserve the earlier
+artifact as the baseline and report what changed:
+
+- which checks breadth skipped and focused discovery ran
+- which leads stayed rejected and why
+- which candidates are new, with current command/file evidence
+- whether the difference is better evidence, narrower scope, or a changed
+  worktree
 
 After confirmation, run `afk prompt` first, capture pre/post `afk status`,
 validate selected one-off bodies with `afk add --dry-run` or selected batches

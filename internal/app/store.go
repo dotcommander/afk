@@ -16,7 +16,7 @@ type Store interface {
 	Add(ctx context.Context, t task.Task) error
 	Update(ctx context.Context, id string, event task.EventType, message string, fn func(*task.Task) bool) error
 	Delete(ctx context.Context, id string) error
-	Prune(ctx context.Context, statuses []task.Status) error
+	Prune(ctx context.Context, statuses []task.Status) (int, error)
 	Promote(ctx context.Context, id string) error
 	// PruneByTag deletes all tasks whose tags slice contains the given tag.
 	// Returns the number of deleted tasks. Returns an error if tag is empty.

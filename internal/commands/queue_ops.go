@@ -30,7 +30,16 @@ func newPruneCmd(d *Deps) *cobra.Command {
 				_, err = fmt.Fprintf(d.Stdout, "pruned %d tasks (tag=%s)\n", n, tag)
 				return err
 			}
-			return d.Service.Prune(cmd.Context(), parseStatusCSV(statusCSV))
+			statuses, err := parseStatusCSV(statusCSV)
+			if err != nil {
+				return err
+			}
+			n, err := d.Service.Prune(cmd.Context(), statuses)
+			if err != nil {
+				return err
+			}
+			_, err = fmt.Fprintf(d.Stdout, "pruned %d tasks (status=%s)\n", n, statusCSV)
+			return err
 		},
 	}
 	cmd.Flags().StringVar(&statusCSV, "status", "done,failed", "comma-separated statuses to prune")
@@ -57,7 +66,7 @@ func newPopCmd(d *Deps) *cobra.Command {
 			if claimed == nil {
 				return nil
 			}
-			if err := task.ValidateBody(claimed.Body); err != nil {
+			if err := task.ValidateAddOptions(task.AddOptionsFromTask(*claimed)); err != nil {
 				if failErr := d.Service.Fail(cmd.Context(), claimed.ID, err.Error()); failErr != nil {
 					return failErr
 				}
@@ -90,6 +99,9 @@ func newRequeueStaleCmd(d *Deps) *cobra.Command {
 		Short:  "Reset stale working tasks to pending",
 		Hidden: true,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			if err := warnDeprecated(d.Stderr, "afk requeue-stale", "afk explain <id> followed by afk reset <id>"); err != nil {
+				return err
+			}
 			dur, err := time.ParseDuration(olderThan)
 			if err != nil {
 				return fmt.Errorf("parse older-than: %w", err)
@@ -110,15 +122,19 @@ func newRequeueStaleCmd(d *Deps) *cobra.Command {
 	return cmd
 }
 
-func parseStatusCSV(value string) []task.Status {
+func parseStatusCSV(value string) ([]task.Status, error) {
 	var statuses []task.Status
 	for _, status := range strings.Split(value, ",") {
 		status = strings.TrimSpace(status)
 		if status != "" {
-			statuses = append(statuses, task.Status(status))
+			parsed := task.Status(status)
+			if !task.ValidStatus(parsed) {
+				return nil, fmt.Errorf("%w: %q", task.ErrInvalidStatus, status)
+			}
+			statuses = append(statuses, parsed)
 		}
 	}
-	return statuses
+	return statuses, nil
 }
 
 func parseOptionalDuration(name, value string) (time.Duration, error) {
@@ -142,6 +158,9 @@ func newHeartbeatCmd(d *Deps) *cobra.Command {
 		Hidden: true,
 		Args:   cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := warnDeprecated(d.Stderr, "afk heartbeat", "afk pop --lease <duration> with a long enough lease"); err != nil {
+				return err
+			}
 			leaseDuration, err := parseOptionalDuration("lease", lease)
 			if err != nil {
 				return err

@@ -35,6 +35,11 @@ func newAddCmd(d *Deps) *cobra.Command {
 		Short: "Append a new pending task",
 		Args:  cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if cmd.Flags().Changed("after") {
+				if err := warnDeprecated(d.Stderr, "afk add --after", "afk add --blocked-by"); err != nil {
+					return err
+				}
+			}
 			return runAddCommand(cmd, d, addCommandInput{
 				args:        args,
 				tags:        tags,

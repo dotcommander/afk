@@ -42,6 +42,9 @@ func Run(ctx context.Context, service *app.Service, opts Options) error {
 		opts.Stderr = io.Discard
 	}
 	if opts.DryRun {
+		if err := validateRunnerShapeOptions(opts); err != nil {
+			return err
+		}
 		return writeDryRun(ctx, opts.Stdout, service, opts)
 	}
 	if err := validateRunOptions(opts); err != nil {
@@ -73,11 +76,8 @@ func Run(ctx context.Context, service *app.Service, opts Options) error {
 // validateRunOptions enforces the shared option contract for the non-dry-run
 // claim loop. Both Run and Drain gate on it before claiming any task.
 func validateRunOptions(opts Options) error {
-	if opts.Workers != 0 && opts.Workers != 1 {
-		return fmt.Errorf("runner: --workers > 1 is not implemented yet")
-	}
-	if opts.Limit < 0 {
-		return fmt.Errorf("runner: --limit must be non-negative")
+	if err := validateRunnerShapeOptions(opts); err != nil {
+		return err
 	}
 	if strings.TrimSpace(opts.ExecTemplate) == "" {
 		return fmt.Errorf("runner: --exec is required unless --dry-run is set")
@@ -85,8 +85,18 @@ func validateRunOptions(opts Options) error {
 	return nil
 }
 
+func validateRunnerShapeOptions(opts Options) error {
+	if opts.Workers != 0 && opts.Workers != 1 {
+		return fmt.Errorf("runner: --workers > 1 is not implemented yet")
+	}
+	if opts.Limit < 0 {
+		return fmt.Errorf("runner: --limit must be non-negative")
+	}
+	return nil
+}
+
 func runTask(ctx context.Context, service *app.Service, t task.Task, opts Options) error {
-	if err := task.ValidateBody(t.Body); err != nil {
+	if err := task.ValidateAddOptions(task.AddOptionsFromTask(t)); err != nil {
 		return failInvalidTask(ctx, service, t.ID, err)
 	}
 	commandText := renderCommand(opts.ExecTemplate, t, opts.QueuePath)

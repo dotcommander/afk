@@ -19,6 +19,11 @@ func newRunCmd(d *Deps) *cobra.Command {
 		Use:   "run",
 		Short: "Claim ready tasks and execute a worker command",
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			if cmd.Flags().Changed("workers") {
+				if err := warnDeprecated(d.Stderr, "afk run --workers", "multiple afk run processes"); err != nil {
+					return err
+				}
+			}
 			leaseDuration, err := time.ParseDuration(lease)
 			if err != nil {
 				return fmt.Errorf("parse lease: %w", err)
@@ -65,6 +70,14 @@ func newDrainCmd(d *Deps) *cobra.Command {
 			"each claim, any ready task that has already failed 3 times is blocked " +
 			"so a repeatedly failing task cannot stall the drain.",
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			if err := warnDeprecated(d.Stderr, "afk drain", "afk run --poison-guard"); err != nil {
+				return err
+			}
+			if cmd.Flags().Changed("workers") {
+				if err := warnDeprecated(d.Stderr, "afk drain --workers", "multiple afk run --poison-guard processes"); err != nil {
+					return err
+				}
+			}
 			leaseDuration, err := time.ParseDuration(lease)
 			if err != nil {
 				return fmt.Errorf("parse lease: %w", err)

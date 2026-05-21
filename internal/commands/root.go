@@ -109,6 +109,10 @@ func skipStoreInit(cmd *cobra.Command) bool {
 	for c := cmd; c != nil; c = c.Parent() {
 		if c.Annotations["skipStoreInit"] == "true" {
 			if c.Name() == "prompt" {
+				discoverFlag := c.Flags().Lookup("discover")
+				if discoverFlag != nil && discoverFlag.Value.String() == "true" {
+					return true
+				}
 				taskFlag := c.Flags().Lookup("task")
 				if taskFlag != nil && taskFlag.Value.String() != "" {
 					return false

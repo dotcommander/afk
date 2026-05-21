@@ -53,7 +53,7 @@ func TestCommandsLifecycleThroughRoot(t *testing.T) {
 	run("reset", id)
 	run("fail", id, "oops")
 	require.Contains(t, run("show", id), "Error: oops")
-	run("prune")
+	require.Contains(t, run("prune"), "pruned 1 tasks")
 	require.Contains(t, run("count"), "failed: 0")
 
 	id = strings.TrimSpace(run("add", "pop-me"))
@@ -67,6 +67,51 @@ func TestCommandsLifecycleThroughRoot(t *testing.T) {
 	require.Contains(t, run("prompt", "--task", id), "AFK Task "+id)
 	run("rm", id)
 	require.Contains(t, run("count"), "working: 0")
+}
+
+func TestPruneCommandRejectsInvalidStatus(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	stdout, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	root := NewRoot(testDepsWithWriters(stdout, stderr), "test")
+	root.SetArgs([]string{"--queue", filepath.Join(dir, "tasks.sqlite"), "prune", "--status", "faield"})
+
+	err := root.Execute()
+	require.Error(t, err)
+	require.ErrorIs(t, err, task.ErrInvalidStatus)
+}
+
+func TestEditCommandPreservesDiscoveryValidation(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	queuePath := filepath.Join(dir, "tasks.sqlite")
+	stdout, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	d := testDepsWithWriters(stdout, stderr)
+
+	run := func(args ...string) error {
+		t.Helper()
+		stdout.Reset()
+		stderr.Reset()
+		root := NewRoot(d, "test")
+		root.SetArgs(append([]string{"--queue", queuePath}, args...))
+		return root.Execute()
+	}
+
+	require.NoError(t, run(
+		"add",
+		"--source", "task-discovery",
+		"--tag", "discovery",
+		"--cwd", "/tmp/repo",
+		"[discovery:repo:file] Evidence: /tmp/repo/file.go:1. Scope: /tmp/repo/file.go. Fix the focused issue. Success: focused issue is fixed. Verify with go test ./... Reject-if: evidence no longer matches",
+	))
+	id := strings.TrimSpace(stdout.String())
+	require.NotEmpty(t, id)
+
+	err := run("edit", id, "fix focused software issue")
+	require.Error(t, err)
+	require.ErrorIs(t, err, task.ErrInvalidTask)
 }
 
 func TestCommandsRetryRequeueStaleAndDoctor(t *testing.T) {
@@ -104,7 +149,143 @@ func TestCommandsRetryRequeueStaleAndDoctor(t *testing.T) {
 	require.Contains(t, doctor, "prompt: ok")
 }
 
-func TestDiscoverCommandPrintsStubWithoutCreatingQueue(t *testing.T) {
+func TestDeprecatedCommandsWarnToStderr(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	queuePath := filepath.Join(dir, "tasks.sqlite")
+	stdout, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	d := testDepsWithWriters(stdout, stderr)
+
+	run := func(args ...string) (string, string) {
+		t.Helper()
+		stdout.Reset()
+		stderr.Reset()
+		root := NewRoot(d, "test")
+		root.SetArgs(append([]string{"--queue", queuePath}, args...))
+		require.NoError(t, root.Execute(), "stderr: %s", stderr.String())
+		return stdout.String(), stderr.String()
+	}
+
+	out, _ := run("add", "--no-cwd", "deprecated surface")
+	id := strings.TrimSpace(out)
+	require.NotEmpty(t, id)
+
+	out, errOut := run("count")
+	require.Contains(t, out, "pending: 1")
+	require.Contains(t, errOut, "warning: afk count is deprecated; use afk status instead.")
+
+	out, errOut = run("next", "--json")
+	require.Contains(t, out, `"id":"`+id+`"`)
+	require.Contains(t, errOut, "warning: afk next is deprecated; use afk ready --limit 1 --json instead.")
+
+	out, errOut = run("top", id)
+	require.Equal(t, id+"\n", out)
+	require.Contains(t, errOut, "warning: afk top is deprecated; use afk promote instead.")
+
+	run("pop", "--worker", "worker-1", "--lease", "1ns")
+	time.Sleep(time.Millisecond)
+	out, errOut = run("requeue-stale", "--older-than", "1h")
+	require.Contains(t, out, id)
+	require.Contains(t, errOut, "warning: afk requeue-stale is deprecated; use afk explain <id> followed by afk reset <id> instead.")
+
+	run("pop", "--worker", "worker-1", "--lease", "1m")
+	_, errOut = run("heartbeat", id, "--worker", "worker-1", "--lease", "30m")
+	require.Contains(t, errOut, "warning: afk heartbeat is deprecated; use afk pop --lease <duration> with a long enough lease instead.")
+
+	out, errOut = run("rejected", "ls")
+	require.Contains(t, out, "no rejected tasks")
+	require.Contains(t, errOut, "warning: afk rejected ls is deprecated; use afk add --diagnose and afk add --dry-run instead.")
+}
+
+func TestDeprecatedFlagsWarnToStderr(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	queuePath := filepath.Join(dir, "tasks.sqlite")
+	stdout, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	d := testDepsWithWriters(stdout, stderr)
+
+	run := func(args ...string) string {
+		t.Helper()
+		stdout.Reset()
+		stderr.Reset()
+		root := NewRoot(d, "test")
+		root.SetArgs(append([]string{"--queue", queuePath}, args...))
+		require.NoError(t, root.Execute(), "stderr: %s", stderr.String())
+		return stdout.String()
+	}
+
+	prereq := strings.TrimSpace(run("add", "--no-cwd", "prereq"))
+
+	stdout.Reset()
+	stderr.Reset()
+	root := NewRoot(d, "test")
+	root.SetArgs([]string{"--queue", queuePath, "add", "--no-cwd", "--after", prereq, "blocked"})
+	require.NoError(t, root.Execute(), "stderr: %s", stderr.String())
+	require.Contains(t, stderr.String(), "warning: afk add --after is deprecated; use afk add --blocked-by instead.")
+
+	stdout.Reset()
+	stderr.Reset()
+	root = NewRoot(d, "test")
+	root.SetArgs([]string{"--queue", queuePath, "run", "--dry-run", "--workers", "1"})
+	require.NoError(t, root.Execute(), "stderr: %s", stderr.String())
+	require.Contains(t, stderr.String(), "warning: afk run --workers is deprecated; use multiple afk run processes instead.")
+}
+
+func TestPromptDiscoverPrintsStubWithoutCreatingQueue(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	queuePath := filepath.Join(dir, "tasks.sqlite")
+	stdout, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	root := NewRoot(testDepsWithWriters(stdout, stderr), "test")
+	root.SetArgs([]string{"--queue", queuePath, "prompt", "--discover"})
+
+	require.NoError(t, root.Execute(), "stderr: %s", stderr.String())
+	require.Contains(t, stdout.String(), "afk prompt --discover is a workflow stub")
+	require.Contains(t, stdout.String(), "Mine concrete AFK-ready candidate tasks from the material the user wants reviewed")
+	require.Contains(t, stdout.String(), "1. Classify the target and choose review depth")
+	require.Contains(t, stdout.String(), "code repo, web app, docs set, knowledge base, media archive, data folder, mixed workspace")
+	require.Contains(t, stdout.String(), "Level 1 triage is a shallow inventory")
+	require.Contains(t, stdout.String(), "Level 2 feature/command review is required")
+	require.Contains(t, stdout.String(), "Minimum Level 2 evidence for each repo/web target")
+	require.Contains(t, stdout.String(), "inspect at least one command, route, feature map, or package script surface")
+	require.Contains(t, stdout.String(), "run the narrowest declared deterministic check from the manifest or docs")
+	require.Contains(t, stdout.String(), "record an explicit skip reason only when the check has a concrete blocker")
+	require.Contains(t, stdout.String(), "No Shallow Batch Passes")
+	require.Contains(t, stdout.String(), "coverage is not completion")
+	require.Contains(t, stdout.String(), "run a real evidence loop per target")
+	require.Contains(t, stdout.String(), "package.json: prefer check, then test, then build")
+	require.Contains(t, stdout.String(), "only write \"no strong candidate\" after recording the command run")
+	require.Contains(t, stdout.String(), "Repeated generic no-candidate conclusions across many directories are a failure signal")
+	require.Contains(t, stdout.String(), "a candidate may come directly from a current failing declared check")
+	require.Contains(t, stdout.String(), "Evidence:, Scope:, Success:, Verify with, and Reject-if:")
+	require.Contains(t, stdout.String(), "corroboration beyond a single marker")
+	require.Contains(t, stdout.String(), "First ask: is this value or churn?")
+	require.Contains(t, stdout.String(), "Reject churn even when it is easy.")
+	require.Contains(t, stdout.String(), "Rank 3-7 strong candidates using this priority order")
+	require.Contains(t, stdout.String(), "core behavior or correctness")
+	require.Contains(t, stdout.String(), "pure test gaps or docs polish last")
+	require.Contains(t, stdout.String(), "no strong candidate")
+	require.Contains(t, stdout.String(), "Broken declared checks are often better AFK candidates than TODO markers")
+	require.Contains(t, stdout.String(), "destination/provider/architecture is absent")
+	require.Contains(t, stdout.String(), "Dry-run validation proves that a task body is admissible")
+	require.Contains(t, stdout.String(), "For batch discovery, freeze the target manifest first")
+	require.Contains(t, stdout.String(), "generic no-candidate artifact count")
+	require.Contains(t, stdout.String(), "rerun discovery with declared command probes before finishing")
+	require.Contains(t, stdout.String(), "low-confidence or triage-only targets")
+	require.Contains(t, stdout.String(), "When comparing a focused pass with an earlier breadth pass")
+	require.Contains(t, stdout.String(), "Ask exactly one question such as: add all, add 1 3, or no.")
+	require.Contains(t, stdout.String(), `afk add --dry-run --source task-discovery --tag discovery --resource "<kind>:<target>"`)
+	require.Contains(t, stdout.String(), "Use a stable kind such as repo, docs, kb, web, media, data, or workspace.")
+	require.Contains(t, stdout.String(), "Use concrete file, command, URL, artifact, or record references")
+	require.Contains(t, stdout.String(), "Queue inspection commands such as afk count, afk ready, and afk ls may initialize")
+	require.NotContains(t, stdout.String(), "docs/task-discovery.md")
+	require.NoFileExists(t, queuePath)
+}
+
+func TestDiscoverCommandIsHiddenMigrationError(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
@@ -113,40 +294,24 @@ func TestDiscoverCommandPrintsStubWithoutCreatingQueue(t *testing.T) {
 	root := NewRoot(testDepsWithWriters(stdout, stderr), "test")
 	root.SetArgs([]string{"--queue", queuePath, "discover"})
 
-	require.NoError(t, root.Execute(), "stderr: %s", stderr.String())
-	require.Contains(t, stdout.String(), "afk discover is a workflow stub")
-	require.Contains(t, stdout.String(), "Mine concrete AFK-ready candidate tasks from the current local path")
-	require.Contains(t, stdout.String(), "1. Classify the path")
-	require.Contains(t, stdout.String(), "code repo, web app, docs set, knowledge base, media archive, data folder, mixed workspace")
-	require.Contains(t, stdout.String(), "Evidence:, Scope:, Success:, Verify with, and Reject-if:")
-	require.Contains(t, stdout.String(), "First ask: is this value or churn?")
-	require.Contains(t, stdout.String(), "Reject churn even when it is easy.")
-	require.Contains(t, stdout.String(), "Rank 3-7 strong candidates using this priority order")
-	require.Contains(t, stdout.String(), "core behavior or correctness")
-	require.Contains(t, stdout.String(), "pure test gaps or docs polish last")
-	require.Contains(t, stdout.String(), "Ask exactly one question such as: add all, add 1 3, or no.")
-	require.Contains(t, stdout.String(), `afk add --dry-run --cwd "$(pwd)" --source task-discovery --tag discovery --resource "<kind>:$(pwd)"`)
-	require.Contains(t, stdout.String(), "Use a stable kind such as repo, docs, kb, web, media, data, or path.")
-	require.Contains(t, stdout.String(), "Use absolute paths in Evidence:/Scope:, or pass --cwd")
-	require.Contains(t, stdout.String(), "Queue inspection commands such as afk count, afk ready, and afk ls may initialize")
-	require.NotContains(t, stdout.String(), "docs/task-discovery.md")
+	err := root.Execute()
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "afk discover has moved; use afk prompt --discover")
+	require.Empty(t, stdout.String())
 	require.NoFileExists(t, queuePath)
 }
 
-func TestDiscoverCommandRejectsArgs(t *testing.T) {
+func TestDiscoverCommandHiddenFromRootHelp(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
 	queuePath := filepath.Join(dir, "tasks.sqlite")
 	stdout, stderr := &bytes.Buffer{}, &bytes.Buffer{}
 	root := NewRoot(testDepsWithWriters(stdout, stderr), "test")
-	root.SetArgs([]string{"--queue", queuePath, "discover", "docs/task-discovery.md"})
+	root.SetArgs([]string{"--queue", queuePath, "--help"})
 
-	err := root.Execute()
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "afk discover accepts no arguments")
-	require.Contains(t, err.Error(), "target path")
-	require.Empty(t, stdout.String())
+	require.NoError(t, root.Execute(), "stderr: %s", stderr.String())
+	require.NotContains(t, stdout.String(), "discover")
 	require.NoFileExists(t, queuePath)
 }
 
@@ -771,27 +936,37 @@ func TestDrainCommandProcessesReadyTasksAndStopsAtLimit(t *testing.T) {
 func TestDrainCommandRejectsUnsupportedWorkers(t *testing.T) {
 	t.Parallel()
 
-	dir := t.TempDir()
-	stdout, stderr := &bytes.Buffer{}, &bytes.Buffer{}
-	root := NewRoot(testDepsWithWriters(stdout, stderr), "test")
-	root.SetArgs([]string{"--queue", filepath.Join(dir, "tasks.sqlite"), "drain", "--workers", "2", "--exec", "true"})
+	for _, args := range [][]string{
+		{"drain", "--workers", "2", "--exec", "true"},
+		{"drain", "--dry-run", "--workers", "2"},
+	} {
+		dir := t.TempDir()
+		stdout, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+		root := NewRoot(testDepsWithWriters(stdout, stderr), "test")
+		root.SetArgs(append([]string{"--queue", filepath.Join(dir, "tasks.sqlite")}, args...))
 
-	err := root.Execute()
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "--workers > 1")
+		err := root.Execute()
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "--workers > 1")
+	}
 }
 
 func TestRunCommandRejectsUnsupportedWorkers(t *testing.T) {
 	t.Parallel()
 
-	dir := t.TempDir()
-	stdout, stderr := &bytes.Buffer{}, &bytes.Buffer{}
-	root := NewRoot(testDepsWithWriters(stdout, stderr), "test")
-	root.SetArgs([]string{"--queue", filepath.Join(dir, "tasks.sqlite"), "run", "--workers", "2", "--exec", "true"})
+	for _, args := range [][]string{
+		{"run", "--workers", "2", "--exec", "true"},
+		{"run", "--dry-run", "--workers", "2"},
+	} {
+		dir := t.TempDir()
+		stdout, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+		root := NewRoot(testDepsWithWriters(stdout, stderr), "test")
+		root.SetArgs(append([]string{"--queue", filepath.Join(dir, "tasks.sqlite")}, args...))
 
-	err := root.Execute()
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "--workers > 1")
+		err := root.Execute()
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "--workers > 1")
+	}
 }
 
 func TestWhyReportsResourceLock(t *testing.T) {

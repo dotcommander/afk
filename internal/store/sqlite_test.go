@@ -802,7 +802,9 @@ func TestSQLiteStoreRemoveAndPruneRecordEvents(t *testing.T) {
 	require.Equal(t, task.EventRemoved, events[1].Type)
 
 	require.NoError(t, s.Add(ctx, task.Task{ID: "prune", Status: task.StatusFailed, Body: "prune"}))
-	require.NoError(t, s.Prune(ctx, []task.Status{task.StatusFailed}))
+	pruned, err := s.Prune(ctx, []task.Status{task.StatusFailed})
+	require.NoError(t, err)
+	require.Equal(t, 1, pruned)
 	events, err = s.Events(ctx, "prune")
 	require.NoError(t, err)
 	require.Len(t, events, 2)
@@ -823,11 +825,28 @@ func TestSQLiteStorePruneAndNotFound(t *testing.T) {
 	require.ErrorIs(t, s.RemoveDependency(ctx, "keep", "missing"), store.ErrDependencyNotFound)
 	require.True(t, errors.Is(store.ErrNotFound, store.ErrNotFound))
 
-	require.NoError(t, s.Prune(ctx, []task.Status{task.StatusFailed}))
+	pruned, err := s.Prune(ctx, []task.Status{task.StatusFailed})
+	require.NoError(t, err)
+	require.Equal(t, 1, pruned)
 	tasks, err := s.List(ctx)
 	require.NoError(t, err)
 	require.Len(t, tasks, 1)
 	require.Equal(t, "keep", tasks[0].ID)
+}
+
+func TestSQLiteStorePruneRejectsInvalidStatus(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	s := newStore(t)
+
+	require.NoError(t, s.Add(ctx, task.Task{ID: "keep", Status: task.StatusPending}))
+	pruned, err := s.Prune(ctx, []task.Status{"faield"})
+	require.ErrorIs(t, err, task.ErrInvalidStatus)
+	require.Equal(t, 0, pruned)
+
+	tasks, err := s.List(ctx)
+	require.NoError(t, err)
+	require.Len(t, tasks, 1)
 }
 
 func TestPrune_RecordsPrunedEvents(t *testing.T) {
@@ -841,7 +860,9 @@ func TestPrune_RecordsPrunedEvents(t *testing.T) {
 	require.NoError(t, s.Add(ctx, task.Task{ID: "f1", Status: task.StatusFailed, Body: "fail one"}))
 	require.NoError(t, s.Add(ctx, task.Task{ID: "keep", Status: task.StatusPending, Body: "keep"}))
 
-	require.NoError(t, s.Prune(ctx, []task.Status{task.StatusDone, task.StatusFailed}))
+	pruned, err := s.Prune(ctx, []task.Status{task.StatusDone, task.StatusFailed})
+	require.NoError(t, err)
+	require.Equal(t, 3, pruned)
 
 	// Surviving task is untouched.
 	tasks, err := s.List(ctx)
