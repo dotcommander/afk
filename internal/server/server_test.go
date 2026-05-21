@@ -49,6 +49,25 @@ func newServerFixture(t *testing.T) (http.Handler, *app.Service, *store.SQLiteSt
 	return srv.Handler(), svc, st
 }
 
+func withCSRF(t *testing.T, h http.Handler, req *http.Request) *http.Request {
+	t.Helper()
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
+	require.Equal(t, http.StatusOK, rec.Code)
+
+	prefix := `<meta name="afk-csrf-token" content="`
+	page := rec.Body.String()
+	start := strings.Index(page, prefix)
+	require.NotEqual(t, -1, start)
+	after, ok := strings.CutPrefix(page[start:], prefix)
+	require.True(t, ok)
+	token, _, ok := strings.Cut(after, `">`)
+	require.True(t, ok)
+	require.NotEmpty(t, token)
+	req.Header.Set("X-AFK-CSRF-Token", token)
+	return req
+}
+
 func TestGETIndexReturns200AndHTML(t *testing.T) {
 	t.Parallel()
 
@@ -199,7 +218,7 @@ func TestGETReadyReturnsReadyTasks(t *testing.T) {
 	}
 }
 
-func TestPOSTDoneTransitionsTaskAndReturnsDone(t *testing.T) {
+func TestPOSTRequiresCSRFToken(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
@@ -212,6 +231,27 @@ func TestPOSTDoneTransitionsTaskAndReturnsDone(t *testing.T) {
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/api/tasks/"+id+"/done", nil)
+	h.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusForbidden, rec.Code)
+	got, err := svc.Show(ctx, id)
+	require.NoError(t, err)
+	require.Equal(t, task.StatusPending, got.Status)
+}
+
+func TestPOSTDoneTransitionsTaskAndReturnsDone(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	h, svc, _ := newServerFixture(t)
+
+	tasks, err := svc.List(ctx, "pending")
+	require.NoError(t, err)
+	require.NotEmpty(t, tasks)
+	id := tasks[0].ID
+
+	rec := httptest.NewRecorder()
+	req := withCSRF(t, h, httptest.NewRequest(http.MethodPost, "/api/tasks/"+id+"/done", nil))
 	h.ServeHTTP(rec, req)
 
 	require.Equal(t, http.StatusOK, rec.Code)
@@ -234,7 +274,7 @@ func TestPOSTUnknownActionReturns400(t *testing.T) {
 	id := tasks[0].ID
 
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/api/tasks/"+id+"/bogus", nil)
+	req := withCSRF(t, h, httptest.NewRequest(http.MethodPost, "/api/tasks/"+id+"/bogus", nil))
 	h.ServeHTTP(rec, req)
 
 	require.Equal(t, http.StatusBadRequest, rec.Code)
@@ -250,7 +290,7 @@ func TestPOSTPruneReturnsOK(t *testing.T) {
 
 	h, _, _ := newServerFixture(t)
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/api/prune", nil)
+	req := withCSRF(t, h, httptest.NewRequest(http.MethodPost, "/api/prune", nil))
 	h.ServeHTTP(rec, req)
 
 	require.Equal(t, http.StatusOK, rec.Code)
@@ -271,7 +311,7 @@ func TestPOSTPruneRemovesDoneTasks(t *testing.T) {
 	require.Len(t, before, 1)
 
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/api/prune", nil)
+	req := withCSRF(t, h, httptest.NewRequest(http.MethodPost, "/api/prune", nil))
 	h.ServeHTTP(rec, req)
 	require.Equal(t, http.StatusOK, rec.Code)
 
@@ -293,7 +333,7 @@ func TestPOSTFailTransitionsTaskToFailed(t *testing.T) {
 
 	body := `{"error":"test failure reason"}`
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/api/tasks/"+id+"/fail", strings.NewReader(body))
+	req := withCSRF(t, h, httptest.NewRequest(http.MethodPost, "/api/tasks/"+id+"/fail", strings.NewReader(body)))
 	req.Header.Set("Content-Type", "application/json")
 	h.ServeHTTP(rec, req)
 

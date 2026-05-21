@@ -3,6 +3,8 @@ package server
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -13,7 +15,10 @@ import (
 	"github.com/dotcommander/afk/internal/app"
 )
 
-const shutdownTimeout = 5 * time.Second
+const (
+	csrfHeader      = "X-AFK-CSRF-Token"
+	shutdownTimeout = 5 * time.Second
+)
 
 // Server serves the afk web dashboard.
 type Server struct {
@@ -21,11 +26,20 @@ type Server struct {
 	logger      *slog.Logger
 	addr        string
 	openBrowser bool
+	csrfToken   string
 }
 
 // New constructs a Server.
 func New(svc *app.Service, logger *slog.Logger, addr string, openBrowser bool) *Server {
-	return &Server{svc: svc, logger: logger, addr: addr, openBrowser: openBrowser}
+	return &Server{svc: svc, logger: logger, addr: addr, openBrowser: openBrowser, csrfToken: newCSRFToken()}
+}
+
+func newCSRFToken() string {
+	var raw [32]byte
+	if _, err := rand.Read(raw[:]); err != nil {
+		panic(fmt.Errorf("server: csrf token: %w", err))
+	}
+	return base64.RawURLEncoding.EncodeToString(raw[:])
 }
 
 // Handler returns the HTTP mux for use in tests without starting a listener.

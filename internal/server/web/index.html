@@ -3,6 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="afk-csrf-token" content="__AFK_CSRF_TOKEN__">
 <title>afk · MISSION CONTROL</title>
 <style>
 /* ─── CUSTOM PROPERTIES ─────────────────────────────────────────── */
@@ -812,7 +813,13 @@ function truncate(s, n) {
    API
 ═══════════════════════════════════════════════════════════════════ */
 
+const csrfToken = document.querySelector('meta[name="afk-csrf-token"]')?.content || '';
+
 async function api(path, opts) {
+  opts = opts || {};
+  if ((opts.method || 'GET').toUpperCase() === 'POST') {
+    opts.headers = Object.assign({ 'X-AFK-CSRF-Token': csrfToken }, opts.headers || {});
+  }
   const res = await fetch(path, opts);
   const ct = res.headers.get('content-type') || '';
   const body = ct.includes('json') ? await res.json() : await res.text();

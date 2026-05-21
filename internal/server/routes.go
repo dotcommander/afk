@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bytes"
 	"net/http"
 )
 
@@ -17,11 +18,22 @@ func (s *Server) handler() http.Handler {
 	mux.HandleFunc("POST /api/prune", s.handlePrune)
 	mux.HandleFunc("POST /api/tasks", s.handleCreate)
 	mux.HandleFunc("GET /api/paths", s.handlePaths)
-	return mux
+	return s.csrfGuard(mux)
+}
+
+func (s *Server) csrfGuard(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost && r.Header.Get(csrfHeader) != s.csrfToken {
+			writeErr(w, http.StatusForbidden, errInvalidCSRF)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 func (s *Server) serveIndex(w http.ResponseWriter, _ *http.Request) {
+	body := bytes.Replace(indexHTML, []byte("__AFK_CSRF_TOKEN__"), []byte(s.csrfToken), 1)
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_, _ = w.Write(indexHTML)
+	_, _ = w.Write(body)
 }

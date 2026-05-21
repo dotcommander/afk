@@ -8,6 +8,8 @@ import (
 	"github.com/dotcommander/afk/internal/app"
 )
 
+var errInvalidCSRF = errors.New("invalid csrf token")
+
 // writeJSON encodes v as JSON with the given status code.
 func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Cache-Control", "no-store")
