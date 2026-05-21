@@ -18,8 +18,9 @@ import (
 // validation fails.
 func newRejectedCmd(d *Deps) *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "rejected",
-		Short: "Inspect and re-drive validation-rejected tasks",
+		Use:    "rejected",
+		Short:  "Inspect and re-drive validation-rejected tasks",
+		Hidden: true,
 		Long: "Tasks that fail validation are recorded in <queue-dir>/rejected.jsonl. " +
 			"Use these subcommands to list, inspect, retry, or discard them.",
 	}

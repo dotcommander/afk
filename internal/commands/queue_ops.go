@@ -86,8 +86,9 @@ func newRequeueStaleCmd(d *Deps) *cobra.Command {
 	var olderThan string
 
 	cmd := &cobra.Command{
-		Use:   "requeue-stale",
-		Short: "Reset stale working tasks to pending",
+		Use:    "requeue-stale",
+		Short:  "Reset stale working tasks to pending",
+		Hidden: true,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			dur, err := time.ParseDuration(olderThan)
 			if err != nil {
@@ -136,9 +137,10 @@ func newHeartbeatCmd(d *Deps) *cobra.Command {
 	var lease string
 
 	cmd := &cobra.Command{
-		Use:   "heartbeat <id>",
-		Short: "Extend a worker-owned task lease",
-		Args:  cobra.ExactArgs(1),
+		Use:    "heartbeat <id>",
+		Short:  "Extend a worker-owned task lease",
+		Hidden: true,
+		Args:   cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			leaseDuration, err := parseOptionalDuration("lease", lease)
 			if err != nil {
