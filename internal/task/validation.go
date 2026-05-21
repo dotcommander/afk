@@ -137,6 +137,7 @@ func generatedCandidateChecks(opts AddOptions) []error {
 func ValidateImportTask(it ImportTask) error {
 	return ValidateAddOptions(AddOptions{
 		Body:        it.Body,
+		Priority:    it.Priority,
 		Tags:        it.Tags,
 		CWD:         it.CWD,
 		Source:      it.Source,

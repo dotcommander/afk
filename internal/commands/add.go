@@ -106,6 +106,11 @@ func runAddCommand(cmd *cobra.Command, d *Deps, input addCommandInput, mode addC
 	if mode.diagnose {
 		return runAddDiagnose(cmd, d, opts)
 	}
+	if dependsOnID != "" {
+		if _, err := d.Service.Show(cmd.Context(), dependsOnID); err != nil {
+			return err
+		}
+	}
 	if mode.dryRun {
 		if err := task.ValidateAddOptions(opts); err != nil {
 			return addValidationError(cmd, opts, err)
@@ -113,12 +118,12 @@ func runAddCommand(cmd *cobra.Command, d *Deps, input addCommandInput, mode addC
 		return writeAddDryRunResult(d, mode.asJSON)
 	}
 	if mode.force {
-		return runAddForce(cmd, d, opts, mode.asJSON)
+		return runAddForce(cmd, d, opts, dependsOnID, mode.asJSON)
 	}
 	return runAddNormal(cmd, d, opts, dependsOnID, mode.asJSON)
 }
 
-func runAddForce(cmd *cobra.Command, d *Deps, opts task.AddOptions, asJSON bool) error {
+func runAddForce(cmd *cobra.Command, d *Deps, opts task.AddOptions, dependsOnID string, asJSON bool) error {
 	if v := os.Getenv("AFK_ALLOW_FORCE"); v != "1" {
 		cmd.SilenceUsage = true
 		return fmt.Errorf("--force requires AFK_ALLOW_FORCE=1 in environment (current: %q)", v)
@@ -131,15 +136,15 @@ func runAddForce(cmd *cobra.Command, d *Deps, opts task.AddOptions, asJSON bool)
 		cmd.SilenceUsage = true
 		return err
 	}
+	if dependsOnID != "" {
+		if err := d.Service.AddDependency(cmd.Context(), id, dependsOnID); err != nil {
+			return err
+		}
+	}
 	return writeAddResult(d, id, asJSON)
 }
 
 func runAddNormal(cmd *cobra.Command, d *Deps, opts task.AddOptions, dependsOnID string, asJSON bool) error {
-	if dependsOnID != "" {
-		if _, err := d.Service.Show(cmd.Context(), dependsOnID); err != nil {
-			return err
-		}
-	}
 	id, err := d.Service.AddWithOptions(cmd.Context(), opts)
 	if err != nil {
 		return addValidationError(cmd, opts, err)

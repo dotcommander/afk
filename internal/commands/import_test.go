@@ -170,6 +170,21 @@ func TestImport(t *testing.T) {
 		require.Equal(t, 0, countTasks(t, queuePath))
 	})
 
+	t.Run("invalid_priority_exit_1", func(t *testing.T) {
+		t.Parallel()
+
+		dir := t.TempDir()
+		queuePath := filepath.Join(dir, "queue.db")
+
+		input := `{"tasks":[{"slug":"bad-priority","body":"` + validBody + `","priority":"hihg"}]}`
+		_, err := runImport(t, queuePath, input)
+		require.Error(t, err)
+
+		requireExitCode(t, err, 1)
+		require.True(t, errors.Is(err, task.ErrInvalidPriority), "got %v", err)
+		require.Equal(t, 0, countTasks(t, queuePath))
+	})
+
 	t.Run("dependency_cycle_exit_2", func(t *testing.T) {
 		t.Parallel()
 

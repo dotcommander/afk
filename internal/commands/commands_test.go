@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dotcommander/afk/internal/app"
 	"github.com/dotcommander/afk/internal/task"
 	"github.com/stretchr/testify/require"
 )
@@ -391,6 +392,51 @@ func TestAddDryRunValidatesWithoutAddingTask(t *testing.T) {
 	root.SetArgs([]string{"--queue", queuePath, "count"})
 	require.NoError(t, root.Execute(), "stderr: %s", stderr.String())
 	require.Contains(t, stdout.String(), "pending: 0")
+}
+
+func TestAddDryRunRejectsMissingDependency(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	queuePath := filepath.Join(dir, "tasks.sqlite")
+	stdout, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	d := testDepsWithWriters(stdout, stderr)
+	root := NewRoot(d, "test")
+	root.SetArgs([]string{"--queue", queuePath, "add", "--dry-run", "--no-cwd", "--blocked-by", "missing", "dependent task"})
+
+	err := root.Execute()
+	require.Error(t, err)
+	require.ErrorIs(t, err, app.ErrNotFound)
+	require.Empty(t, stdout.String())
+}
+
+func TestAddForcePersistsDependency(t *testing.T) {
+	t.Setenv("AFK_ALLOW_FORCE", "1")
+
+	dir := t.TempDir()
+	queuePath := filepath.Join(dir, "tasks.sqlite")
+	stdout, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	d := testDepsWithWriters(stdout, stderr)
+
+	run := func(args ...string) string {
+		t.Helper()
+		stdout.Reset()
+		stderr.Reset()
+		root := NewRoot(d, "test")
+		root.SetArgs(append([]string{"--queue", queuePath}, args...))
+		require.NoError(t, root.Execute(), "stderr: %s", stderr.String())
+		return stdout.String()
+	}
+
+	prereq := strings.TrimSpace(run("add", "--no-cwd", "prereq"))
+	blocked := strings.TrimSpace(run("add", "--force", "--no-cwd", "--blocked-by", prereq, "continue this"))
+
+	depsJSON := run("deps", "ls", blocked, "--json")
+	var deps []map[string]any
+	require.NoError(t, json.Unmarshal([]byte(strings.TrimSpace(depsJSON)), &deps))
+	require.Len(t, deps, 1)
+	require.Equal(t, blocked, deps[0]["task_id"])
+	require.Equal(t, prereq, deps[0]["depends_on_id"])
 }
 
 func TestDependencyCommands(t *testing.T) {
