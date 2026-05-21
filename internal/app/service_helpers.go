@@ -3,10 +3,32 @@ package app
 import (
 	"fmt"
 	"os"
+	"sort"
 	"time"
 
 	"github.com/dotcommander/afk/internal/task"
 )
+
+// recentPaths collects up to limit distinct non-empty CWDs from the most
+// recently created tasks, then returns them sorted alphabetically.
+func recentPaths(tasks []task.Task, limit int) []string {
+	ordered := append([]task.Task(nil), tasks...)
+	sort.Slice(ordered, func(i, j int) bool { return ordered[i].Created > ordered[j].Created })
+	seen := make(map[string]bool)
+	var out []string
+	for _, t := range ordered {
+		if t.CWD == "" || seen[t.CWD] {
+			continue
+		}
+		seen[t.CWD] = true
+		out = append(out, t.CWD)
+		if len(out) == limit {
+			break
+		}
+	}
+	sort.Strings(out)
+	return out
+}
 
 func uniqueID(tasks []task.Task, base string) string {
 	candidate := base

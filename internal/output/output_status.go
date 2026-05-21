@@ -1,0 +1,117 @@
+package output
+
+import (
+	"fmt"
+	"io"
+	"text/tabwriter"
+
+	"github.com/dotcommander/afk/internal/task"
+)
+
+// This file renders `afk count` and `afk status` output. `count` is a flat
+// per-status tally; `status` is a richer snapshot that also lists the pending
+// and working tasks. Shared bounding and limiting helpers live in output.go.
+
+// WriteCount renders per-status tallies in canonical order.
+func WriteCount(w io.Writer, tally map[task.Status]int) error {
+	for _, s := range task.OrderedStatuses() {
+		if _, err := fmt.Fprintf(w, "%s: %d\n", s, tally[s]); err != nil {
+			return fmt.Errorf("count: write: %w", err)
+		}
+	}
+	return nil
+}
+
+// WriteCountJSON renders per-status tallies as a single JSON object on one line.
+// All four canonical status keys are always present (zero if missing) so consumers
+// can rely on a fixed shape.
+func WriteCountJSON(w io.Writer, tally map[task.Status]int) error {
+	doc := struct {
+		Pending int `json:"pending"`
+		Working int `json:"working"`
+		Done    int `json:"done"`
+		Failed  int `json:"failed"`
+	}{
+		Pending: tally[task.StatusPending],
+		Working: tally[task.StatusWorking],
+		Done:    tally[task.StatusDone],
+		Failed:  tally[task.StatusFailed],
+	}
+	return WriteJSONLine(w, doc, "count")
+}
+
+type statusTasksJSON struct {
+	Pending []boundedTask `json:"pending"`
+	Working []boundedTask `json:"working"`
+}
+
+type statusDoc struct {
+	Pending int             `json:"pending"`
+	Working int             `json:"working"`
+	Done    int             `json:"done"`
+	Failed  int             `json:"failed"`
+	Total   int             `json:"total"`
+	Tasks   statusTasksJSON `json:"tasks"`
+}
+
+// WriteStatus renders a queue snapshot: per-status tallies plus the pending and
+// working task lists.
+func WriteStatus(w io.Writer, tally map[task.Status]int, pending, working []task.Task, asJSON bool) error {
+	if asJSON {
+		return writeStatusJSON(w, tally, pending, working)
+	}
+	return writeStatusText(w, tally, pending, working)
+}
+
+func statusListJSON(tasks []task.Task) []boundedTask {
+	bounded := make([]boundedTask, 0, len(tasks))
+	for _, t := range tasks {
+		bounded = append(bounded, boundTask(t, maxListBodyRunes))
+	}
+	return bounded
+}
+
+func writeStatusJSON(w io.Writer, tally map[task.Status]int, pending, working []task.Task) error {
+	total := 0
+	for _, n := range tally {
+		total += n
+	}
+	return WriteJSONLine(w, statusDoc{
+		Pending: tally[task.StatusPending],
+		Working: tally[task.StatusWorking],
+		Done:    tally[task.StatusDone],
+		Failed:  tally[task.StatusFailed],
+		Total:   total,
+		Tasks: statusTasksJSON{
+			Pending: statusListJSON(pending),
+			Working: statusListJSON(working),
+		},
+	}, "status")
+}
+
+func writeStatusText(w io.Writer, tally map[task.Status]int, pending, working []task.Task) error {
+	if err := WriteCount(w, tally); err != nil {
+		return err
+	}
+	if err := writeStatusSection(w, "Pending:", pending); err != nil {
+		return err
+	}
+	return writeStatusSection(w, "Working:", working)
+}
+
+func writeStatusSection(w io.Writer, title string, tasks []task.Task) error {
+	if _, err := fmt.Fprintf(w, "\n%s\n", title); err != nil {
+		return fmt.Errorf("status: write: %w", err)
+	}
+	if len(tasks) == 0 {
+		if _, err := fmt.Fprintln(w, "  none"); err != nil {
+			return fmt.Errorf("status: write: %w", err)
+		}
+		return nil
+	}
+	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+	for _, t := range tasks {
+		fmt.Fprintf(tw, "  %s\t%s\t%s\n", t.ID, t.Created, truncate(t.Body, 60)) //nolint:errcheck // tabwriter buffers; errors surface at Flush
+	}
+	return tw.Flush()
+}
