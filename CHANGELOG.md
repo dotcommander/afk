@@ -1,9 +1,16 @@
 # Changelog
 
-## Unreleased
+## v0.3.0 (2026-05-21)
+
+### Features
+
+- Add newest-first dashboard roster ordering, 100-per-page pagination, and panel overflow fixes.
+- Wrap long task bodies in home-page dashboard panels.
 
 ### Other
 
+- Clarify path-based task discovery guidance and generated candidate validation docs.
+- Support Windows runner and SQLite DSN handling.
 - Remove legacy `~/.claude/queue/tasks.jsonl` import support. SQLite is the only queue backend; a non-`.sqlite` queue path is normalized to a sibling `.sqlite` database.
 
 ## v0.1.2 (2026-05-19)
