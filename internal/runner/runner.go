@@ -7,9 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"strings"
-	"syscall"
 	"text/tabwriter"
 	"time"
 
@@ -159,8 +157,10 @@ func runTask(ctx context.Context, service *app.Service, t task.Task, opts Option
 		return fmt.Errorf("runner: write start: %w", err)
 	}
 
-	//nolint:gosec // afk intentionally executes the user-provided --exec shell template.
-	cmd := exec.CommandContext(ctx, "/bin/sh", "-c", commandText)
+	// newShellCommand is platform-specific: /bin/sh on Unix, cmd.exe on Windows.
+	// It also wires cmd.Cancel to kill the whole process group/tree so that
+	// children spawned by the shell (afk done, agent CLIs) are not orphaned.
+	cmd := newShellCommand(ctx, commandText)
 	if t.CWD != "" {
 		cmd.Dir = t.CWD
 	}
@@ -176,15 +176,6 @@ func runTask(ctx context.Context, service *app.Service, t task.Task, opts Option
 	cmd.Env = env
 	cmd.Stdout = opts.Stdout
 	cmd.Stderr = opts.Stderr
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	// Default CommandContext cancel kills only the shell; its children
-	// (afk done, agent CLIs) would be orphaned. Kill the whole group.
-	cmd.Cancel = func() error {
-		if cmd.Process == nil {
-			return nil
-		}
-		return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
-	}
 
 	hbDone := make(chan struct{})
 	hbErr := make(chan error, 1)
