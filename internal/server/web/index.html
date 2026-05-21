@@ -879,6 +879,8 @@ function startClock() {
    ROUTER
 ═══════════════════════════════════════════════════════════════════ */
 
+const POLL_INTERVAL_MS = 10000;
+
 const VIEWS = {};
 let _currentRoute = null;
 let _pollTimer = null;
@@ -905,39 +907,45 @@ function updateNav(route) {
   $('#nav-tasks').classList.toggle('active', route.name === 'tasks' || route.name === 'dossier');
 }
 
-// Single re-fetch/re-render of the current view — called by the poll timer
-// and by the visibilitychange listener when the tab returns to the foreground.
-async function refreshCurrentView() {
-  const currentHash = window.location.hash;
-  if (!_currentRoute || parseRoute(currentHash).name !== _currentRoute.name) return;
-  radarBlip();
-  const freshApp = $('#app');
-  if (!freshApp) return;
-  freshApp.innerHTML = '';
-  if (VIEWS[_currentRoute.name]) {
-    await VIEWS[_currentRoute.name](freshApp, _currentRoute);
+// mountView — render a route's view off-DOM, then atomically swap into #app.
+// preserveScroll=true is the poll/refresh path: keep scrollY, skip swap if
+// nothing changed, and on fetch error keep the current page rather than
+// blanking it. preserveScroll=false is a fresh navigation: scroll to top.
+async function mountView(route, preserveScroll) {
+  const app = $('#app');
+  if (!app) return;
+  const staging = document.createElement('div');
+  try {
+    if (VIEWS[route.name]) await VIEWS[route.name](staging, route);
+  } catch (err) {
+    if (preserveScroll) return;            // poll failure: keep current page
+    staging.replaceChildren(el('div', { class: 'error-block' }, txt('⚠ ' + err.message)));
   }
+  if (route !== _currentRoute) return;            // navigated away mid-fetch
+  if (staging.innerHTML === app.innerHTML) return; // nothing changed
+  const y = preserveScroll ? window.scrollY : 0;
+  app.replaceChildren(...staging.childNodes);
+  // Force a synchronous layout so scrollTo clamps against the NEW document
+  // height, not the stale pre-swap one — otherwise the restore is clamped
+  // to ~0 and the page jumps to the top on every poll.
+  void document.documentElement.offsetHeight;
+  window.scrollTo(0, y);
 }
 
 async function render() {
   const route = parseRoute(window.location.hash);
-  _currentRoute = route;
   updateNav(route);
 
   if (_pollTimer) { clearInterval(_pollTimer); _pollTimer = null; }
 
-  const app = $('#app');
-  app.innerHTML = '';
+  _currentRoute = route;
+  await mountView(route, false);
 
-  if (VIEWS[route.name]) {
-    await VIEWS[route.name](app, route);
-  }
-
-  // Poll every 3 s — refresh only current view
-  _pollTimer = setInterval(async () => {
+  _pollTimer = setInterval(() => {
     if (document.hidden) return;
-    await refreshCurrentView();
-  }, 3000);
+    radarBlip();
+    mountView(_currentRoute, true);
+  }, POLL_INTERVAL_MS);
 }
 
 window.addEventListener('hashchange', render);
@@ -1052,9 +1060,7 @@ registerView('tasks', async (container, route) => {
     try {
       await API.prune(['done', 'failed']);
       _currentRoute = route;
-      const app = $('#app');
-      app.innerHTML = '';
-      await VIEWS.tasks(app, route);
+      await mountView(_currentRoute, true);
     } catch (err) { showToast(err.message); }
   }}, txt('PRUNE'));
   pruneRow.appendChild(pruneBtn);
@@ -1258,9 +1264,7 @@ registerView('dossier', async (container, route) => {
     try {
       await API.action(t.id, action, body);
       _currentRoute = route;
-      const app = $('#app');
-      app.innerHTML = '';
-      await VIEWS.dossier(app, route);
+      await mountView(_currentRoute, true);
     } catch (err) { showToast(err.message); }
   }
 
@@ -1342,7 +1346,7 @@ registerView('dossier', async (container, route) => {
 startClock();
 // ONE-TIME: catch up immediately when tab returns to the foreground.
 document.addEventListener('visibilitychange', () => {
-  if (!document.hidden) refreshCurrentView();
+  if (!document.hidden) mountView(_currentRoute, true);
 });
 render();
 </script>
