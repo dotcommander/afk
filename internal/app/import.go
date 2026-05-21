@@ -14,8 +14,6 @@ import (
 	"github.com/dotcommander/afk/internal/task"
 )
 
-const specTagPrefix = "spec:"
-
 // Import validates an ImportDoc, dedupes against existing spec:<slug>
 // tags, assigns IDs, resolves intra-batch blocked_by edges, and writes
 // the whole batch in a single store transaction. Returns one
@@ -143,7 +141,7 @@ func findSpecTagConflict(existing []task.Task, items []task.ImportTask) (string,
 	incoming := make(map[string]struct{})
 	for _, it := range items {
 		for _, tag := range it.Tags {
-			if slug, ok := strings.CutPrefix(tag, specTagPrefix); ok {
+			if slug, ok := strings.CutPrefix(tag, task.SpecTagPrefix); ok {
 				incoming[slug] = struct{}{}
 			}
 		}
@@ -153,7 +151,7 @@ func findSpecTagConflict(existing []task.Task, items []task.ImportTask) (string,
 	}
 	for _, t := range existing {
 		for _, tag := range t.Tags {
-			slug, ok := strings.CutPrefix(tag, specTagPrefix)
+			slug, ok := strings.CutPrefix(tag, task.SpecTagPrefix)
 			if !ok {
 				continue
 			}

@@ -115,6 +115,15 @@ func generatedCandidateChecks(opts AddOptions) []error {
 	if !containsFold(opts.Body, "verify") && !containsFold(opts.Body, "verification") {
 		failures = append(failures, ErrMissingVerify)
 	}
+	return append(failures, evidenceScopeChecks(opts)...)
+}
+
+// evidenceScopeChecks runs the validation checks shared by every generated and
+// planner-imported task: evidence, scope, reject-if criteria, churn-phrase
+// rejection, and the missing-cwd check. Order is significant — callers consume
+// reasons[0] as the first-failure identity.
+func evidenceScopeChecks(opts AddOptions) []error {
+	var failures []error
 	if !containsFold(opts.Body, "evidence:") {
 		failures = append(failures, ErrMissingEvidence)
 	}
@@ -207,41 +216,33 @@ func isGeneratedCandidate(source string, tags []string) bool {
 }
 
 func isPlannerGeneratedImport(it ImportTask) bool {
+	// isGeneratedCandidate already covers source "task-discovery" and tags
+	// "discovery"/"candidate"/"needs-validation"; this function adds only the
+	// planner-specific signals.
+	if isGeneratedCandidate(it.Source, it.Tags) {
+		return true
+	}
 	switch strings.ToLower(strings.TrimSpace(it.Source)) {
-	case "bulk-afk-planner", "spec-planner", "planner", "task-discovery":
+	case "bulk-afk-planner", "spec-planner", "planner":
 		return true
 	}
 	for _, tag := range it.Tags {
 		normalized := strings.ToLower(strings.TrimSpace(tag))
-		if strings.HasPrefix(normalized, "spec:") {
+		if strings.HasPrefix(normalized, SpecTagPrefix) {
 			return true
 		}
 		switch normalized {
-		case "planner", "generated", "bulk-afk", "discovery", "candidate", "needs-validation":
+		case "planner", "generated", "bulk-afk":
 			return true
 		}
 	}
 	return false
 }
 
+// plannerImportChecks runs the subset of generated-task checks that apply to
+// planner-imported tasks: evidence, scope, reject-if, churn-phrase, cwd.
 func plannerImportChecks(opts AddOptions) []error {
-	var failures []error
-	if !containsFold(opts.Body, "evidence:") {
-		failures = append(failures, ErrMissingEvidence)
-	}
-	if !containsFold(opts.Body, "scope:") {
-		failures = append(failures, ErrMissingScope)
-	}
-	if !containsFold(opts.Body, "reject-if:") {
-		failures = append(failures, ErrMissingRejectIf)
-	}
-	if phrase := firstGeneratedChurnPhrase(opts.Body); phrase != "" {
-		failures = append(failures, &ChurnPhraseError{Phrase: phrase})
-	}
-	if opts.CWD == "" && !hasAbsolutePath(opts.Body) {
-		failures = append(failures, ErrMissingCwd)
-	}
-	return failures
+	return evidenceScopeChecks(opts)
 }
 
 func containsFold(s, substr string) bool {

@@ -17,6 +17,11 @@ const (
 	StatusFailed  Status = "failed"
 )
 
+// SpecTagPrefix is the tag prefix that marks a task as belonging to an
+// imported spec batch (tag form: "spec:<slug>"). Shared by package app's
+// import dedupe and package task's planner-import validation.
+const SpecTagPrefix = "spec:"
+
 // ErrInvalidStatus reports an unknown task status.
 var ErrInvalidStatus = errors.New("invalid task status")
 
