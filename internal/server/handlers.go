@@ -82,3 +82,9 @@ func (s *Server) handleReady(w http.ResponseWriter, r *http.Request) {
 	tasks, err := s.svc.Ready(r.Context())
 	writeResult(w, tasks, err)
 }
+
+// handlePaths serves GET /api/paths — recently used task working directories.
+func (s *Server) handlePaths(w http.ResponseWriter, r *http.Request) {
+	paths, err := s.svc.RecentPaths(r.Context())
+	writeResult(w, paths, err)
+}

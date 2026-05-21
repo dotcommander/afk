@@ -15,6 +15,8 @@ func (s *Server) handler() http.Handler {
 	mux.HandleFunc("GET /api/ready", s.handleReady)
 	mux.HandleFunc("POST /api/tasks/{id}/{action}", s.handleAction)
 	mux.HandleFunc("POST /api/prune", s.handlePrune)
+	mux.HandleFunc("POST /api/tasks", s.handleCreate)
+	mux.HandleFunc("GET /api/paths", s.handlePaths)
 	return mux
 }
 

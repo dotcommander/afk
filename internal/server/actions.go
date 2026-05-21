@@ -96,6 +96,37 @@ func (s *Server) handleAction(w http.ResponseWriter, r *http.Request) {
 	writeResult(w, t, err)
 }
 
+// createInput is the JSON body for POST /api/tasks.
+type createInput struct {
+	Body string `json:"body"`
+	CWD  string `json:"cwd"`
+}
+
+// handleCreate serves POST /api/tasks — enqueues a new pending task via the
+// same validated path as `afk add`. Invalid task content → 400.
+func (s *Server) handleCreate(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(nil, r.Body, 64*1024)
+	var in createInput
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil && !errors.Is(err, io.EOF) {
+		writeErr(w, http.StatusBadRequest, fmt.Errorf("decode body: %w", err))
+		return
+	}
+	id, err := s.svc.AddWithOptions(r.Context(), task.AddOptions{
+		Body:   in.Body,
+		CWD:    in.CWD,
+		Source: "web",
+	})
+	if err != nil {
+		if errors.Is(err, task.ErrInvalidTask) {
+			writeErr(w, http.StatusBadRequest, err)
+			return
+		}
+		writeErr(w, http.StatusInternalServerError, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, map[string]string{"id": id})
+}
+
 // handlePrune serves POST /api/prune.
 // Accepts an optional JSON body with "statuses"; defaults to done+failed.
 func (s *Server) handlePrune(w http.ResponseWriter, r *http.Request) {

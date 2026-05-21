@@ -11,6 +11,9 @@ import (
 	"github.com/dotcommander/afk/internal/task"
 )
 
+// recentPathLimit caps how many distinct working directories RecentPaths returns.
+const recentPathLimit = 10
+
 // Service coordinates task use cases across the store and task model.
 type Service struct {
 	store       Store
@@ -142,6 +145,16 @@ func (s *Service) List(ctx context.Context, statusFilter string) ([]task.Task, e
 		return nil, err
 	}
 	return filterByStatus(tasks, statusFilter), nil
+}
+
+// RecentPaths returns up to recentPathLimit distinct non-empty task working
+// directories — the most recently created ones, sorted alphabetically.
+func (s *Service) RecentPaths(ctx context.Context) ([]string, error) {
+	tasks, err := s.store.List(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return recentPaths(tasks, recentPathLimit), nil
 }
 
 // Show returns one task by id.

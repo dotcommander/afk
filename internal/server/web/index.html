@@ -429,6 +429,19 @@ nav {
 
 .btn-row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 16px; }
 
+/* ─── FORM FIELDS ────────────────────────────────────────────────── */
+.field-label { display:block; font-size:0.65rem; letter-spacing:0.15em;
+  text-transform:uppercase; color:var(--text-dim); margin-bottom:6px; }
+.field-input, .field-textarea { width:100%; font-family:var(--font);
+  font-size:0.85rem; color:var(--text); background:rgba(0,0,0,0.25);
+  border:1px solid var(--chrome-dim); border-radius:var(--radius);
+  padding:9px 11px; margin-bottom:16px; box-sizing:border-box; }
+.field-input:focus, .field-textarea:focus { outline:none;
+  border-color:var(--orange);
+  box-shadow:0 0 6px rgba(255,107,53,0.3), inset 0 0 4px rgba(255,107,53,0.06); }
+.field-input::placeholder, .field-textarea::placeholder { color:var(--chrome-dim); }
+.field-textarea { resize:vertical; line-height:1.5; min-height:120px; }
+
 /* ─── DOSSIER LAYOUT ─────────────────────────────────────────────── */
 .dossier-body {
   background: rgba(0,0,0,0.25);
@@ -667,6 +680,7 @@ nav {
   <nav>
     <a class="nav-btn" id="nav-home"  href="#/">MISSION CONTROL</a>
     <a class="nav-btn" id="nav-tasks" href="#/tasks">ROSTER</a>
+    <a class="nav-btn" id="nav-new" href="#/tasks/new">NEW TASK</a>
   </nav>
   <div class="header-spacer"></div>
   <div id="telemetry">
@@ -804,6 +818,12 @@ const API = {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ statuses }),
   }),
+  create: (payload) => api('/api/tasks', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  }),
+  paths: () => api('/api/paths'),
 };
 
 /* ═══════════════════════════════════════════════════════════════════
@@ -893,8 +913,9 @@ function navigate(hash) {
 
 function parseRoute(hash) {
   const h = (hash || '#/').replace(/^#/, '') || '/';
-  if (h === '/')       return { name: 'home' };
-  if (h === '/tasks')  return { name: 'tasks', filter: '' };
+  if (h === '/')             return { name: 'home' };
+  if (h === '/tasks/new')    return { name: 'tasksNew' };
+  if (h === '/tasks')        return { name: 'tasks', filter: '' };
   const m = h.match(/^\/tasks\?status=(.+)$/);
   if (m)              return { name: 'tasks', filter: decodeURIComponent(m[1]) };
   const m2 = h.match(/^\/task\/(.+)$/);
@@ -905,6 +926,7 @@ function parseRoute(hash) {
 function updateNav(route) {
   $('#nav-home').classList.toggle('active',  route.name === 'home');
   $('#nav-tasks').classList.toggle('active', route.name === 'tasks' || route.name === 'dossier');
+  $('#nav-new').classList.toggle('active', route.name === 'tasksNew');
 }
 
 // mountView — render a route's view off-DOM, then atomically swap into #app.
@@ -914,6 +936,7 @@ function updateNav(route) {
 async function mountView(route, preserveScroll) {
   const app = $('#app');
   if (!app) return;
+  if (preserveScroll && route.name === 'tasksNew') return;
   const staging = document.createElement('div');
   try {
     if (VIEWS[route.name]) await VIEWS[route.name](staging, route);
@@ -1133,6 +1156,68 @@ registerView('tasks', async (container, route) => {
   }
   table.appendChild(tbody);
   panel.appendChild(table);
+  container.appendChild(panel);
+});
+
+/* ═══════════════════════════════════════════════════════════════════
+   VIEW: NEW TASK FORM  (#/tasks/new)
+═══════════════════════════════════════════════════════════════════ */
+
+registerView('tasksNew', async (container, _route) => {
+  let recent = [];
+  try { recent = (await API.paths()) || []; } catch { recent = []; }
+
+  const panel = el('div', { class: 'panel' });
+
+  panel.appendChild(el('div', { class: 'section-heading' }, txt('FLIGHT PLAN')));
+
+  // Working directory field
+  const cwdId = 'new-task-cwd';
+  const listId = 'new-task-cwd-list';
+  panel.appendChild(el('label', { class: 'field-label', for: cwdId }, txt('WORKING DIRECTORY')));
+  const datalist = el('datalist', { id: listId });
+  for (const p of recent) {
+    datalist.appendChild(el('option', { value: p }));
+  }
+  panel.appendChild(datalist);
+  const cwdInput = el('input', {
+    class: 'field-input',
+    type: 'text',
+    id: cwdId,
+    list: listId,
+    placeholder: '/path/to/repo (optional)',
+    autocomplete: 'off',
+  });
+  panel.appendChild(cwdInput);
+
+  // Task body field
+  const bodyId = 'new-task-body';
+  panel.appendChild(el('label', { class: 'field-label', for: bodyId }, txt('TASK BODY')));
+  const bodyTextarea = el('textarea', {
+    class: 'field-textarea',
+    id: bodyId,
+    rows: '6',
+    placeholder: 'Describe the task...',
+  });
+  panel.appendChild(bodyTextarea);
+
+  // Submit handler
+  async function submit() {
+    const body = bodyTextarea.value.trim();
+    if (!body) { showToast('TASK BODY REQUIRED'); return; }
+    const cwd = cwdInput.value.trim();
+    try {
+      const res = await API.create({ body, cwd });
+      navigate('#/task/' + encodeURIComponent(res.id));
+    } catch (err) { showToast(err.message); }
+  }
+
+  // Button row
+  const btnRow = el('div', { class: 'btn-row' });
+  btnRow.appendChild(el('button', { class: 'push-btn btn-green', onclick: submit }, txt('ADD TASK')));
+  btnRow.appendChild(el('button', { class: 'push-btn btn-dim', onclick: () => navigate('#/tasks') }, txt('CANCEL')));
+  panel.appendChild(btnRow);
+
   container.appendChild(panel);
 });
 
