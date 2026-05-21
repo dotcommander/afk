@@ -37,9 +37,16 @@ Mine concrete AFK-ready candidate tasks from the current local path. This comman
   - low churn risk and no broad cleanup/refactor wording
   - no duplicate pending or working task for the same behavior
 
-5. Rank and reject before enqueueing.
+5. Rank by impact and reject before enqueueing.
 
-  Rank 3-7 strong candidates.
+  Rank 3-7 strong candidates using this priority order:
+  1. core behavior or correctness: real bugs, broken workflows, bad state handling, auth/session/cache/data issues, race or stale-state hazards
+  2. high-impact product or operator value: missing workflow pieces, broken UX paths, deployment/runtime blockers, local-dev blockers, config/env traps
+  3. safety or hardening: unsafe IO, unbounded reads, auth validation gaps, bad error handling, data loss risks
+  4. performance or reliability: cache stampedes, N+1 queries, resource leaks, retry/backoff issues, expensive hot paths
+  5. maintainability with measured payoff: small duplication removal only when current code proves risk or friction
+  6. tests/docs only as enablers for higher-impact work or broken command/docs-source contradictions
+  7. pure test gaps or docs polish last; do not present them as primary discoveries when stronger codebase tasks exist
   Show rejected stale, broad, duplicate, risky, or unverified leads.
   Use blocked_by when candidates must run in order.
 
