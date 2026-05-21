@@ -219,10 +219,14 @@ var invalidGeneratedPhrases = []string{
 	"clean up",
 	"cleanup",
 	"etc.",
+	"general polish",
 	"improve overall",
 	"investigate broadly",
 	"make better",
+	"nice to have",
+	"polish",
 	"refactor broadly",
+	"style-only",
 	"x or y",
 }
 

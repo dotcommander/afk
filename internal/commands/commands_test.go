@@ -118,6 +118,8 @@ func TestDiscoverCommandPrintsStubWithoutCreatingQueue(t *testing.T) {
 	require.Contains(t, stdout.String(), "1. Classify the path")
 	require.Contains(t, stdout.String(), "code repo, web app, docs set, knowledge base, media archive, data folder, mixed workspace")
 	require.Contains(t, stdout.String(), "Evidence:, Scope:, Success:, Verify with, and Reject-if:")
+	require.Contains(t, stdout.String(), "First ask: is this value or churn?")
+	require.Contains(t, stdout.String(), "Reject churn even when it is easy.")
 	require.Contains(t, stdout.String(), "Rank 3-7 strong candidates using this priority order")
 	require.Contains(t, stdout.String(), "core behavior or correctness")
 	require.Contains(t, stdout.String(), "pure test gaps or docs polish last")

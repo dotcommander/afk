@@ -270,6 +270,16 @@ func TestValidateAddOptionsChurnPhraseError(t *testing.T) {
 			body:   "[discovery:repo:choice] Evidence: /tmp/repo/file.go:1. Scope: /tmp/repo/file.go. Implement X or Y. Success: one option is implemented. Verify with go test ./... Reject-if: evidence no longer matches",
 			phrase: "x or y",
 		},
+		{
+			name:   "polish",
+			body:   "[discovery:repo:polish] Evidence: /tmp/repo/file.go:1. Scope: /tmp/repo/file.go. Polish the UI. Success: UI is polished. Verify with go test ./... Reject-if: evidence no longer matches",
+			phrase: "polish",
+		},
+		{
+			name:   "nice to have",
+			body:   "[discovery:repo:nice] Evidence: /tmp/repo/file.go:1. Scope: /tmp/repo/file.go. Add a nice to have helper. Success: helper exists. Verify with go test ./... Reject-if: evidence no longer matches",
+			phrase: "nice to have",
+		},
 	}
 
 	for _, tc := range cases {
