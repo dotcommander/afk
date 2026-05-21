@@ -18,17 +18,24 @@ import (
 // validBody is a task body that satisfies validateImportBatch's section checks.
 // It must contain exactly the lines "Success:" and "Verify:" each on their own line.
 // The JSON-escaped form (\\n) is safe to embed inside a JSON string literal.
-const validBody = `do the work\nSuccess:\ndone\nVerify:\nchecked`
+const validBody = `do the work in /tmp/example\nEvidence:\n/tmp/example/input.txt exists\nScope:\n/tmp/example\nSuccess:\ndone\nVerify:\nchecked\nReject-if:\n/tmp/example is unavailable`
 
 // runImport executes `afk import` against a fresh queue at queuePath, feeding
 // input on stdin, and returns stdout and the cobra error (may be *ExitError).
 func runImport(t *testing.T, queuePath, input string) (string, error) {
 	t.Helper()
+	return runImportWithArgs(t, queuePath, input)
+}
+
+func runImportWithArgs(t *testing.T, queuePath, input string, args ...string) (string, error) {
+	t.Helper()
 	stdout, stderr := &bytes.Buffer{}, &bytes.Buffer{}
 	d := testDepsWithWriters(stdout, stderr)
 	d.Stdin = strings.NewReader(input) // import reads d.Stdin, not cobra's stdin
 	root := NewRoot(d, "test")
-	root.SetArgs([]string{"--queue", queuePath, "import"})
+	rootArgs := []string{"--queue", queuePath, "import"}
+	rootArgs = append(rootArgs, args...)
+	root.SetArgs(rootArgs)
 	err := root.Execute()
 	return stdout.String(), err
 }
@@ -127,6 +134,27 @@ func TestImport(t *testing.T) {
 		require.Equal(t, alphaID, deps[0].DependsOnID)
 	})
 
+	t.Run("dry_run_validates_without_writing", func(t *testing.T) {
+		t.Parallel()
+
+		dir := t.TempDir()
+		queuePath := filepath.Join(dir, "queue.db")
+
+		input := `{"tasks":[
+			{"slug":"alpha","body":"` + validBody + `","tags":["spec:demo"]},
+			{"slug":"beta","body":"` + validBody + `","tags":["spec:demo"],"blocked_by":["alpha"]}
+		]}`
+
+		out, err := runImportWithArgs(t, queuePath, input, "--dry-run")
+		require.NoError(t, err)
+
+		lines := parseNDJSON(t, out)
+		require.Len(t, lines, 2)
+		require.Equal(t, "alpha", lines[0]["slug"])
+		require.Equal(t, "beta", lines[1]["slug"])
+		require.Equal(t, 0, countTasks(t, queuePath), "dry-run must not write tasks")
+	})
+
 	t.Run("empty_doc_exit_1", func(t *testing.T) {
 		t.Parallel()
 
@@ -182,6 +210,22 @@ func TestImport(t *testing.T) {
 
 		requireExitCode(t, err, 1)
 		require.True(t, errors.Is(err, task.ErrInvalidPriority), "got %v", err)
+		require.Equal(t, 0, countTasks(t, queuePath))
+	})
+
+	t.Run("generated_import_missing_scope_exit_1", func(t *testing.T) {
+		t.Parallel()
+
+		dir := t.TempDir()
+		queuePath := filepath.Join(dir, "queue.db")
+
+		body := `do planner work in /tmp/example\nEvidence:\n/tmp/example/input.txt exists\nSuccess:\ndone\nVerify:\nchecked\nReject-if:\n/tmp/example is unavailable`
+		input := `{"tasks":[{"slug":"bad-generated","body":"` + body + `","tags":["spec:demo"],"source":"bulk-afk-planner"}]}`
+		_, err := runImport(t, queuePath, input)
+		require.Error(t, err)
+
+		requireExitCode(t, err, 1)
+		require.True(t, errors.Is(err, task.ErrMissingScope), "got %v", err)
 		require.Equal(t, 0, countTasks(t, queuePath))
 	})
 

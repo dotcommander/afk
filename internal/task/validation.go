@@ -135,14 +135,24 @@ func generatedCandidateChecks(opts AddOptions) []error {
 
 // ValidateImportTask checks an import task before it can be persisted.
 func ValidateImportTask(it ImportTask) error {
-	return ValidateAddOptions(AddOptions{
+	opts := AddOptions{
 		Body:        it.Body,
 		Priority:    it.Priority,
 		Tags:        it.Tags,
 		CWD:         it.CWD,
 		Source:      it.Source,
 		ResourceKey: it.ResourceKey,
-	})
+	}
+	if err := ValidateAddOptions(opts); err != nil {
+		return err
+	}
+	if !isPlannerGeneratedImport(it) {
+		return nil
+	}
+	if reasons := plannerImportChecks(opts); len(reasons) > 0 {
+		return fmt.Errorf("%w: %w", ErrInvalidTask, reasons[0])
+	}
+	return nil
 }
 
 // ValidateBody rejects task bodies that are empty, non-actionable placeholders,
@@ -194,6 +204,44 @@ func isGeneratedCandidate(source string, tags []string) bool {
 		}
 	}
 	return false
+}
+
+func isPlannerGeneratedImport(it ImportTask) bool {
+	switch strings.ToLower(strings.TrimSpace(it.Source)) {
+	case "bulk-afk-planner", "spec-planner", "planner", "task-discovery":
+		return true
+	}
+	for _, tag := range it.Tags {
+		normalized := strings.ToLower(strings.TrimSpace(tag))
+		if strings.HasPrefix(normalized, "spec:") {
+			return true
+		}
+		switch normalized {
+		case "planner", "generated", "bulk-afk", "discovery", "candidate", "needs-validation":
+			return true
+		}
+	}
+	return false
+}
+
+func plannerImportChecks(opts AddOptions) []error {
+	var failures []error
+	if !containsFold(opts.Body, "evidence:") {
+		failures = append(failures, ErrMissingEvidence)
+	}
+	if !containsFold(opts.Body, "scope:") {
+		failures = append(failures, ErrMissingScope)
+	}
+	if !containsFold(opts.Body, "reject-if:") {
+		failures = append(failures, ErrMissingRejectIf)
+	}
+	if phrase := firstGeneratedChurnPhrase(opts.Body); phrase != "" {
+		failures = append(failures, &ChurnPhraseError{Phrase: phrase})
+	}
+	if opts.CWD == "" && !hasAbsolutePath(opts.Body) {
+		failures = append(failures, ErrMissingCwd)
+	}
+	return failures
 }
 
 func containsFold(s, substr string) bool {

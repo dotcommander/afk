@@ -51,7 +51,8 @@ an idea.
 3. Check the queue for duplicates.
 4. Convert evidence into queueable mini-specs.
 5. Rank strong candidates by impact and reject weak leads.
-6. Validate task bodies with `afk add --dry-run`.
+6. Validate one-off task bodies with `afk add --dry-run`, or generated batches
+   with `afk import --dry-run`.
 7. Ask one enqueue confirmation.
 
 Quality gates are mandatory before a candidate is shown:
@@ -250,6 +251,27 @@ Use `--blocked-by` when discovery finds an ordered chain. Use the same
 `--resource <kind>:/abs/path` for tasks that would edit the same local path so
 parallel workers do not collide.
 
+When discovery produces a phased or dependent batch, prefer an import document
+instead of looping `afk add`:
+
+```json
+{"tasks":[
+  {
+    "slug":"phase-1-topic",
+    "body":"[discovery:repo:topic] One focused change.\n\nEvidence:\n- /abs/repo/file.go proves the issue.\n\nScope:\n- /abs/repo/file.go\n\nSuccess:\n- The issue is fixed.\n\nVerify:\n- cd /abs/repo && go test ./...\n\nReject-if:\n- The evidence no longer matches.",
+    "cwd":"/abs/repo",
+    "source":"bulk-afk-planner",
+    "tags":["spec:repo-discovery","phase:1","discovery"],
+    "resource_key":"repo:/abs/repo"
+  }
+]}
+```
+
+Validate with `afk import --dry-run < afk-import.json`. Generated import tasks
+with `spec:` tags must include `Evidence:`, `Scope:`, `Success:`, `Verify:`,
+and `Reject-if:` sections, and must carry an absolute `cwd` or absolute paths in
+the body.
+
 Verification examples:
 
 - `repo`: `go test ./...`, `bun test`, `php -l path/file.php`, or a documented
@@ -292,6 +314,7 @@ Reply `add all`, `add 1 3`, or `no`.
 ```
 
 After confirmation, run `afk prompt` first, capture pre/post `afk status`,
-validate selected generated task bodies with `afk add --dry-run`, add only the
-approved high-confidence tasks that validate, and report the created ids. If the
-user declines, leave the queue unchanged.
+validate selected one-off bodies with `afk add --dry-run` or selected batches
+with `afk import --dry-run`, add/import only the approved high-confidence tasks
+that validate, and report the created ids. If the user declines, leave the queue
+unchanged.

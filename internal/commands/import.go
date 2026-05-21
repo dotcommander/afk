@@ -15,7 +15,8 @@ import (
 )
 
 func newImportCmd(d *Deps) *cobra.Command {
-	return &cobra.Command{
+	var dryRun bool
+	cmd := &cobra.Command{
 		Use:   "import",
 		Short: "Bulk-insert tasks from a JSON document on stdin",
 		Args:  cobra.NoArgs,
@@ -24,7 +25,11 @@ func newImportCmd(d *Deps) *cobra.Command {
 			if err := json.NewDecoder(d.Stdin).Decode(&doc); err != nil {
 				return &ExitError{Code: 1, Err: fmt.Errorf("import: decode: %w", err)}
 			}
-			results, err := d.Service.Import(cmd.Context(), doc)
+			importFn := d.Service.Import
+			if dryRun {
+				importFn = d.Service.ValidateImport
+			}
+			results, err := importFn(cmd.Context(), doc)
 			if err != nil {
 				return mapImportErr(err)
 			}
@@ -36,6 +41,8 @@ func newImportCmd(d *Deps) *cobra.Command {
 			return nil
 		},
 	}
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "validate and resolve an import batch without writing tasks")
+	return cmd
 }
 
 func mapImportErr(err error) error {

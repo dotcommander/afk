@@ -14,6 +14,8 @@ Every `afk` subcommand. Group by intent; follow the per-topic doc when you need 
 |---|---|
 | `afk add <body...>` | Append a new pending task and print its id. |
 | `afk add --dry-run <body...>` | Validate a task body and metadata without adding it. |
+| `afk import < file.json` | Bulk-insert tasks from a JSON document on stdin. |
+| `afk import --dry-run < file.json` | Validate and resolve a bulk import without adding tasks. |
 | `afk show <id>` | Show one task. Add `--json` for machine output. |
 | `afk ls` | List tasks. Filter with `--status pending\|working\|done\|failed`. Add `--json`. |
 | `afk status` | Print per-status tallies, plus pending and working task lists. |
@@ -92,3 +94,25 @@ See [workers.md](workers.md).
 | `--dry-run` | Validate without mutating the queue. |
 
 See [tasks.md](tasks.md).
+
+## import JSON
+
+`afk import` accepts:
+
+```json
+{"tasks":[
+  {
+    "slug":"phase-1-example",
+    "body":"Evidence: ... Scope: ... Success: ... Verify: ... Reject-if: ...",
+    "cwd":"/abs/repo",
+    "source":"bulk-afk-planner",
+    "tags":["spec:example","phase:1"],
+    "resource_key":"repo:/abs/repo",
+    "blocked_by":["phase-0-prereq"]
+  }
+]}
+```
+
+Use `blocked_by` with task slugs inside the same document. `import --dry-run`
+checks generated-task validation, duplicate `spec:` tags, dependency resolution,
+and dependency cycles without mutating the queue.

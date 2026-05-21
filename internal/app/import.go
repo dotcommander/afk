@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/dotcommander/afk/internal/store"
 	"github.com/dotcommander/afk/internal/task"
 )
 
@@ -26,18 +27,45 @@ const specTagPrefix = "spec:"
 //     blocked_by slug) → fmt.Errorf (exit 1)
 //   - spec:<slug> already present in queue → *ErrDuplicateSpec (exit 3)
 func (s *Service) Import(ctx context.Context, doc task.ImportDoc) ([]task.ImportResult, error) {
-	if len(doc.Tasks) == 0 {
-		return nil, fmt.Errorf("import: no tasks")
-	}
-	if err := validateImportBatch(doc.Tasks); err != nil {
-		return nil, err
-	}
-	existing, err := s.store.List(ctx)
+	prepared, err := s.prepareImport(ctx, doc)
 	if err != nil {
 		return nil, err
 	}
+	if err := s.store.BulkAdd(ctx, prepared.tasks, prepared.deps); err != nil {
+		return nil, err
+	}
+	return prepared.results, nil
+}
+
+// ValidateImport runs the full import validation, dedupe, ID assignment, and
+// dependency resolution path without writing tasks to the store.
+func (s *Service) ValidateImport(ctx context.Context, doc task.ImportDoc) ([]task.ImportResult, error) {
+	prepared, err := s.prepareImport(ctx, doc)
+	if err != nil {
+		return nil, err
+	}
+	return prepared.results, nil
+}
+
+type preparedImport struct {
+	tasks   []task.Task
+	deps    []task.Dependency
+	results []task.ImportResult
+}
+
+func (s *Service) prepareImport(ctx context.Context, doc task.ImportDoc) (preparedImport, error) {
+	if len(doc.Tasks) == 0 {
+		return preparedImport{}, fmt.Errorf("import: no tasks")
+	}
+	if err := validateImportBatch(doc.Tasks); err != nil {
+		return preparedImport{}, err
+	}
+	existing, err := s.store.List(ctx)
+	if err != nil {
+		return preparedImport{}, err
+	}
 	if slug, ok := findSpecTagConflict(existing, doc.Tasks); ok {
-		return nil, &ErrDuplicateSpec{Slug: slug}
+		return preparedImport{}, &ErrDuplicateSpec{Slug: slug}
 	}
 
 	now := s.now()
@@ -57,17 +85,17 @@ func (s *Service) Import(ctx context.Context, doc task.ImportDoc) ([]task.Import
 
 	deps, err := resolveDeps(doc.Tasks, slugToID, created)
 	if err != nil {
-		return nil, err
+		return preparedImport{}, err
 	}
-	if err := s.store.BulkAdd(ctx, tasks, deps); err != nil {
-		return nil, err
+	if hasDependencyCycle(deps) {
+		return preparedImport{}, store.ErrDependencyCycle
 	}
 
 	results := make([]task.ImportResult, len(tasks))
 	for i := range tasks {
 		results[i] = task.ImportResult{Slug: doc.Tasks[i].Slug, ID: tasks[i].ID}
 	}
-	return results, nil
+	return preparedImport{tasks: tasks, deps: deps, results: results}, nil
 }
 
 // validateImportBatch enforces per-task and batch-level invariants.
@@ -174,4 +202,37 @@ func resolveDeps(items []task.ImportTask, slugToID map[string]string, created st
 		}
 	}
 	return deps, nil
+}
+
+func hasDependencyCycle(deps []task.Dependency) bool {
+	graph := make(map[string][]string)
+	for _, dep := range deps {
+		graph[dep.TaskID] = append(graph[dep.TaskID], dep.DependsOnID)
+	}
+	visiting := make(map[string]bool)
+	visited := make(map[string]bool)
+	var visit func(string) bool
+	visit = func(id string) bool {
+		if visiting[id] {
+			return true
+		}
+		if visited[id] {
+			return false
+		}
+		visiting[id] = true
+		for _, next := range graph[id] {
+			if visit(next) {
+				return true
+			}
+		}
+		visiting[id] = false
+		visited[id] = true
+		return false
+	}
+	for id := range graph {
+		if visit(id) {
+			return true
+		}
+	}
+	return false
 }

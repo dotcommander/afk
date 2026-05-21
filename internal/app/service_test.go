@@ -584,12 +584,12 @@ func TestServiceImportStoresTasksWithSuccessAndVerifySections(t *testing.T) {
 	results, err := svc.Import(ctx, task.ImportDoc{Tasks: []task.ImportTask{
 		{
 			Slug: "inspect",
-			Body: "Inspect import code.\n\nSuccess:\n- Import extension points are listed.\n\nVerify:\n- Include file references in the summary.",
+			Body: "Inspect import code in /tmp/example.\n\nEvidence:\n- /tmp/example/import.go is the import surface.\n\nScope:\n- /tmp/example/import.go.\n\nSuccess:\n- Import extension points are listed.\n\nVerify:\n- Include file references in the summary.\n\nReject-if:\n- /tmp/example/import.go is unavailable.",
 			Tags: []string{"spec:remote-drain"},
 		},
 		{
 			Slug:      "implement",
-			Body:      "Implement import validation.\n\nSuccess:\n- Missing sections are rejected.\n\nVerify:\n- go test ./internal/app/...",
+			Body:      "Implement import validation in /tmp/example.\n\nEvidence:\n- /tmp/example/import.go performs import validation.\n\nScope:\n- /tmp/example/import.go.\n\nSuccess:\n- Missing sections are rejected.\n\nVerify:\n- go test ./internal/app/...\n\nReject-if:\n- /tmp/example/import.go is unavailable.",
 			Tags:      []string{"spec:remote-drain"},
 			BlockedBy: []string{"inspect"},
 		},

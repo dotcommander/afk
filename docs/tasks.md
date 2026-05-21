@@ -32,6 +32,34 @@ afk add --dry-run --source task-discovery --tag discovery --cwd /path/to/repo \
 `--dry-run` applies the same validation as `afk add` but does not create a task.
 Use it before enqueueing generated discovery candidates.
 
+## import a generated batch
+
+Use `afk import` for planned or generated batches, especially when tasks have
+dependencies, phases, or shared resources. Validate first:
+
+```sh
+afk import --dry-run < /abs/repo/.work/afk-specs/my-spec/afk-import.json
+afk import < /abs/repo/.work/afk-specs/my-spec/afk-import.json
+```
+
+The JSON document contains a `tasks` array. Each task may include:
+
+```json
+{
+  "slug": "phase-1-example",
+  "body": "Implement one focused change.\n\nEvidence:\n- /abs/repo/file.go proves the issue.\n\nScope:\n- /abs/repo/file.go\n\nSuccess:\n- The focused change is implemented.\n\nVerify:\n- cd /abs/repo && go test ./...\n\nReject-if:\n- /abs/repo/file.go no longer owns this behavior.",
+  "cwd": "/abs/repo",
+  "source": "bulk-afk-planner",
+  "tags": ["spec:my-spec", "phase:1"],
+  "resource_key": "repo:/abs/repo",
+  "blocked_by": ["phase-0-prereq"]
+}
+```
+
+`blocked_by` references slugs in the same import document. On real import AFK
+resolves those slugs to created task ids. `import --dry-run` performs the same
+validation and dependency resolution but leaves the queue unchanged.
+
 Attach metadata at creation time:
 
 ```sh
