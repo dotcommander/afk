@@ -16,7 +16,7 @@ Every `afk` subcommand. Group by intent; follow the per-topic doc when you need 
 | `afk add --dry-run <body...>` | Validate a task body and metadata without adding it. |
 | `afk show <id>` | Show one task. Add `--json` for machine output. |
 | `afk ls` | List tasks. Filter with `--status pending\|working\|done\|failed`. Add `--json`. |
-| `afk count` | Print per-status tallies. |
+| `afk status` | Print per-status tallies, plus pending and working task lists. |
 | `afk edit <id> <new-body>` | Replace a task body. |
 | `afk rm <id>` | Remove one task. |
 | `afk prune` | Remove `done` and `failed` tasks. Override with `--status <list>`. |

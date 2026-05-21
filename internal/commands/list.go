@@ -57,8 +57,9 @@ func newCountCmd(d *Deps) *cobra.Command {
 	var asJSON bool
 
 	cmd := &cobra.Command{
-		Use:   "count",
-		Short: "Print per-status tallies",
+		Use:    "count",
+		Short:  "Print per-status tallies",
+		Hidden: true,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			tally, err := d.Service.Count(cmd.Context())
 			if err != nil {

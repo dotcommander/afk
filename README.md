@@ -47,7 +47,7 @@ Inspect the queue:
 
 ```sh
 afk ls
-afk count
+afk status
 afk next
 afk explain 1
 ```
@@ -119,7 +119,7 @@ afk add --resource repo:/path/to/project "edit package A"
 afk add --resource repo:/path/to/project "edit package B"
 ```
 
-If one task with that resource is `working`, the next task with the same resource is not ready until the active claim is completed, failed, reset, or its lease expires.
+If one task with that resource is `working`, the next task with the same resource is not ready until the active claim is completed, failed, reset, or requeued after its lease expires.
 
 Readiness applies consistently to:
 
@@ -269,7 +269,7 @@ A `--queue`/`AFK_QUEUE` path with a non-`.sqlite` extension is normalized to a s
 | `afk add --dry-run <body>` | Validate a task body and metadata without adding it. |
 | `afk ls [--status STATUS] [--json]` | List tasks, optionally filtered by status. |
 | `afk show <id> [--json]` | Show one task. |
-| `afk count` | Tally tasks per status. |
+| `afk status` | Tally tasks per status, plus pending and working task lists. |
 | `afk next` | Show the task `afk pop` would claim without mutation. |
 | `afk ready [--json]` | List pending tasks ready to run. |
 | `afk why <id> [--json]` | Explain why a task is or is not ready. |

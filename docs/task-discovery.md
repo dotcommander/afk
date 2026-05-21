@@ -94,7 +94,7 @@ find . -maxdepth 2 -type d | sed 's#^\./##' | sort | head -80
 git status --porcelain=v2
 git diff --stat HEAD
 rg -n "TODO|FIXME|HACK|XXX|OPTIMIZE" --glob '!vendor/**' --glob '!node_modules/**'
-afk count
+afk status
 afk ready
 afk ls --status failed --json
 afk ls --status working --json
@@ -291,7 +291,7 @@ Interactive discovery reports should use:
 Reply `add all`, `add 1 3`, or `no`.
 ```
 
-After confirmation, run `afk prompt` first, capture pre/post `afk count`,
+After confirmation, run `afk prompt` first, capture pre/post `afk status`,
 validate selected generated task bodies with `afk add --dry-run`, add only the
 approved high-confidence tasks that validate, and report the created ids. If the
 user declines, leave the queue unchanged.

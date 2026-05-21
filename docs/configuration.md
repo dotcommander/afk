@@ -19,9 +19,9 @@ afk doctor
 The first option that resolves to a non-empty value wins.
 
 ```sh
-afk --queue /tmp/tasks.sqlite count       # explicit flag
-AFK_QUEUE=/tmp/tasks.sqlite afk count     # environment
-afk count                                 # default
+afk --queue /tmp/tasks.sqlite status      # explicit flag
+AFK_QUEUE=/tmp/tasks.sqlite afk status    # environment
+afk status                                # default
 ```
 
 ## queue path normalization

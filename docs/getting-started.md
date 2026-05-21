@@ -36,7 +36,7 @@ afk add "fix the failing queue test"
 
 ```sh
 afk ls
-afk count
+afk status
 afk next
 ```
 

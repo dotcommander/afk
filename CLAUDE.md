@@ -40,7 +40,7 @@ No Makefile. The committed `afk` binary at the repo root is a build artifact, no
 
 Registered in `internal/commands/root.go` (`func NewRoot`). Categories:
 
-- **Inspection**: `ls`, `show`, `count`, `next`, `ready`, `why`, `explain`
+- **Inspection**: `ls`, `show`, `next`, `ready`, `why`, `explain`
 - **Scheduling**: `deps {add,rm,ls}`, `block`, `unblock`
 - **Lifecycle**: `add`, `done`, `fail`, `reset`, `retry`, `edit`, `rm`, `prune`
 - **Worker**: `pop`, `run`, `heartbeat`, `requeue-stale`
