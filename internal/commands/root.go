@@ -71,7 +71,7 @@ func NewRoot(d *Deps, version string) *cobra.Command {
 		newBlockCmd(d),
 		newUnblockCmd(d),
 		newResetCmd(d),
-		newTopCmd(d),
+		newPromoteCmd(d),
 		newRmCmd(d),
 		newPruneCmd(d),
 		newPopCmd(d),

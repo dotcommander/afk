@@ -50,11 +50,12 @@ func newResetCmd(d *Deps) *cobra.Command {
 	}
 }
 
-func newTopCmd(d *Deps) *cobra.Command {
+func newPromoteCmd(d *Deps) *cobra.Command {
 	return &cobra.Command{
-		Use:   "top <id>",
-		Short: "Promote a pending task to the top of its priority group",
-		Args:  cobra.ExactArgs(1),
+		Use:     "promote <id>",
+		Aliases: []string{"top"},
+		Short:   "Promote a pending task to the top of its priority group",
+		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := d.Service.Promote(cmd.Context(), args[0]); err != nil {
 				return err
