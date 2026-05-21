@@ -167,19 +167,19 @@ func ValidateBody(body string) error {
 			return invalid("not actionable software work")
 		}
 	}
-	for _, phrase := range invalidAutonomyPhrases {
-		if strings.Contains(normalized, phrase) {
-			return invalid("requires human-in-the-loop decision")
-		}
+	checks := []struct {
+		phrases []string
+		reason  string
+	}{
+		{invalidAutonomyPhrases, "requires human-in-the-loop decision"},
+		{invalidVagueSoftwarePhrases, "vague or non-actionable software work"},
+		{invalidBodyPhrases, "physical or personal-service request"},
 	}
-	for _, phrase := range invalidVagueSoftwarePhrases {
-		if strings.Contains(normalized, phrase) {
-			return invalid("vague or non-actionable software work")
-		}
-	}
-	for _, phrase := range invalidBodyPhrases {
-		if strings.Contains(normalized, phrase) {
-			return invalid("physical or personal-service request")
+	for _, check := range checks {
+		for _, phrase := range check.phrases {
+			if strings.Contains(normalized, phrase) {
+				return invalid(check.reason)
+			}
 		}
 	}
 	return nil
