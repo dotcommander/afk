@@ -45,7 +45,7 @@ func newServerFixture(t *testing.T) (http.Handler, *app.Service, *store.SQLiteSt
 	require.NoError(t, svc.Done(ctx, doneID, ""))
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	srv := server.New(svc, logger, "127.0.0.1:0")
+	srv := server.New(svc, logger, "127.0.0.1:0", false)
 	return srv.Handler(), svc, st
 }
 

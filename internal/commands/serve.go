@@ -19,6 +19,7 @@ var loopbackHosts = map[string]bool{
 
 func newServeCmd(d *Deps) *cobra.Command {
 	var addr string
+	var open bool
 
 	cmd := &cobra.Command{
 		Use:   "serve",
@@ -36,11 +37,12 @@ func newServeCmd(d *Deps) *cobra.Command {
 			if _, err := fmt.Fprintf(d.Stdout, "afk dashboard: http://%s/\n", addr); err != nil {
 				return fmt.Errorf("serve: write banner: %w", err)
 			}
-			srv := server.New(d.Service, d.Logger, addr)
+			srv := server.New(d.Service, d.Logger, addr, open)
 			return srv.Run(cmd.Context())
 		},
 	}
 
 	cmd.Flags().StringVar(&addr, "addr", "127.0.0.1:1969", "address to listen on")
+	cmd.Flags().BoolVar(&open, "open", true, "open the dashboard in a browser on start")
 	return cmd
 }

@@ -307,7 +307,7 @@ afk serve
 
 Open `http://127.0.0.1:1969/` in a browser to see task status, pending and working tasks, per-task history, and readiness explanations. You can mark tasks done, fail them, retry them, or prune the queue from the UI.
 
-By default the dashboard binds to `127.0.0.1` (loopback only). Task bodies may contain sensitive content, so the server warns if you bind to a non-loopback address:
+`afk serve` opens the dashboard in your browser by default; `--open=false` suppresses it (headless / SSH). By default the dashboard binds to `127.0.0.1` (loopback only). Task bodies may contain sensitive content, so the server warns if you bind to a non-loopback address:
 
 ```sh
 afk serve --addr 0.0.0.0:1969   # prints a warning before starting

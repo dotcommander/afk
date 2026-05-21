@@ -84,7 +84,7 @@ SQLite is the only queue backend. A `--queue`/`AFK_QUEUE` path with a non-`.sqli
 - **Worker contract**: the command run by `afk run` must explicitly call `afk done <id>` or `afk fail <id>`. If the subprocess exits while the task is still `working`, the runner marks it failed.
 - **Readiness has one authority**: `store.Ready` (SQL) is the single source of truth for whether a task is ready. `ready`, `next`, `pop`, and `run` consult it directly; `why` consults it for the ready/not-ready verdict and additionally derives human-readable *reasons* via `app.notReadyReasons` — the reasons layer explains a "not ready" verdict, it does not decide it. Change the readiness predicate only in `store.Ready`.
 - **No viper.** Queue path comes from flag/env/default — there is no config file layer. Don't add one without a reason.
-- **`afk serve` binds `127.0.0.1` by default** (loopback only — task bodies may be sensitive); supplying a non-loopback `--addr` prints a warning to stderr. The front-end is a single `go:embed`'d `web/index.html` (no build step required).
+- **`afk serve` binds `127.0.0.1` by default** (loopback only — task bodies may be sensitive); supplying a non-loopback `--addr` prints a warning to stderr. The front-end is a single `go:embed`'d `web/index.html` (no build step required); opens a browser tab by default (`--open=false` to suppress).
 
 ## Conventions
 
