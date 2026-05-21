@@ -247,7 +247,7 @@ Supported metadata flags:
 | `--after ID` | Alias for `--blocked-by ID`. |
 
 Priority applies only among ready tasks. It does not bypass dependencies,
-manual blocks, resource locks, or non-pending status. Use `afk top <id>` to
+manual blocks, resource locks, or non-pending status. Use `afk promote <id>` to
 promote a pending task ahead of peers with the same effective priority without
 changing its priority metadata.
 
@@ -278,7 +278,7 @@ A `--queue`/`AFK_QUEUE` path with a non-`.sqlite` extension is normalized to a s
 | `afk deps ls <id> [--json]` | List dependencies. |
 | `afk block <id> <reason>` | Manually block a pending task from scheduling. |
 | `afk unblock <id>` | Remove a manual block. |
-| `afk top <id>` | Promote a pending task ahead of peers with the same effective priority. |
+| `afk promote <id>` | Promote a pending task ahead of peers with the same effective priority. |
 | `afk pop [--lease DURATION] [--worker ID]` | Atomically claim the next ready task and print it as JSON. |
 | `afk run --exec TEMPLATE [--limit N] [--poison-guard]` | Claim ready tasks and run a shell command template; `--poison-guard` blocks tasks that have already failed 3 times. |
 | `afk heartbeat <id> --worker ID [--lease DURATION]` | Extend a worker-owned task lease. |

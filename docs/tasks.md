@@ -72,10 +72,10 @@ Promote an existing pending task ahead of peers with the same effective
 priority:
 
 ```sh
-afk top 42
+afk promote 42
 ```
 
-`afk top` does not change the task's priority metadata. Use it when one pending
+`afk promote` does not change the task's priority metadata. Use it when one pending
 task should be handled before other tasks with the same priority rank.
 
 ## inspect tasks

@@ -562,7 +562,7 @@ func TestPrioritySchedulingCommands(t *testing.T) {
 	require.Equal(t, urgent, popped["id"])
 }
 
-func TestTopCommandPromotesPendingTask(t *testing.T) {
+func TestPromoteCommandPromotesPendingTask(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
@@ -584,7 +584,7 @@ func TestTopCommandPromotesPendingTask(t *testing.T) {
 	second := strings.TrimSpace(run("add", "--no-cwd", "second"))
 	urgent := strings.TrimSpace(run("add", "--no-cwd", "--priority", "urgent", "urgent"))
 
-	require.Equal(t, second+"\n", run("top", second))
+	require.Equal(t, second+"\n", run("promote", second))
 	var next map[string]any
 	require.NoError(t, json.Unmarshal([]byte(strings.TrimSpace(run("next", "--json"))), &next))
 	require.Equal(t, urgent, next["id"], "promotion must not outrank urgent priority")
@@ -598,12 +598,20 @@ func TestTopCommandPromotesPendingTask(t *testing.T) {
 	stdout.Reset()
 	stderr.Reset()
 	root := NewRoot(d, "test")
-	root.SetArgs([]string{"--queue", queuePath, "top", second})
+	root.SetArgs([]string{"--queue", queuePath, "promote", second})
 	err := root.Execute()
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "invalid state")
 
 	require.NotEmpty(t, first)
+
+	t.Run("top alias routes to promote", func(t *testing.T) {
+		t.Parallel()
+		third := strings.TrimSpace(run("add", "--no-cwd", "third"))
+		fourth := strings.TrimSpace(run("add", "--no-cwd", "fourth"))
+		require.Equal(t, fourth+"\n", run("top", fourth))
+		require.NotEmpty(t, third)
+	})
 }
 
 func TestBlockCommands(t *testing.T) {

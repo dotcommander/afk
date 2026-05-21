@@ -32,7 +32,7 @@ Every `afk` subcommand. Group by intent; follow the per-topic doc when you need 
 | `afk deps ls <id>` | List dependencies. Add `--json`. |
 | `afk block <id> <reason>` | Manually block a pending task. |
 | `afk unblock <id>` | Remove a manual block. |
-| `afk top <id>` | Promote a pending task ahead of peers with the same effective priority. |
+| `afk promote <id>` | Promote a pending task ahead of peers with the same effective priority. |
 
 See [scheduling.md](scheduling.md).
 
