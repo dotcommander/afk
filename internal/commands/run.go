@@ -13,6 +13,7 @@ func newRunCmd(d *Deps) *cobra.Command {
 	var opts runner.Options
 	var lease string
 	var maxMinutes int
+	var poisonGuard bool
 
 	cmd := &cobra.Command{
 		Use:   "run",
@@ -29,6 +30,9 @@ func newRunCmd(d *Deps) *cobra.Command {
 			opts.QueuePath = d.QueuePaths.SQLitePath
 			opts.Stdout = d.Stdout
 			opts.Stderr = d.Stderr
+			if poisonGuard {
+				return runner.Drain(cmd.Context(), d.Service, opts)
+			}
 			return runner.Run(cmd.Context(), d.Service, opts)
 		},
 	}
@@ -39,6 +43,7 @@ func newRunCmd(d *Deps) *cobra.Command {
 	cmd.Flags().StringVar(&opts.WorkerID, "worker", "", "worker id for claims and heartbeats")
 	cmd.Flags().StringVar(&opts.ExecTemplate, "exec", "", "shell command template using {{id}}, {{cwd}}, and {{body}}")
 	cmd.Flags().IntVar(&opts.Workers, "workers", 1, "number of parallel workers; only 1 is supported in this version")
+	cmd.Flags().BoolVar(&poisonGuard, "poison-guard", false, "before each claim, block any ready task that has already failed 3 times so a repeatedly failing task cannot stall the run")
 	return cmd
 }
 
@@ -52,8 +57,9 @@ func newDrainCmd(d *Deps) *cobra.Command {
 	var maxMinutes int
 
 	cmd := &cobra.Command{
-		Use:   "drain",
-		Short: "Claim and execute ready tasks in a bounded loop with a poison guard",
+		Use:    "drain",
+		Short:  "Claim and execute ready tasks in a bounded loop with a poison guard",
+		Hidden: true,
 		Long: "Claim ready tasks and run the --exec worker command in a loop until " +
 			"the queue empties or --limit tasks are processed (default 10). Before " +
 			"each claim, any ready task that has already failed 3 times is blocked " +

@@ -1159,6 +1159,47 @@ func TestRejectedLsEmpty(t *testing.T) {
 	require.Contains(t, stdout.String(), "no rejected tasks")
 }
 
+func TestRunPoisonGuardBlocksRepeatedlyFailedTask(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	queuePath := filepath.Join(dir, "tasks.sqlite")
+	stdout, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	d := testDepsWithWriters(stdout, stderr)
+
+	run := func(args ...string) string {
+		t.Helper()
+		stdout.Reset()
+		stderr.Reset()
+		root := NewRoot(d, "test")
+		root.SetArgs(append([]string{"--queue", queuePath}, args...))
+		require.NoError(t, root.Execute(), "stderr: %s", stderr.String())
+		return stdout.String()
+	}
+
+	// Seed a task and drive it to 3 failed attempts via pop+fail cycles.
+	// failedAttemptCount reads task_attempts rows, which are only created on
+	// Pop (claim), not on bare `afk fail`.
+	id := strings.TrimSpace(run("add", "--no-cwd", "poison task"))
+	for range 3 {
+		run("pop", "--worker", "guard-worker", "--lease", "1m")
+		run("fail", id, "boom")
+		run("reset", id)
+	}
+	require.Contains(t, run("ready"), id)
+
+	// run --poison-guard must sweep the poison task before claiming it.
+	// Because the only ready task is poisoned, Drain blocks it and returns
+	// immediately (empty queue after sweep) — no exec is invoked.
+	run("run", "--poison-guard", "--exec", "true", "--worker", "guard-1", "--lease", "1m")
+
+	// The task must be blocked (manually blocked by the poison guard), not working.
+	why := run("why", id)
+	require.Contains(t, why, "Ready: false")
+	require.Contains(t, why, "poison")
+	require.NotContains(t, run("show", id), "Status: working")
+}
+
 func TestAddDiagnoseDoesNotInsertRow(t *testing.T) {
 	t.Parallel()
 

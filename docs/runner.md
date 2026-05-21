@@ -43,6 +43,7 @@ The runner keeps claiming tasks until it processes five tasks or thirty minutes 
 | `--max-minutes N` | `0` | Stop claiming after this many minutes. `0` means no time limit. |
 | `--lease DURATION` | `30m` | Lease duration for each claim and heartbeat. |
 | `--worker ID` | `hostname:pid` | Worker id recorded on attempts and heartbeats. |
+| `--poison-guard` | `false` | Before each claim, block any ready task that has already failed 3 times so a repeatedly failing ("poison") task cannot stall the run. |
 | `--workers N` | `1` | Reserved for parallel runners. Only `1` is supported. |
 
 ## template variables

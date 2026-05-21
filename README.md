@@ -280,7 +280,7 @@ A `--queue`/`AFK_QUEUE` path with a non-`.sqlite` extension is normalized to a s
 | `afk unblock <id>` | Remove a manual block. |
 | `afk top <id>` | Promote a pending task ahead of peers with the same effective priority. |
 | `afk pop [--lease DURATION] [--worker ID]` | Atomically claim the next ready task and print it as JSON. |
-| `afk run --exec TEMPLATE [--limit N]` | Claim ready tasks and run a shell command template. |
+| `afk run --exec TEMPLATE [--limit N] [--poison-guard]` | Claim ready tasks and run a shell command template; `--poison-guard` blocks tasks that have already failed 3 times. |
 | `afk heartbeat <id> --worker ID [--lease DURATION]` | Extend a worker-owned task lease. |
 | `afk requeue-stale [--older-than DURATION]` | Reset stale `working` tasks to `pending`. |
 | `afk done <id>` | Mark a task done. |
