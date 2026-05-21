@@ -25,8 +25,7 @@ Every `afk` subcommand. Group by intent; follow the per-topic doc when you need 
 
 | Command | Behavior |
 |---|---|
-| `afk next` | Print the first ready task without claiming it. |
-| `afk ready` | List pending tasks ready to run. Add `--json`. |
+| `afk ready [--limit N]` | List pending tasks ready to run. `--limit 1` prints just the first ready task. Add `--json`. |
 | `afk why <id>` | Explain a task's readiness gate state. Add `--json`. |
 | `afk deps add <id> --blocked-by <other-id>` | Add a dependency. |
 | `afk deps rm <id> --blocked-by <other-id>` | Remove a dependency. |

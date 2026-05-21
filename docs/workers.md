@@ -21,7 +21,7 @@ afk pop --lease 30m --worker codex:1
 3. Records the worker id, the lease expiration, and a new attempt.
 4. Prints the claimed task as JSON.
 
-If no task is ready, `afk pop` exits without claiming anything. Use `afk next` first to preview without mutation.
+If no task is ready, `afk pop` exits without claiming anything. Use `afk ready --limit 1` first to preview without mutation.
 
 ## leases
 

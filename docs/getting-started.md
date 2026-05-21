@@ -37,10 +37,10 @@ afk add "fix the failing queue test"
 ```sh
 afk ls
 afk status
-afk next
+afk ready --limit 1
 ```
 
-`afk next` previews the task `afk pop` will claim without mutating anything.
+`afk ready --limit 1` shows the task `afk pop` will claim next without mutating anything.
 
 ## claim and finish
 

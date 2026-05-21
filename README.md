@@ -48,7 +48,7 @@ Inspect the queue:
 ```sh
 afk ls
 afk status
-afk next
+afk ready --limit 1
 afk explain 1
 ```
 
@@ -125,7 +125,7 @@ Readiness applies consistently to:
 
 - `afk ready`
 - `afk why <id>`
-- `afk next`
+- `afk ready --limit 1`
 - `afk pop`
 - `afk run`
 
@@ -270,8 +270,7 @@ A `--queue`/`AFK_QUEUE` path with a non-`.sqlite` extension is normalized to a s
 | `afk ls [--status STATUS] [--json]` | List tasks, optionally filtered by status. |
 | `afk show <id> [--json]` | Show one task. |
 | `afk status` | Tally tasks per status, plus pending and working task lists. |
-| `afk next` | Show the task `afk pop` would claim without mutation. |
-| `afk ready [--json]` | List pending tasks ready to run. |
+| `afk ready [--limit N] [--json]` | List tasks ready to run; `--limit 1` shows just the next one. |
 | `afk why <id> [--json]` | Explain why a task is or is not ready. |
 | `afk explain <id> [--json]` | Show task metadata, events, and attempts. |
 | `afk deps add <id> --blocked-by <other-id>` | Add a dependency. |

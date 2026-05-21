@@ -66,7 +66,7 @@ Explicit metadata flags override inferred defaults. Pass `--no-cwd` when the tas
 Priority applies only among tasks that are already ready. It does not bypass
 dependencies, manual blocks, resource locks, or non-pending status. `afk ls`
 keeps insertion order for history/inspection; scheduler commands such as
-`ready`, `next`, `pop`, and `run --dry-run` use priority order.
+`ready`, `pop`, and `run --dry-run` use priority order.
 
 Promote an existing pending task ahead of peers with the same effective
 priority:

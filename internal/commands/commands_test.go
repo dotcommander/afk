@@ -930,6 +930,52 @@ func testDepsWithWriters(stdout, stderr *bytes.Buffer) *Deps {
 	}
 }
 
+func TestReadyLimitCapsOutput(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	queuePath := filepath.Join(dir, "tasks.sqlite")
+	stdout, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	d := testDepsWithWriters(stdout, stderr)
+
+	run := func(args ...string) string {
+		t.Helper()
+		stdout.Reset()
+		stderr.Reset()
+		root := NewRoot(d, "test")
+		root.SetArgs(append([]string{"--queue", queuePath}, args...))
+		require.NoError(t, root.Execute(), "stderr: %s", stderr.String())
+		return stdout.String()
+	}
+
+	// Seed 3 ready tasks (no dependencies → all ready immediately).
+	id1 := strings.TrimSpace(run("add", "--no-cwd", "task-one"))
+	id2 := strings.TrimSpace(run("add", "--no-cwd", "task-two"))
+	id3 := strings.TrimSpace(run("add", "--no-cwd", "task-three"))
+
+	// Without --limit all 3 tasks appear.
+	all := run("ready", "--json")
+	allLines := strings.Split(strings.TrimSpace(all), "\n")
+	require.Len(t, allLines, 3, "expected 3 ready tasks without --limit")
+
+	// --limit 0 is the no-limit sentinel; all 3 should still appear.
+	noLimit := run("ready", "--json", "--limit", "0")
+	noLimitLines := strings.Split(strings.TrimSpace(noLimit), "\n")
+	require.Len(t, noLimitLines, 3, "expected 3 ready tasks with --limit 0")
+
+	// --limit 1 must cap to exactly one task.
+	capped := run("ready", "--json", "--limit", "1")
+	cappedLines := strings.Split(strings.TrimSpace(capped), "\n")
+	require.Len(t, cappedLines, 1, "expected exactly 1 task with --limit 1")
+
+	var first map[string]any
+	require.NoError(t, json.Unmarshal([]byte(cappedLines[0]), &first))
+	// The returned task must be one of the three seeded tasks.
+	returnedID, ok := first["id"].(string)
+	require.True(t, ok)
+	require.Contains(t, []string{id1, id2, id3}, returnedID)
+}
+
 func TestNextJSON(t *testing.T) {
 	t.Parallel()
 

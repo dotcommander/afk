@@ -11,6 +11,7 @@ import (
 
 func newReadyCmd(d *Deps) *cobra.Command {
 	var asJSON bool
+	var limit int
 	cmd := &cobra.Command{
 		Use:   "ready",
 		Short: "List tasks ready to run",
@@ -19,10 +20,14 @@ func newReadyCmd(d *Deps) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			if limit > 0 && len(tasks) > limit {
+				tasks = tasks[:limit]
+			}
 			return output.WriteList(d.Stdout, tasks, asJSON)
 		},
 	}
 	cmd.Flags().BoolVar(&asJSON, "json", false, "emit JSONL output")
+	cmd.Flags().IntVar(&limit, "limit", 0, "maximum tasks to list; 0 means no limit")
 	return cmd
 }
 

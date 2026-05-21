@@ -97,8 +97,9 @@ func newNextCmd(d *Deps) *cobra.Command {
 	var asJSON bool
 
 	cmd := &cobra.Command{
-		Use:   "next",
-		Short: "Print the first pending task as JSON",
+		Use:    "next",
+		Short:  "Print the first pending task as JSON",
+		Hidden: true,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			next, err := d.Service.Next(cmd.Context())
 			if err != nil {

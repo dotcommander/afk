@@ -59,7 +59,7 @@ afk add --resource repo:/Users/you/code/afk "edit package A"
 afk add --resource repo:/Users/you/code/afk "edit package B"
 ```
 
-When one task with that resource key is `working`, the other task with the same key is not ready. The lock releases when the active claim completes, fails, resets, or its lease expires.
+When one task with that resource key is `working`, the other task with the same key is not ready. The lock releases when the active claim completes, fails, resets, or is requeued after its lease expires.
 
 Resource keys are free-form. Use stable strings like `repo:<path>`, `service:<name>`, or `db:<host>`.
 
@@ -72,13 +72,13 @@ afk why 43
 afk why 43 --json
 ```
 
-`afk ready` lists `pending` tasks the scheduler will claim next. `afk why` explains the gate state for one task — whether it is ready, blocked by a dependency, manually blocked, waiting on a resource lock, or held by a lease.
+`afk ready` lists `pending` tasks the scheduler will claim next. `afk why` explains the gate state for one task — whether it is ready, blocked by a dependency, manually blocked, or waiting on a resource lock.
 
 Readiness applies consistently to:
 
 - `afk ready` — listing
 - `afk why <id>` — explanation
-- `afk next` — preview
+- `afk ready --limit 1` — preview the next ready task
 - `afk pop` — claim
 - `afk run` — runner loop claim
 
