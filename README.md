@@ -296,6 +296,29 @@ A `--queue`/`AFK_QUEUE` path with a non-`.sqlite` extension is normalized to a s
 | `afk doctor` | Check queue health and installation basics. |
 | `afk discover` | Print the task-discovery workflow stub without opening or creating the queue. |
 
+## Web Dashboard
+
+`afk serve` starts a local web dashboard that gives you a live view of the queue and lets you take actions on tasks without dropping to the command line.
+
+```sh
+afk serve
+# afk dashboard: http://127.0.0.1:1969/
+```
+
+Open `http://127.0.0.1:1969/` in a browser to see task status, pending and working tasks, per-task history, and readiness explanations. You can mark tasks done, fail them, retry them, or prune the queue from the UI.
+
+By default the dashboard binds to `127.0.0.1` (loopback only). Task bodies may contain sensitive content, so the server warns if you bind to a non-loopback address:
+
+```sh
+afk serve --addr 0.0.0.0:1969   # prints a warning before starting
+```
+
+Flag:
+
+| Flag | Default | Behavior |
+|---|---|---|
+| `--addr HOST:PORT` | `127.0.0.1:1969` | Address to listen on. |
+
 ## Architecture
 
 - `cmd/afk`: process setup and signal-aware command execution.

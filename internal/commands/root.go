@@ -77,6 +77,7 @@ func NewRoot(d *Deps, version string) *cobra.Command {
 		newPopCmd(d),
 		newRunCmd(d),
 		newDrainCmd(d),
+		newServeCmd(d),
 		newRetryCmd(d),
 		newRequeueStaleCmd(d),
 		newHeartbeatCmd(d),

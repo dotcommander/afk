@@ -1,0 +1,1320 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>afk · MISSION CONTROL</title>
+<style>
+/* ─── CUSTOM PROPERTIES ─────────────────────────────────────────── */
+:root {
+  --bg:         #10141c;
+  --panel:      #1b2433;
+  --panel-hi:   #222d40;
+  --chrome:     #c7ccd6;
+  --chrome-dim: #5c6375;
+  --text:       #e8e3d3;
+  --text-dim:   #8a93a5;
+  --orange:     #ff6b35;
+  --green:      #5af78e;
+  --amber:      #f6c453;
+  --blue:       #5a9bd4;
+  --red:        #ff5470;
+  --bevel-hi:   rgba(255,255,255,0.12);
+  --bevel-lo:   rgba(0,0,0,0.5);
+  --font:       'SF Mono','JetBrains Mono','Cascadia Code',Menlo,Consolas,monospace;
+  --radius:     4px;
+  --gap:        16px;
+}
+
+/* ─── RESET ─────────────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html { font-size: 14px; }
+body {
+  font-family: var(--font);
+  background: var(--bg);
+  color: var(--text);
+  min-height: 100vh;
+  overflow-x: hidden;
+  position: relative;
+}
+
+/* ─── CRT OVERLAY ────────────────────────────────────────────────── */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 9999;
+  background: repeating-linear-gradient(
+    0deg,
+    transparent,
+    transparent 2px,
+    rgba(0,0,0,0.04) 2px,
+    rgba(0,0,0,0.04) 4px
+  );
+}
+body::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 9998;
+  background: radial-gradient(ellipse at center, transparent 60%, rgba(0,0,0,0.5) 100%);
+}
+
+/* ─── HEADER ─────────────────────────────────────────────────────── */
+#header {
+  display: flex;
+  align-items: center;
+  gap: var(--gap);
+  padding: 12px 24px;
+  background: var(--panel);
+  border-bottom: 2px solid var(--chrome-dim);
+  box-shadow:
+    inset 0 1px 0 var(--bevel-hi),
+    0 2px 8px rgba(0,0,0,0.6);
+  position: sticky;
+  top: 0;
+  z-index: 100;
+}
+
+.wordmark {
+  font-size: 1.4rem;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--orange);
+  text-shadow: 0 0 12px rgba(255,107,53,0.6), 0 0 24px rgba(255,107,53,0.3);
+  user-select: none;
+}
+.wordmark span {
+  color: var(--chrome);
+  font-size: 0.7em;
+  letter-spacing: 0.08em;
+}
+
+nav {
+  display: flex;
+  gap: 4px;
+}
+.nav-btn {
+  background: var(--panel-hi);
+  border: 1px solid var(--chrome-dim);
+  border-top-color: var(--bevel-hi);
+  border-left-color: var(--bevel-hi);
+  border-radius: var(--radius);
+  color: var(--text-dim);
+  font-family: var(--font);
+  font-size: 0.75rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  padding: 6px 14px;
+  cursor: pointer;
+  transition: color 0.1s, background 0.1s;
+  text-decoration: none;
+  display: inline-block;
+}
+.nav-btn:hover { color: var(--text); background: #2a3549; }
+.nav-btn.active {
+  color: var(--orange);
+  border-color: var(--orange);
+  box-shadow: 0 0 6px rgba(255,107,53,0.3), inset 0 0 4px rgba(255,107,53,0.08);
+}
+
+.header-spacer { flex: 1; }
+
+/* ─── RADAR BLIP ─────────────────────────────────────────────────── */
+#telemetry {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.7rem;
+  letter-spacing: 0.15em;
+  color: var(--green);
+  text-shadow: 0 0 6px var(--green);
+  user-select: none;
+}
+#radar-dot {
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  background: var(--green);
+  box-shadow: 0 0 6px var(--green);
+  animation: radar-idle 3s ease-in-out infinite;
+}
+#radar-dot.blip {
+  animation: radar-blip 0.4s ease-out forwards;
+}
+@keyframes radar-idle {
+  0%,100% { opacity: 1; }
+  50%      { opacity: 0.4; }
+}
+@keyframes radar-blip {
+  0%   { transform: scale(1);   opacity: 1; box-shadow: 0 0 6px var(--green); }
+  40%  { transform: scale(2.2); opacity: 1; box-shadow: 0 0 18px var(--green), 0 0 32px rgba(90,247,142,0.5); }
+  100% { transform: scale(1);   opacity: 0.6; box-shadow: 0 0 6px var(--green); }
+}
+
+#clock {
+  font-size: 0.75rem;
+  letter-spacing: 0.1em;
+  color: var(--text-dim);
+  min-width: 80px;
+  text-align: right;
+}
+
+/* ─── MAIN LAYOUT ────────────────────────────────────────────────── */
+#app {
+  padding: 24px;
+  max-width: 1400px;
+  margin: 0 auto;
+}
+
+/* ─── SECTION HEADING ────────────────────────────────────────────── */
+.section-heading {
+  font-size: 0.7rem;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  margin-bottom: 12px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.section-heading::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: linear-gradient(to right, var(--chrome-dim), transparent);
+}
+
+/* ─── PANEL CARD ─────────────────────────────────────────────────── */
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--chrome-dim);
+  border-top-color: var(--bevel-hi);
+  border-left-color: var(--bevel-hi);
+  border-radius: var(--radius);
+  box-shadow:
+    inset 0 1px 0 var(--bevel-hi),
+    0 4px 16px rgba(0,0,0,0.4);
+  padding: 16px;
+}
+
+/* ─── STATUS LAMPS ───────────────────────────────────────────────── */
+.lamp {
+  width: 10px; height: 10px;
+  border-radius: 50%;
+  display: inline-block;
+  flex-shrink: 0;
+}
+.lamp-pending { background: var(--amber); box-shadow: 0 0 4px var(--amber); }
+.lamp-working {
+  background: var(--green);
+  box-shadow: 0 0 6px var(--green), 0 0 12px rgba(90,247,142,0.4);
+  animation: lamp-pulse 1.4s ease-in-out infinite;
+}
+.lamp-done { background: var(--blue); box-shadow: 0 0 4px var(--blue); }
+.lamp-failed {
+  background: var(--red);
+  box-shadow: 0 0 6px var(--red);
+  animation: lamp-blink 1.8s ease-in-out infinite;
+}
+@keyframes lamp-pulse {
+  0%,100% { box-shadow: 0 0 6px var(--green), 0 0 12px rgba(90,247,142,0.4); }
+  50%      { box-shadow: 0 0 12px var(--green), 0 0 28px rgba(90,247,142,0.7); }
+}
+@keyframes lamp-blink {
+  0%,45%,55%,100% { opacity: 1; }
+  50%              { opacity: 0.2; }
+}
+
+/* ─── GAUGE CARDS (MISSION CONTROL) ─────────────────────────────── */
+.gauges {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: var(--gap);
+  margin-bottom: 24px;
+}
+.gauge {
+  background: var(--panel);
+  border: 1px solid var(--chrome-dim);
+  border-top-color: var(--bevel-hi);
+  border-left-color: var(--bevel-hi);
+  border-radius: var(--radius);
+  padding: 20px 16px 16px;
+  box-shadow:
+    inset 0 1px 0 var(--bevel-hi),
+    inset 0 0 40px rgba(0,0,0,0.2),
+    0 4px 16px rgba(0,0,0,0.5);
+  cursor: pointer;
+  transition: border-color 0.15s, box-shadow 0.15s;
+  position: relative;
+  overflow: hidden;
+}
+.gauge:hover { border-color: var(--chrome); }
+.gauge-label {
+  font-size: 0.65rem;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  margin-bottom: 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.gauge-count {
+  font-size: 3rem;
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: -0.02em;
+  margin-bottom: 4px;
+}
+.gauge-pending .gauge-count { color: var(--amber); text-shadow: 0 0 20px rgba(246,196,83,0.5); }
+.gauge-working .gauge-count { color: var(--green); text-shadow: 0 0 20px rgba(90,247,142,0.5); }
+.gauge-done    .gauge-count { color: var(--blue);  text-shadow: 0 0 20px rgba(90,155,212,0.5); }
+.gauge-failed  .gauge-count { color: var(--red);   text-shadow: 0 0 20px rgba(255,84,112,0.5); }
+
+/* starburst corner decoration */
+.gauge::after {
+  content: '';
+  position: absolute;
+  bottom: -20px; right: -20px;
+  width: 60px; height: 60px;
+  border-radius: 50%;
+  opacity: 0.04;
+}
+.gauge-pending::after { background: var(--amber); }
+.gauge-working::after { background: var(--green); }
+.gauge-done::after    { background: var(--blue); }
+.gauge-failed::after  { background: var(--red); }
+
+/* ─── TWIN PANELS ROW ────────────────────────────────────────────── */
+.twin-panels {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--gap);
+  margin-bottom: 24px;
+}
+
+/* ─── TASK ROW ───────────────────────────────────────────────────── */
+.task-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: var(--radius);
+  cursor: pointer;
+  transition: background 0.1s;
+  border: 1px solid transparent;
+}
+.task-row:hover {
+  background: var(--panel-hi);
+  border-color: var(--chrome-dim);
+}
+.task-id {
+  font-size: 0.65rem;
+  color: var(--text-dim);
+  white-space: nowrap;
+  min-width: 60px;
+}
+.task-body {
+  flex: 1;
+  font-size: 0.8rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text);
+}
+.task-age {
+  font-size: 0.65rem;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+
+/* ─── FILTER CHIPS ───────────────────────────────────────────────── */
+.filter-bar {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+.chip {
+  padding: 4px 12px;
+  border-radius: 20px;
+  border: 1px solid var(--chrome-dim);
+  background: transparent;
+  color: var(--text-dim);
+  font-family: var(--font);
+  font-size: 0.7rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.chip:hover { color: var(--text); border-color: var(--chrome); }
+.chip.active-chip {
+  color: var(--orange);
+  border-color: var(--orange);
+  box-shadow: 0 0 6px rgba(255,107,53,0.25);
+}
+
+/* ─── TABLE ──────────────────────────────────────────────────────── */
+.roster-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+.roster-table th {
+  font-size: 0.65rem;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  text-align: left;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--chrome-dim);
+}
+.roster-table td {
+  padding: 8px 10px;
+  border-bottom: 1px solid rgba(92,99,117,0.2);
+  font-size: 0.8rem;
+  vertical-align: middle;
+}
+.roster-table tr:hover td { background: var(--panel-hi); cursor: pointer; }
+.roster-table tr:last-child td { border-bottom: none; }
+
+.tag {
+  display: inline-block;
+  padding: 1px 7px;
+  border-radius: 10px;
+  border: 1px solid var(--chrome-dim);
+  font-size: 0.65rem;
+  color: var(--text-dim);
+  margin: 1px 2px;
+}
+
+/* ─── PUSH BUTTONS ───────────────────────────────────────────────── */
+.push-btn {
+  font-family: var(--font);
+  font-size: 0.7rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  padding: 7px 16px;
+  border-radius: 3px;
+  cursor: pointer;
+  transition: transform 0.06s, box-shadow 0.06s;
+  border-top: 2px solid var(--bevel-hi);
+  border-left: 2px solid var(--bevel-hi);
+  border-right: 2px solid rgba(0,0,0,0.4);
+  border-bottom: 2px solid rgba(0,0,0,0.4);
+  position: relative;
+  user-select: none;
+}
+.push-btn:active {
+  transform: translate(1px, 1px);
+  box-shadow: inset 0 1px 4px rgba(0,0,0,0.4) !important;
+  border-top-color: rgba(0,0,0,0.4);
+  border-left-color: rgba(0,0,0,0.4);
+}
+
+.btn-orange { background: #c44e20; color: #ffe0d0; box-shadow: 0 3px 0 #7a2a00, 0 4px 8px rgba(0,0,0,0.4); }
+.btn-orange:hover { background: #d45525; }
+.btn-green  { background: #1e6640; color: #c0ffd8; box-shadow: 0 3px 0 #0a3320, 0 4px 8px rgba(0,0,0,0.4); }
+.btn-green:hover  { background: #237349; }
+.btn-red    { background: #8a1530; color: #ffd0d8; box-shadow: 0 3px 0 #4a0a18, 0 4px 8px rgba(0,0,0,0.4); }
+.btn-red:hover    { background: #9a1a38; }
+.btn-blue   { background: #1a4a6e; color: #c8e4f8; box-shadow: 0 3px 0 #0a2040, 0 4px 8px rgba(0,0,0,0.4); }
+.btn-blue:hover   { background: #1f5580; }
+.btn-dim    { background: #2a3549; color: var(--text-dim); box-shadow: 0 3px 0 #151e2e, 0 4px 8px rgba(0,0,0,0.4); }
+.btn-dim:hover    { background: #303e55; }
+
+.btn-row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 16px; }
+
+/* ─── DOSSIER LAYOUT ─────────────────────────────────────────────── */
+.dossier-body {
+  background: rgba(0,0,0,0.25);
+  border: 1px solid var(--chrome-dim);
+  border-radius: var(--radius);
+  padding: 14px;
+  font-size: 0.85rem;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+  margin-bottom: 16px;
+}
+.meta-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 8px;
+  margin-bottom: 16px;
+}
+.meta-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.meta-label {
+  font-size: 0.6rem;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+.meta-value { font-size: 0.8rem; }
+
+/* ─── TIMELINE ───────────────────────────────────────────────────── */
+.timeline { display: flex; flex-direction: column; gap: 0; }
+.tl-item {
+  display: flex;
+  gap: 12px;
+  position: relative;
+  padding-bottom: 10px;
+}
+.tl-item::before {
+  content: '';
+  position: absolute;
+  left: 5px; top: 18px;
+  width: 1px;
+  bottom: 0;
+  background: var(--chrome-dim);
+  opacity: 0.4;
+}
+.tl-item:last-child::before { display: none; }
+.tl-dot {
+  width: 11px; height: 11px;
+  border-radius: 50%;
+  background: var(--chrome-dim);
+  border: 2px solid var(--panel);
+  flex-shrink: 0;
+  margin-top: 3px;
+}
+.tl-content { flex: 1; min-width: 0; }
+.tl-type {
+  font-size: 0.7rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--orange);
+}
+.tl-at { font-size: 0.65rem; color: var(--text-dim); }
+.tl-msg { font-size: 0.78rem; color: var(--text); margin-top: 2px; word-break: break-word; }
+
+/* ─── TOAST ──────────────────────────────────────────────────────── */
+#toast {
+  position: fixed;
+  bottom: 24px; right: 24px;
+  background: #3a0e1a;
+  border: 1px solid var(--red);
+  border-radius: var(--radius);
+  padding: 12px 18px;
+  font-size: 0.78rem;
+  color: var(--red);
+  text-shadow: 0 0 6px rgba(255,84,112,0.4);
+  box-shadow: 0 4px 20px rgba(0,0,0,0.6);
+  z-index: 200;
+  max-width: 380px;
+  opacity: 0;
+  transform: translateY(12px);
+  transition: opacity 0.2s, transform 0.2s;
+  pointer-events: none;
+}
+#toast.show { opacity: 1; transform: translateY(0); pointer-events: auto; }
+.toast-label {
+  font-size: 0.6rem;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  margin-bottom: 4px;
+}
+
+/* ─── READINESS BLOCK ────────────────────────────────────────────── */
+.readiness-ok {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 0.78rem; color: var(--green);
+}
+.readiness-block {
+  display: flex; flex-direction: column; gap: 6px;
+}
+.reason-item {
+  background: rgba(255,84,112,0.06);
+  border: 1px solid rgba(255,84,112,0.3);
+  border-radius: var(--radius);
+  padding: 6px 10px;
+  font-size: 0.75rem;
+}
+.reason-kind {
+  font-size: 0.65rem; letter-spacing: 0.1em;
+  text-transform: uppercase; color: var(--red); margin-bottom: 2px;
+}
+
+/* ─── LOADING / EMPTY ────────────────────────────────────────────── */
+.state-msg {
+  text-align: center;
+  padding: 32px;
+  color: var(--text-dim);
+  font-size: 0.8rem;
+  letter-spacing: 0.08em;
+}
+.state-msg .big { font-size: 1.6rem; color: var(--chrome-dim); margin-bottom: 8px; }
+
+/* ─── BACK LINK ──────────────────────────────────────────────────── */
+.back-link {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-size: 0.7rem; letter-spacing: 0.1em; text-transform: uppercase;
+  color: var(--text-dim); cursor: pointer; margin-bottom: 16px;
+  border: none; background: none; font-family: var(--font);
+  padding: 0;
+}
+.back-link:hover { color: var(--orange); }
+
+/* ─── CONFIRM DIALOG ─────────────────────────────────────────────── */
+#confirm-overlay {
+  position: fixed; inset: 0;
+  background: rgba(0,0,0,0.7);
+  z-index: 300;
+  display: none;
+  align-items: center; justify-content: center;
+}
+#confirm-overlay.show { display: flex; }
+.confirm-box {
+  background: var(--panel);
+  border: 1px solid var(--red);
+  border-radius: var(--radius);
+  padding: 28px 32px;
+  max-width: 400px;
+  box-shadow: 0 8px 40px rgba(0,0,0,0.8);
+}
+.confirm-title {
+  font-size: 0.8rem; letter-spacing: 0.15em; text-transform: uppercase;
+  color: var(--red); margin-bottom: 12px;
+}
+.confirm-msg { font-size: 0.85rem; color: var(--text); margin-bottom: 20px; line-height: 1.5; }
+.confirm-btns { display: flex; gap: 10px; justify-content: flex-end; }
+
+/* ─── BACK BUTTON (dossier) ──────────────────────────────────────── */
+.dossier-header { margin-bottom: 20px; }
+.dossier-title {
+  font-size: 0.65rem; letter-spacing: 0.2em; text-transform: uppercase;
+  color: var(--orange); margin-bottom: 6px;
+}
+.dossier-id {
+  font-size: 1.1rem; font-weight: 700; color: var(--text);
+  letter-spacing: 0.05em;
+}
+
+/* ─── ATTEMPTS TABLE ─────────────────────────────────────────────── */
+.attempts-table { width: 100%; border-collapse: collapse; font-size: 0.75rem; }
+.attempts-table th {
+  font-size: 0.6rem; letter-spacing: 0.15em; text-transform: uppercase;
+  color: var(--text-dim); text-align: left; padding: 5px 8px;
+  border-bottom: 1px solid var(--chrome-dim);
+}
+.attempts-table td {
+  padding: 6px 8px;
+  border-bottom: 1px solid rgba(92,99,117,0.2);
+  word-break: break-word;
+}
+.attempts-table tr:last-child td { border-bottom: none; }
+
+/* ─── INLINE STATUS BADGE ────────────────────────────────────────── */
+.status-badge {
+  display: inline-flex; align-items: center; gap: 5px;
+  font-size: 0.7rem; letter-spacing: 0.1em; text-transform: uppercase;
+}
+.status-pending { color: var(--amber); }
+.status-working { color: var(--green); }
+.status-done    { color: var(--blue); }
+.status-failed  { color: var(--red); }
+
+/* ─── PRUNE BTN ──────────────────────────────────────────────────── */
+.prune-row {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: 16px;
+}
+
+/* ─── SCROLLABLE PANEL BODY ──────────────────────────────────────── */
+.panel-scroll { max-height: 320px; overflow-y: auto; }
+.panel-scroll::-webkit-scrollbar { width: 4px; }
+.panel-scroll::-webkit-scrollbar-track { background: var(--bg); }
+.panel-scroll::-webkit-scrollbar-thumb { background: var(--chrome-dim); border-radius: 2px; }
+
+/* ─── INLINE ERROR IN DOSSIER ────────────────────────────────────── */
+.error-block {
+  background: rgba(255,84,112,0.07);
+  border: 1px solid rgba(255,84,112,0.4);
+  border-radius: var(--radius);
+  padding: 10px 14px;
+  font-size: 0.78rem;
+  color: var(--red);
+  word-break: break-word;
+  white-space: pre-wrap;
+}
+
+/* ─── RESPONSIVE ─────────────────────────────────────────────────── */
+@media (max-width: 1100px) {
+  .gauges { grid-template-columns: repeat(2, 1fr); }
+  .twin-panels { grid-template-columns: 1fr; }
+}
+@media (max-width: 700px) {
+  .gauges { grid-template-columns: repeat(2, 1fr); }
+  #header { flex-wrap: wrap; gap: 8px; }
+  #app { padding: 12px; }
+}
+</style>
+</head>
+<body>
+
+<!-- ─── HEADER ─────────────────────────────────────────────────────── -->
+<header id="header">
+  <div class="wordmark">afk <span>· MISSION CONTROL</span></div>
+  <nav>
+    <a class="nav-btn" id="nav-home"  href="#/">MISSION CONTROL</a>
+    <a class="nav-btn" id="nav-tasks" href="#/tasks">ROSTER</a>
+  </nav>
+  <div class="header-spacer"></div>
+  <div id="telemetry">
+    <div id="radar-dot"></div>
+    TELEMETRY · LIVE
+  </div>
+  <div id="clock">--:--:--</div>
+</header>
+
+<!-- ─── APP ROOT ───────────────────────────────────────────────────── -->
+<div id="app"></div>
+
+<!-- ─── TOAST ──────────────────────────────────────────────────────── -->
+<div id="toast">
+  <div class="toast-label">⚠ ANOMALY DETECTED</div>
+  <div id="toast-msg"></div>
+</div>
+
+<!-- ─── CONFIRM DIALOG ──────────────────────────────────────────────── -->
+<div id="confirm-overlay">
+  <div class="confirm-box">
+    <div class="confirm-title">CONFIRM OPERATION</div>
+    <div class="confirm-msg" id="confirm-msg"></div>
+    <div class="confirm-btns">
+      <button class="push-btn btn-dim" id="confirm-cancel">ABORT</button>
+      <button class="push-btn btn-red" id="confirm-ok">CONFIRM</button>
+    </div>
+  </div>
+</div>
+
+<script>
+'use strict';
+
+/* ═══════════════════════════════════════════════════════════════════
+   UTILITIES
+═══════════════════════════════════════════════════════════════════ */
+
+function $(sel, ctx) { return (ctx || document).querySelector(sel); }
+
+function el(tag, props, ...children) {
+  const e = document.createElement(tag);
+  if (props) {
+    for (const [k, v] of Object.entries(props)) {
+      if (k === 'class') e.className = v;
+      else if (k === 'style') Object.assign(e.style, v);
+      else if (k.startsWith('on')) e.addEventListener(k.slice(2), v);
+      else e.setAttribute(k, v);
+    }
+  }
+  for (const c of children) {
+    if (c == null) continue;
+    e.appendChild(typeof c === 'string' ? document.createTextNode(c) : c);
+  }
+  return e;
+}
+
+function txt(s) { return document.createTextNode(String(s ?? '')); }
+
+/* Safe text node — always use for data-derived strings */
+function safeText(s) { return document.createTextNode(String(s ?? '')); }
+
+function lamp(status) {
+  const d = el('span', { class: `lamp lamp-${status}` });
+  return d;
+}
+
+function statusBadge(status) {
+  return el('span', { class: `status-badge status-${status}` }, lamp(status), txt(' ' + labelFor(status)));
+}
+
+const LABELS = {
+  pending: 'ON THE PAD',
+  working: 'IN ORBIT',
+  done:    'TOUCHDOWN',
+  failed:  'ANOMALY',
+};
+function labelFor(status) { return LABELS[status] || status.toUpperCase(); }
+
+function age(ts) {
+  if (!ts) return '—';
+  const diff = Math.floor((Date.now() - new Date(ts).getTime()) / 1000);
+  if (diff < 0) return 'T+0s';
+  if (diff < 60) return `T+${diff}s`;
+  if (diff < 3600) return `T+${Math.floor(diff/60)}m`;
+  if (diff < 86400) return `T+${Math.floor(diff/3600)}h`;
+  return `T+${Math.floor(diff/86400)}d`;
+}
+
+function fmtTs(ts) {
+  if (!ts) return '—';
+  try { return new Date(ts).toLocaleString(); } catch { return ts; }
+}
+
+function truncate(s, n) {
+  if (!s) return '';
+  return s.length > n ? s.slice(0, n) + '…' : s;
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   API
+═══════════════════════════════════════════════════════════════════ */
+
+async function api(path, opts) {
+  const res = await fetch(path, opts);
+  const ct = res.headers.get('content-type') || '';
+  const body = ct.includes('json') ? await res.json() : await res.text();
+  if (!res.ok) {
+    const msg = (body && body.error) ? body.error : (typeof body === 'string' ? body : res.statusText);
+    throw new Error(msg);
+  }
+  return body;
+}
+
+const API = {
+  status:  ()         => api('/api/status'),
+  tasks:   (status)   => api('/api/tasks' + (status ? `?status=${encodeURIComponent(status)}` : '')),
+  task:    (id)       => api(`/api/tasks/${encodeURIComponent(id)}`),
+  why:     (id)       => api(`/api/tasks/${encodeURIComponent(id)}/why`),
+  ready:   ()         => api('/api/ready'),
+  action:  (id, act, body) => api(`/api/tasks/${encodeURIComponent(id)}/${encodeURIComponent(act)}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body || {}),
+  }),
+  prune:   (statuses) => api('/api/prune', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ statuses }),
+  }),
+};
+
+/* ═══════════════════════════════════════════════════════════════════
+   TOAST
+═══════════════════════════════════════════════════════════════════ */
+
+let _toastTimer = null;
+function showToast(msg) {
+  const toast = $('#toast');
+  const msgEl = $('#toast-msg');
+  msgEl.textContent = msg;
+  toast.classList.add('show');
+  if (_toastTimer) clearTimeout(_toastTimer);
+  _toastTimer = setTimeout(() => toast.classList.remove('show'), 5000);
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   CONFIRM DIALOG
+═══════════════════════════════════════════════════════════════════ */
+
+function confirm(msg) {
+  return new Promise((resolve) => {
+    const ov = $('#confirm-overlay');
+    $('#confirm-msg').textContent = msg;
+    ov.classList.add('show');
+    const ok = $('#confirm-ok');
+    const cancel = $('#confirm-cancel');
+    function cleanup(val) {
+      ov.classList.remove('show');
+      ok.removeEventListener('click', onOk);
+      cancel.removeEventListener('click', onCancel);
+      resolve(val);
+    }
+    function onOk()     { cleanup(true);  }
+    function onCancel() { cleanup(false); }
+    ok.addEventListener('click', onOk);
+    cancel.addEventListener('click', onCancel);
+  });
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   RADAR BLIP + CLOCK
+═══════════════════════════════════════════════════════════════════ */
+
+function radarBlip() {
+  const dot = $('#radar-dot');
+  dot.classList.remove('blip');
+  void dot.offsetWidth; // reflow
+  dot.classList.add('blip');
+  setTimeout(() => dot.classList.remove('blip'), 500);
+}
+
+function startClock() {
+  function tick() {
+    const now = new Date();
+    const hh = String(now.getHours()).padStart(2, '0');
+    const mm = String(now.getMinutes()).padStart(2, '0');
+    const ss = String(now.getSeconds()).padStart(2, '0');
+    const clockEl = $('#clock');
+    if (clockEl) clockEl.textContent = `${hh}:${mm}:${ss}`;
+  }
+  tick();
+  setInterval(tick, 1000);
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   ROUTER
+═══════════════════════════════════════════════════════════════════ */
+
+const VIEWS = {};
+let _currentRoute = null;
+let _pollTimer = null;
+
+function registerView(route, fn) { VIEWS[route] = fn; }
+
+function navigate(hash) {
+  window.location.hash = hash;
+}
+
+function parseRoute(hash) {
+  const h = (hash || '#/').replace(/^#/, '') || '/';
+  if (h === '/')       return { name: 'home' };
+  if (h === '/tasks')  return { name: 'tasks', filter: '' };
+  const m = h.match(/^\/tasks\?status=(.+)$/);
+  if (m)              return { name: 'tasks', filter: decodeURIComponent(m[1]) };
+  const m2 = h.match(/^\/task\/(.+)$/);
+  if (m2)             return { name: 'dossier', id: decodeURIComponent(m2[1]) };
+  return { name: 'home' };
+}
+
+function updateNav(route) {
+  $('#nav-home').classList.toggle('active',  route.name === 'home');
+  $('#nav-tasks').classList.toggle('active', route.name === 'tasks' || route.name === 'dossier');
+}
+
+async function render() {
+  const route = parseRoute(window.location.hash);
+  _currentRoute = route;
+  updateNav(route);
+
+  if (_pollTimer) { clearInterval(_pollTimer); _pollTimer = null; }
+
+  const app = $('#app');
+  app.innerHTML = '';
+
+  if (VIEWS[route.name]) {
+    await VIEWS[route.name](app, route);
+  }
+
+  // Poll every 3 s — refresh only current view
+  _pollTimer = setInterval(async () => {
+    const currentHash = window.location.hash;
+    if (parseRoute(currentHash).name !== _currentRoute.name) return;
+    radarBlip();
+    const freshApp = $('#app');
+    if (!freshApp) return;
+    freshApp.innerHTML = '';
+    if (VIEWS[_currentRoute.name]) {
+      await VIEWS[_currentRoute.name](freshApp, _currentRoute);
+    }
+  }, 3000);
+}
+
+window.addEventListener('hashchange', render);
+
+/* ═══════════════════════════════════════════════════════════════════
+   SHARED COMPONENT: TASK LIST
+═══════════════════════════════════════════════════════════════════ */
+
+function renderTaskList(tasks, emptyMsg) {
+  if (!tasks || tasks.length === 0) {
+    return el('div', { class: 'state-msg' }, txt(emptyMsg || 'ALL QUIET ON THE LAUNCHPAD'));
+  }
+  const frag = document.createDocumentFragment();
+  for (const t of tasks) {
+    const row = el('div', {
+      class: 'task-row',
+      onclick: () => navigate(`#/task/${encodeURIComponent(t.id)}`),
+    },
+      lamp(t.status),
+      el('span', { class: 'task-id' }, safeText(t.id)),
+      el('span', { class: 'task-body' }, safeText(t.body)),
+      el('span', { class: 'task-age' }, txt(age(t.created)))
+    );
+    frag.appendChild(row);
+  }
+  return frag;
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   VIEW: MISSION CONTROL  (#/)
+═══════════════════════════════════════════════════════════════════ */
+
+registerView('home', async (container, _route) => {
+  let snap, readyTasks;
+  try {
+    [snap, readyTasks] = await Promise.all([API.status(), API.ready()]);
+  } catch (err) {
+    container.appendChild(el('div', { class: 'state-msg' },
+      el('div', { class: 'big' }, txt('⚠')),
+      txt(err.message)
+    ));
+    return;
+  }
+
+  const counts = snap.counts || {};
+  const pending = counts.pending || 0;
+  const working = counts.working || 0;
+  const done    = counts.done    || 0;
+  const failed  = counts.failed  || 0;
+
+  // Section heading
+  const heading = el('div', { class: 'section-heading' }, txt('MISSION CONTROL'));
+  container.appendChild(heading);
+
+  // Gauge cards
+  const gauges = el('div', { class: 'gauges' });
+  const specs = [
+    { status: 'pending', label: 'ON THE PAD',  count: pending, filter: 'pending' },
+    { status: 'working', label: 'IN ORBIT',    count: working, filter: 'working' },
+    { status: 'done',    label: 'TOUCHDOWN',   count: done,    filter: 'done'    },
+    { status: 'failed',  label: 'ANOMALY',     count: failed,  filter: 'failed'  },
+  ];
+  for (const s of specs) {
+    const g = el('div', {
+      class: `gauge gauge-${s.status}`,
+      onclick: () => navigate(`#/tasks?status=${encodeURIComponent(s.filter)}`),
+    },
+      el('div', { class: 'gauge-label' }, lamp(s.status), txt(' ' + s.label)),
+      el('div', { class: 'gauge-count' }, txt(s.count))
+    );
+    gauges.appendChild(g);
+  }
+  container.appendChild(gauges);
+
+  // Twin panels: launch window + in orbit
+  const twin = el('div', { class: 'twin-panels' });
+
+  // LAUNCH WINDOW (ready tasks)
+  const launchPanel = el('div', { class: 'panel' });
+  launchPanel.appendChild(el('div', { class: 'section-heading' }, txt('LAUNCH WINDOW')));
+  const launchScroll = el('div', { class: 'panel-scroll' });
+  launchScroll.appendChild(renderTaskList(readyTasks, 'NO TASKS ON THE LAUNCH WINDOW'));
+  launchPanel.appendChild(launchScroll);
+  twin.appendChild(launchPanel);
+
+  // IN ORBIT (working tasks)
+  const orbitPanel = el('div', { class: 'panel' });
+  orbitPanel.appendChild(el('div', { class: 'section-heading' }, txt('IN ORBIT')));
+  const orbitScroll = el('div', { class: 'panel-scroll' });
+  orbitScroll.appendChild(renderTaskList(snap.working, 'NO ACTIVE MISSIONS'));
+  orbitPanel.appendChild(orbitScroll);
+  twin.appendChild(orbitPanel);
+
+  container.appendChild(twin);
+});
+
+/* ═══════════════════════════════════════════════════════════════════
+   VIEW: ROSTER  (#/tasks)
+═══════════════════════════════════════════════════════════════════ */
+
+registerView('tasks', async (container, route) => {
+  let tasks;
+  try {
+    tasks = await API.tasks(route.filter);
+  } catch (err) {
+    container.appendChild(el('div', { class: 'state-msg' }, txt(err.message)));
+    return;
+  }
+
+  // Heading row with prune button
+  const pruneRow = el('div', { class: 'prune-row' });
+  pruneRow.appendChild(el('div', { class: 'section-heading', style: { marginBottom: '0', flex: '1' } }, txt('TASK ROSTER')));
+  const pruneBtn = el('button', { class: 'push-btn btn-red', onclick: async () => {
+    const ok = await confirm('PRUNE all TOUCHDOWN and ANOMALY tasks? This cannot be undone.');
+    if (!ok) return;
+    try {
+      await API.prune(['done', 'failed']);
+      _currentRoute = route;
+      const app = $('#app');
+      app.innerHTML = '';
+      await VIEWS.tasks(app, route);
+    } catch (err) { showToast(err.message); }
+  }}, txt('PRUNE'));
+  pruneRow.appendChild(pruneBtn);
+  container.appendChild(pruneRow);
+
+  // Filter chips
+  const filterBar = el('div', { class: 'filter-bar' });
+  const filters = [
+    { label: 'ALL',        value: '' },
+    { label: 'ON THE PAD', value: 'pending' },
+    { label: 'IN ORBIT',   value: 'working' },
+    { label: 'TOUCHDOWN',  value: 'done' },
+    { label: 'ANOMALY',    value: 'failed' },
+  ];
+  for (const f of filters) {
+    const chip = el('button', {
+      class: 'chip' + (route.filter === f.value ? ' active-chip' : ''),
+      onclick: () => {
+        _currentRoute = { name: 'tasks', filter: f.value };
+        navigate(f.value ? `#/tasks?status=${encodeURIComponent(f.value)}` : '#/tasks');
+      },
+    }, txt(f.label));
+    filterBar.appendChild(chip);
+  }
+  container.appendChild(filterBar);
+
+  if (!tasks || tasks.length === 0) {
+    container.appendChild(el('div', { class: 'state-msg' }, txt('ALL QUIET ON THE LAUNCHPAD')));
+    return;
+  }
+
+  // Table
+  const panel = el('div', { class: 'panel' });
+  const table = el('table', { class: 'roster-table' });
+  const thead = el('thead');
+  const hr = el('tr');
+  for (const h of ['', 'ID', 'BODY', 'STATUS', 'PRIORITY', 'TAGS', 'AGE']) {
+    hr.appendChild(el('th', null, txt(h)));
+  }
+  thead.appendChild(hr);
+  table.appendChild(thead);
+
+  const tbody = el('tbody');
+  for (const t of tasks) {
+    const tr = el('tr', { onclick: () => navigate(`#/task/${encodeURIComponent(t.id)}`) });
+
+    // lamp
+    const tdLamp = el('td'); tdLamp.appendChild(lamp(t.status)); tr.appendChild(tdLamp);
+    // id
+    const tdId = el('td', { class: 'task-id' }); tdId.appendChild(safeText(t.id)); tr.appendChild(tdId);
+    // body
+    const tdBody = el('td', { style: { maxWidth: '380px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } });
+    tdBody.appendChild(safeText(truncate(t.body, 80))); tr.appendChild(tdBody);
+    // status
+    const tdStatus = el('td'); tdStatus.appendChild(statusBadge(t.status)); tr.appendChild(tdStatus);
+    // priority
+    const tdPri = el('td'); tdPri.appendChild(safeText(t.priority || '—')); tr.appendChild(tdPri);
+    // tags
+    const tdTags = el('td');
+    if (t.tags && t.tags.length > 0) {
+      for (const tag of t.tags) {
+        const tagEl = el('span', { class: 'tag' }); tagEl.appendChild(safeText(tag)); tdTags.appendChild(tagEl);
+      }
+    } else { tdTags.appendChild(txt('—')); }
+    tr.appendChild(tdTags);
+    // age
+    const tdAge = el('td'); tdAge.appendChild(txt(age(t.created))); tr.appendChild(tdAge);
+
+    tbody.appendChild(tr);
+  }
+  table.appendChild(tbody);
+  panel.appendChild(table);
+  container.appendChild(panel);
+});
+
+/* ═══════════════════════════════════════════════════════════════════
+   VIEW: FLIGHT DOSSIER  (#/task/:id)
+═══════════════════════════════════════════════════════════════════ */
+
+registerView('dossier', async (container, route) => {
+  let data, why;
+  try {
+    [data, why] = await Promise.all([API.task(route.id), API.why(route.id)]);
+  } catch (err) {
+    container.appendChild(el('div', { class: 'state-msg' }, txt(err.message)));
+    return;
+  }
+
+  const t = data.task;
+  const events = data.events || [];
+  const attempts = data.attempts || [];
+
+  // Back button
+  const back = el('button', { class: 'back-link', onclick: () => navigate('#/tasks') },
+    txt('← BACK TO ROSTER')
+  );
+  container.appendChild(back);
+
+  // Dossier header
+  const hdr = el('div', { class: 'dossier-header' });
+  hdr.appendChild(el('div', { class: 'dossier-title' }, txt('FLIGHT DOSSIER')));
+  const idEl = el('div', { class: 'dossier-id' }); idEl.appendChild(safeText(t.id));
+  hdr.appendChild(idEl);
+  container.appendChild(hdr);
+
+  // Body block
+  const bodyLabel = el('div', { class: 'section-heading' }, txt('MISSION BRIEF'));
+  container.appendChild(bodyLabel);
+  const bodyBlock = el('div', { class: 'dossier-body' });
+  bodyBlock.appendChild(safeText(t.body));
+  container.appendChild(bodyBlock);
+
+  // Error block (if failed)
+  if (t.error) {
+    const errLabel = el('div', { class: 'section-heading' }, txt('FAILURE REPORT'));
+    container.appendChild(errLabel);
+    const errBlock = el('div', { class: 'error-block' });
+    errBlock.appendChild(safeText(t.error));
+    container.appendChild(errBlock);
+  }
+
+  // Metadata grid
+  const metaLabel = el('div', { class: 'section-heading' }, txt('TELEMETRY DATA'));
+  container.appendChild(metaLabel);
+  const grid = el('div', { class: 'meta-grid panel' });
+  const metaFields = [
+    { label: 'STATUS',        value: () => statusBadge(t.status) },
+    { label: 'PRIORITY',      value: t.priority || '—' },
+    { label: 'CREATED',       value: fmtTs(t.created) },
+    { label: 'STARTED',       value: fmtTs(t.started) },
+    { label: 'FINISHED',      value: fmtTs(t.finished) },
+    { label: 'LEASE EXPIRES', value: fmtTs(t.lease_expires) },
+    { label: 'AGENT',         value: t.agent || '—' },
+    { label: 'SOURCE',        value: t.source || '—' },
+    { label: 'CWD',           value: t.cwd || '—' },
+    { label: 'GROUP',         value: t.group_id || '—' },
+    { label: 'RESOURCE KEY',  value: t.resource_key || '—' },
+  ];
+  if (t.tags && t.tags.length > 0) {
+    metaFields.push({ label: 'TAGS', value: t.tags.join(', ') });
+  }
+
+  for (const f of metaFields) {
+    const item = el('div', { class: 'meta-item' });
+    item.appendChild(el('div', { class: 'meta-label' }, txt(f.label)));
+    const val = el('div', { class: 'meta-value' });
+    if (typeof f.value === 'function') {
+      val.appendChild(f.value());
+    } else {
+      val.appendChild(safeText(f.value));
+    }
+    item.appendChild(val);
+    grid.appendChild(item);
+  }
+  container.appendChild(grid);
+
+  // Readiness verdict
+  const readyLabel = el('div', { class: 'section-heading', style: { marginTop: '16px' } }, txt('LAUNCH CLEARANCE'));
+  container.appendChild(readyLabel);
+  const readyPanel = el('div', { class: 'panel' });
+  if (why.ready) {
+    const ok = el('div', { class: 'readiness-ok' }, lamp('working'), txt(' CLEARED FOR LAUNCH'));
+    readyPanel.appendChild(ok);
+  } else {
+    const block = el('div', { class: 'readiness-block' });
+    const reasons = why.not_ready_reasons || [];
+    if (reasons.length === 0) {
+      block.appendChild(el('div', { class: 'reason-item' }, txt('NOT READY — reason unspecified')));
+    }
+    for (const r of reasons) {
+      const ri = el('div', { class: 'reason-item' });
+      const kind = el('div', { class: 'reason-kind' }); kind.appendChild(safeText(r.kind)); ri.appendChild(kind);
+      const detail = el('div', { class: 'reason-detail' }); detail.appendChild(safeText(r.detail)); ri.appendChild(detail);
+      if (r.task_id && r.task_id !== t.id) {
+        const link = el('div', { style: { fontSize: '0.65rem', color: 'var(--text-dim)', marginTop: '2px' } });
+        link.appendChild(safeText('blocked by: ' + r.task_id));
+        ri.appendChild(link);
+      }
+      block.appendChild(ri);
+    }
+    readyPanel.appendChild(block);
+  }
+  container.appendChild(readyPanel);
+
+  // Action buttons
+  const actLabel = el('div', { class: 'section-heading', style: { marginTop: '16px' } }, txt('CONTROL PANEL'));
+  container.appendChild(actLabel);
+  const actPanel = el('div', { class: 'panel' });
+  const btnRow = el('div', { class: 'btn-row' });
+
+  async function doAction(action, body) {
+    try {
+      await API.action(t.id, action, body);
+      _currentRoute = route;
+      const app = $('#app');
+      app.innerHTML = '';
+      await VIEWS.dossier(app, route);
+    } catch (err) { showToast(err.message); }
+  }
+
+  // done / fail — pending or working
+  if (t.status === 'pending' || t.status === 'working') {
+    btnRow.appendChild(el('button', { class: 'push-btn btn-green', onclick: () => doAction('done', {}) }, txt('TOUCHDOWN')));
+    btnRow.appendChild(el('button', { class: 'push-btn btn-red',   onclick: () => doAction('fail', { reason: 'manual failure' }) }, txt('DECLARE ANOMALY')));
+  }
+  // retry / reset — failed
+  if (t.status === 'failed') {
+    btnRow.appendChild(el('button', { class: 'push-btn btn-orange', onclick: () => doAction('retry', {}) }, txt('RETRY MISSION')));
+    btnRow.appendChild(el('button', { class: 'push-btn btn-dim',    onclick: () => doAction('reset', {}) }, txt('RESET')));
+  }
+  // unblock — always
+  btnRow.appendChild(el('button', { class: 'push-btn btn-dim', onclick: () => doAction('unblock', {}) }, txt('UNBLOCK')));
+  // promote — pending only
+  if (t.status === 'pending') {
+    btnRow.appendChild(el('button', { class: 'push-btn btn-blue', onclick: () => doAction('promote', {}) }, txt('PROMOTE')));
+  }
+
+  actPanel.appendChild(btnRow);
+  container.appendChild(actPanel);
+
+  // Mission log (events)
+  if (events.length > 0) {
+    const logLabel = el('div', { class: 'section-heading', style: { marginTop: '16px' } }, txt('MISSION LOG'));
+    container.appendChild(logLabel);
+    const logPanel = el('div', { class: 'panel' });
+    const timeline = el('div', { class: 'timeline' });
+    for (const ev of events) {
+      const item = el('div', { class: 'tl-item' });
+      item.appendChild(el('div', { class: 'tl-dot' }));
+      const content = el('div', { class: 'tl-content' });
+      const typeEl = el('div', { class: 'tl-type' }); typeEl.appendChild(safeText(ev.type)); content.appendChild(typeEl);
+      const atEl   = el('div', { class: 'tl-at' });   atEl.appendChild(txt(fmtTs(ev.at)));   content.appendChild(atEl);
+      if (ev.message) {
+        const msgEl = el('div', { class: 'tl-msg' }); msgEl.appendChild(safeText(ev.message)); content.appendChild(msgEl);
+      }
+      item.appendChild(content);
+      timeline.appendChild(item);
+    }
+    logPanel.appendChild(timeline);
+    container.appendChild(logPanel);
+  }
+
+  // Attempts
+  if (attempts.length > 0) {
+    const attLabel = el('div', { class: 'section-heading', style: { marginTop: '16px' } }, txt('LAUNCH ATTEMPTS'));
+    container.appendChild(attLabel);
+    const attPanel = el('div', { class: 'panel' });
+    const table = el('table', { class: 'attempts-table' });
+    const thead = el('thead');
+    const hr = el('tr');
+    for (const h of ['#', 'STATUS', 'STARTED', 'FINISHED', 'WORKER', 'ERROR']) {
+      hr.appendChild(el('th', null, txt(h)));
+    }
+    thead.appendChild(hr); table.appendChild(thead);
+    const tbody = el('tbody');
+    attempts.forEach((a, i) => {
+      const tr = el('tr');
+      const tdN = el('td'); tdN.appendChild(txt(i + 1)); tr.appendChild(tdN);
+      const tdS = el('td'); tdS.appendChild(statusBadge(a.status)); tr.appendChild(tdS);
+      const tdSt = el('td'); tdSt.appendChild(txt(fmtTs(a.started))); tr.appendChild(tdSt);
+      const tdFi = el('td'); tdFi.appendChild(txt(fmtTs(a.finished))); tr.appendChild(tdFi);
+      const tdW  = el('td'); tdW.appendChild(safeText(a.worker_id || a.agent || '—')); tr.appendChild(tdW);
+      const tdE  = el('td'); tdE.appendChild(safeText(a.error || '—')); tr.appendChild(tdE);
+      tbody.appendChild(tr);
+    });
+    table.appendChild(tbody);
+    attPanel.appendChild(table);
+    container.appendChild(attPanel);
+  }
+});
+
+/* ═══════════════════════════════════════════════════════════════════
+   BOOT
+═══════════════════════════════════════════════════════════════════ */
+
+startClock();
+render();
+</script>
+</body>
+</html>

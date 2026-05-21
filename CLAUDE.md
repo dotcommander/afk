@@ -45,6 +45,7 @@ Registered in `internal/commands/root.go` (`func NewRoot`). Categories:
 - **Lifecycle**: `add`, `done`, `fail`, `reset`, `retry`, `edit`, `rm`, `prune`
 - **Worker**: `pop`, `run`, `heartbeat`, `requeue-stale`
 - **Meta**: `prompt`, `doctor`
+- **Web**: `serve`
 
 Global persistent flag `--queue <path>` (also `AFK_QUEUE` env var). Resolution order: flag → env → `~/.claude/queue/tasks.sqlite`.
 
@@ -63,6 +64,7 @@ internal/runner/            Worker loop: claim → exec template → heartbeat �
 internal/store/             SQLite persistence; Paths, ResolvePaths, NewSQLite; schema DDL inline
   sqlite_schema.go          schema DDL, migration, busy-retry helpers
   sqlite_scan.go            row scan/encode helpers
+internal/server/            HTTP dashboard server; routes, handlers, and go:embed'd web/index.html SPA
 internal/task/              Domain types (Task, Status, Event, Attempt, Dependency, Block); no I/O
 ```
 
@@ -82,6 +84,7 @@ SQLite is the only queue backend. A `--queue`/`AFK_QUEUE` path with a non-`.sqli
 - **Worker contract**: the command run by `afk run` must explicitly call `afk done <id>` or `afk fail <id>`. If the subprocess exits while the task is still `working`, the runner marks it failed.
 - **Readiness has one authority**: `store.Ready` (SQL) is the single source of truth for whether a task is ready. `ready`, `next`, `pop`, and `run` consult it directly; `why` consults it for the ready/not-ready verdict and additionally derives human-readable *reasons* via `app.notReadyReasons` — the reasons layer explains a "not ready" verdict, it does not decide it. Change the readiness predicate only in `store.Ready`.
 - **No viper.** Queue path comes from flag/env/default — there is no config file layer. Don't add one without a reason.
+- **`afk serve` binds `127.0.0.1` by default** (loopback only — task bodies may be sensitive); supplying a non-loopback `--addr` prints a warning to stderr. The front-end is a single `go:embed`'d `web/index.html` (no build step required).
 
 ## Conventions
 
