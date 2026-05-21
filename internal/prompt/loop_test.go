@@ -101,6 +101,17 @@ func TestTaskPromptIncludesContextHistoryAndFinalization(t *testing.T) {
 	require.Contains(t, out, "/tmp/afk done 123")
 	require.Contains(t, out, "/tmp/afk fail 123")
 	require.Contains(t, out, "attempt #1")
+
+	// Regression: body must be wrapped in XML delimiters (prompt-injection hardening).
+	// Verify the body appears *between* the tags, not just that all three substrings
+	// exist independently somewhere in the output.
+	openIdx := strings.Index(out, "<task-body>")
+	closeIdx := strings.Index(out, "</task-body>")
+	require.NotEqual(t, -1, openIdx, "output must contain <task-body> opening tag")
+	require.NotEqual(t, -1, closeIdx, "output must contain </task-body> closing tag")
+	require.Less(t, openIdx, closeIdx, "<task-body> must precede </task-body>")
+	between := out[openIdx+len("<task-body>") : closeIdx]
+	require.Contains(t, between, "fix the thing", "task body must appear inside <task-body>...</task-body>")
 }
 
 func TestTaskPromptBoundsBodyAndHistory(t *testing.T) {
