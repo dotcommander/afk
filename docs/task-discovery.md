@@ -66,6 +66,9 @@ Quality gates are mandatory before a candidate is shown:
   commands or deterministic checks.
 - No churn: reject broad cleanup, style-only changes, speculative abstractions,
   and multi-subsystem edits unless they can be split into ordered atomic tasks.
+- Value before ease: reject easy work when it does not remove a real bug, unblock
+  a workflow, prevent a plausible failure mode, reduce operator pain, or make
+  future work less ambiguous with measured payoff.
 
 ## signal sources
 
@@ -131,6 +134,18 @@ current code, tests, or docs show it was already fixed, list it under
 
 ## ranking priorities
 
+Before scoring, run a value-vs-churn gate:
+
+- Value: fixes real behavior, removes a safety/reliability hazard, unblocks a
+  user/operator/developer workflow, resolves a current docs/source contradiction
+  that would mislead execution, or reduces future ambiguity with measured payoff.
+- Churn: style-only edits, cosmetic polish, generic cleanup, speculative
+  abstractions, pure test/docs padding, stale-report busywork, or "nice to have"
+  work without current proof.
+
+Reject churn even when it is easy and small. Small only matters after value is
+established.
+
 Rank by practical impact before ease:
 
 1. Core behavior or correctness: real bugs, broken workflows, bad state handling,
@@ -167,7 +182,8 @@ Use 1-5 for `impact`, `confidence`, and `readiness`; use 0-5 for `risk` and
   one hour or less.
 - `risk`: blast radius, ambiguity, destructive potential, or missing context.
 - `churn`: style-only cleanup, stale-report dependency, unrelated file spread,
-  speculative abstraction, or missing measurable payoff.
+  speculative abstraction, cosmetic polish, "nice to have" wording, or missing
+  measurable payoff.
 
 Reward current failing tests or command warnings, docs/source contradictions,
 small blast radius, exact verification, and measured duplication or hazard
