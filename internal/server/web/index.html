@@ -680,14 +680,14 @@ nav {
 <div id="app"></div>
 
 <!-- ─── TOAST ──────────────────────────────────────────────────────── -->
-<div id="toast">
+<div id="toast" role="alert">
   <div class="toast-label">⚠ ANOMALY DETECTED</div>
   <div id="toast-msg"></div>
 </div>
 
 <!-- ─── CONFIRM DIALOG ──────────────────────────────────────────────── -->
 <div id="confirm-overlay">
-  <div class="confirm-box">
+  <div class="confirm-box" role="dialog" aria-modal="true" aria-labelledby="confirm-msg">
     <div class="confirm-title">CONFIRM OPERATION</div>
     <div class="confirm-msg" id="confirm-msg"></div>
     <div class="confirm-btns">
@@ -723,10 +723,18 @@ function el(tag, props, ...children) {
   return e;
 }
 
+// txt — text node from any value. XSS-safe by construction; use for ALL data-derived strings.
 function txt(s) { return document.createTextNode(String(s ?? '')); }
 
-/* Safe text node — always use for data-derived strings */
-function safeText(s) { return document.createTextNode(String(s ?? '')); }
+// asButton — augments el() props so a non-<button> element is operable by keyboard + AT.
+function asButton(props, handler) {
+  return Object.assign({}, props, {
+    role: 'button',
+    tabindex: 0,
+    onclick: handler,
+    onkeydown: (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); handler(e); } },
+  });
+}
 
 function lamp(status) {
   const d = el('span', { class: `lamp lamp-${status}` });
@@ -819,20 +827,26 @@ function showToast(msg) {
 function confirm(msg) {
   return new Promise((resolve) => {
     const ov = $('#confirm-overlay');
+    const prior = document.activeElement;
     $('#confirm-msg').textContent = msg;
     ov.classList.add('show');
     const ok = $('#confirm-ok');
     const cancel = $('#confirm-cancel');
+    ok.focus();
     function cleanup(val) {
       ov.classList.remove('show');
       ok.removeEventListener('click', onOk);
       cancel.removeEventListener('click', onCancel);
+      document.removeEventListener('keydown', onKeydown);
+      if (prior && prior.focus) prior.focus();
       resolve(val);
     }
     function onOk()     { cleanup(true);  }
     function onCancel() { cleanup(false); }
+    function onKeydown(e) { if (e.key === 'Escape') { e.preventDefault(); cleanup(false); } }
     ok.addEventListener('click', onOk);
     cancel.addEventListener('click', onCancel);
+    document.addEventListener('keydown', onKeydown);
   });
 }
 
@@ -891,6 +905,20 @@ function updateNav(route) {
   $('#nav-tasks').classList.toggle('active', route.name === 'tasks' || route.name === 'dossier');
 }
 
+// Single re-fetch/re-render of the current view — called by the poll timer
+// and by the visibilitychange listener when the tab returns to the foreground.
+async function refreshCurrentView() {
+  const currentHash = window.location.hash;
+  if (!_currentRoute || parseRoute(currentHash).name !== _currentRoute.name) return;
+  radarBlip();
+  const freshApp = $('#app');
+  if (!freshApp) return;
+  freshApp.innerHTML = '';
+  if (VIEWS[_currentRoute.name]) {
+    await VIEWS[_currentRoute.name](freshApp, _currentRoute);
+  }
+}
+
 async function render() {
   const route = parseRoute(window.location.hash);
   _currentRoute = route;
@@ -907,15 +935,8 @@ async function render() {
 
   // Poll every 3 s — refresh only current view
   _pollTimer = setInterval(async () => {
-    const currentHash = window.location.hash;
-    if (parseRoute(currentHash).name !== _currentRoute.name) return;
-    radarBlip();
-    const freshApp = $('#app');
-    if (!freshApp) return;
-    freshApp.innerHTML = '';
-    if (VIEWS[_currentRoute.name]) {
-      await VIEWS[_currentRoute.name](freshApp, _currentRoute);
-    }
+    if (document.hidden) return;
+    await refreshCurrentView();
   }, 3000);
 }
 
@@ -931,13 +952,11 @@ function renderTaskList(tasks, emptyMsg) {
   }
   const frag = document.createDocumentFragment();
   for (const t of tasks) {
-    const row = el('div', {
-      class: 'task-row',
-      onclick: () => navigate(`#/task/${encodeURIComponent(t.id)}`),
-    },
+    const row = el('div',
+      asButton({ class: 'task-row', 'aria-label': `Open task ${t.id}` }, () => navigate(`#/task/${encodeURIComponent(t.id)}`)),
       lamp(t.status),
-      el('span', { class: 'task-id' }, safeText(t.id)),
-      el('span', { class: 'task-body' }, safeText(t.body)),
+      el('span', { class: 'task-id' }, txt(t.id)),
+      el('span', { class: 'task-body' }, txt(t.body)),
       el('span', { class: 'task-age' }, txt(age(t.created)))
     );
     frag.appendChild(row);
@@ -980,10 +999,8 @@ registerView('home', async (container, _route) => {
     { status: 'failed',  label: 'ANOMALY',     count: failed,  filter: 'failed'  },
   ];
   for (const s of specs) {
-    const g = el('div', {
-      class: `gauge gauge-${s.status}`,
-      onclick: () => navigate(`#/tasks?status=${encodeURIComponent(s.filter)}`),
-    },
+    const g = el('div',
+      asButton({ class: `gauge gauge-${s.status}`, 'aria-label': `Show ${s.label} tasks` }, () => navigate(`#/tasks?status=${encodeURIComponent(s.filter)}`)),
       el('div', { class: 'gauge-label' }, lamp(s.status), txt(' ' + s.label)),
       el('div', { class: 'gauge-count' }, txt(s.count))
     );
@@ -1082,24 +1099,24 @@ registerView('tasks', async (container, route) => {
 
   const tbody = el('tbody');
   for (const t of tasks) {
-    const tr = el('tr', { onclick: () => navigate(`#/task/${encodeURIComponent(t.id)}`) });
+    const tr = el('tr', asButton({ 'aria-label': `Open task ${t.id}` }, () => navigate(`#/task/${encodeURIComponent(t.id)}`)));
 
     // lamp
     const tdLamp = el('td'); tdLamp.appendChild(lamp(t.status)); tr.appendChild(tdLamp);
     // id
-    const tdId = el('td', { class: 'task-id' }); tdId.appendChild(safeText(t.id)); tr.appendChild(tdId);
+    const tdId = el('td', { class: 'task-id' }); tdId.appendChild(txt(t.id)); tr.appendChild(tdId);
     // body
     const tdBody = el('td', { style: { maxWidth: '380px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } });
-    tdBody.appendChild(safeText(truncate(t.body, 80))); tr.appendChild(tdBody);
+    tdBody.appendChild(txt(truncate(t.body, 80))); tr.appendChild(tdBody);
     // status
     const tdStatus = el('td'); tdStatus.appendChild(statusBadge(t.status)); tr.appendChild(tdStatus);
     // priority
-    const tdPri = el('td'); tdPri.appendChild(safeText(t.priority || '—')); tr.appendChild(tdPri);
+    const tdPri = el('td'); tdPri.appendChild(txt(t.priority || '—')); tr.appendChild(tdPri);
     // tags
     const tdTags = el('td');
     if (t.tags && t.tags.length > 0) {
       for (const tag of t.tags) {
-        const tagEl = el('span', { class: 'tag' }); tagEl.appendChild(safeText(tag)); tdTags.appendChild(tagEl);
+        const tagEl = el('span', { class: 'tag' }); tagEl.appendChild(txt(tag)); tdTags.appendChild(tagEl);
       }
     } else { tdTags.appendChild(txt('—')); }
     tr.appendChild(tdTags);
@@ -1139,7 +1156,7 @@ registerView('dossier', async (container, route) => {
   // Dossier header
   const hdr = el('div', { class: 'dossier-header' });
   hdr.appendChild(el('div', { class: 'dossier-title' }, txt('FLIGHT DOSSIER')));
-  const idEl = el('div', { class: 'dossier-id' }); idEl.appendChild(safeText(t.id));
+  const idEl = el('div', { class: 'dossier-id' }); idEl.appendChild(txt(t.id));
   hdr.appendChild(idEl);
   container.appendChild(hdr);
 
@@ -1147,7 +1164,7 @@ registerView('dossier', async (container, route) => {
   const bodyLabel = el('div', { class: 'section-heading' }, txt('MISSION BRIEF'));
   container.appendChild(bodyLabel);
   const bodyBlock = el('div', { class: 'dossier-body' });
-  bodyBlock.appendChild(safeText(t.body));
+  bodyBlock.appendChild(txt(t.body));
   container.appendChild(bodyBlock);
 
   // Error block (if failed)
@@ -1155,7 +1172,7 @@ registerView('dossier', async (container, route) => {
     const errLabel = el('div', { class: 'section-heading' }, txt('FAILURE REPORT'));
     container.appendChild(errLabel);
     const errBlock = el('div', { class: 'error-block' });
-    errBlock.appendChild(safeText(t.error));
+    errBlock.appendChild(txt(t.error));
     container.appendChild(errBlock);
   }
 
@@ -1187,7 +1204,7 @@ registerView('dossier', async (container, route) => {
     if (typeof f.value === 'function') {
       val.appendChild(f.value());
     } else {
-      val.appendChild(safeText(f.value));
+      val.appendChild(txt(f.value));
     }
     item.appendChild(val);
     grid.appendChild(item);
@@ -1198,27 +1215,36 @@ registerView('dossier', async (container, route) => {
   const readyLabel = el('div', { class: 'section-heading', style: { marginTop: '16px' } }, txt('LAUNCH CLEARANCE'));
   container.appendChild(readyLabel);
   const readyPanel = el('div', { class: 'panel' });
-  if (why.ready) {
-    const ok = el('div', { class: 'readiness-ok' }, lamp('working'), txt(' CLEARED FOR LAUNCH'));
-    readyPanel.appendChild(ok);
+  if (t.status === 'done') {
+    readyPanel.appendChild(el('div', { class: 'readiness-ok' }, lamp('done'), txt(' TOUCHDOWN — mission complete, no clearance required')));
+  } else if (t.status === 'failed') {
+    readyPanel.appendChild(el('div', { class: 'readiness-block' }, lamp('failed'), txt(' ANOMALY — mission ended; RETRY to request a new launch window')));
+  } else if (t.status === 'working') {
+    readyPanel.appendChild(el('div', { class: 'readiness-ok' }, lamp('working'), txt(' IN ORBIT — mission underway')));
   } else {
-    const block = el('div', { class: 'readiness-block' });
-    const reasons = why.not_ready_reasons || [];
-    if (reasons.length === 0) {
-      block.appendChild(el('div', { class: 'reason-item' }, txt('NOT READY — reason unspecified')));
-    }
-    for (const r of reasons) {
-      const ri = el('div', { class: 'reason-item' });
-      const kind = el('div', { class: 'reason-kind' }); kind.appendChild(safeText(r.kind)); ri.appendChild(kind);
-      const detail = el('div', { class: 'reason-detail' }); detail.appendChild(safeText(r.detail)); ri.appendChild(detail);
-      if (r.task_id && r.task_id !== t.id) {
-        const link = el('div', { style: { fontSize: '0.65rem', color: 'var(--text-dim)', marginTop: '2px' } });
-        link.appendChild(safeText('blocked by: ' + r.task_id));
-        ri.appendChild(link);
+    // pending: render the why verdict and not-ready reasons
+    if (why.ready) {
+      const ok = el('div', { class: 'readiness-ok' }, lamp('working'), txt(' CLEARED FOR LAUNCH'));
+      readyPanel.appendChild(ok);
+    } else {
+      const block = el('div', { class: 'readiness-block' });
+      const reasons = why.not_ready_reasons || [];
+      if (reasons.length === 0) {
+        block.appendChild(el('div', { class: 'reason-item' }, txt('NOT READY — reason unspecified')));
       }
-      block.appendChild(ri);
+      for (const r of reasons) {
+        const ri = el('div', { class: 'reason-item' });
+        const kind = el('div', { class: 'reason-kind' }); kind.appendChild(txt(r.kind)); ri.appendChild(kind);
+        const detail = el('div', {}); detail.appendChild(txt(r.detail)); ri.appendChild(detail);
+        if (r.task_id && r.task_id !== t.id) {
+          const link = el('div', { style: { fontSize: '0.65rem', color: 'var(--text-dim)', marginTop: '2px' } });
+          link.appendChild(txt('blocked by: ' + r.task_id));
+          ri.appendChild(link);
+        }
+        block.appendChild(ri);
+      }
+      readyPanel.appendChild(block);
     }
-    readyPanel.appendChild(block);
   }
   container.appendChild(readyPanel);
 
@@ -1268,10 +1294,10 @@ registerView('dossier', async (container, route) => {
       const item = el('div', { class: 'tl-item' });
       item.appendChild(el('div', { class: 'tl-dot' }));
       const content = el('div', { class: 'tl-content' });
-      const typeEl = el('div', { class: 'tl-type' }); typeEl.appendChild(safeText(ev.type)); content.appendChild(typeEl);
+      const typeEl = el('div', { class: 'tl-type' }); typeEl.appendChild(txt(ev.type)); content.appendChild(typeEl);
       const atEl   = el('div', { class: 'tl-at' });   atEl.appendChild(txt(fmtTs(ev.at)));   content.appendChild(atEl);
       if (ev.message) {
-        const msgEl = el('div', { class: 'tl-msg' }); msgEl.appendChild(safeText(ev.message)); content.appendChild(msgEl);
+        const msgEl = el('div', { class: 'tl-msg' }); msgEl.appendChild(txt(ev.message)); content.appendChild(msgEl);
       }
       item.appendChild(content);
       timeline.appendChild(item);
@@ -1299,8 +1325,8 @@ registerView('dossier', async (container, route) => {
       const tdS = el('td'); tdS.appendChild(statusBadge(a.status)); tr.appendChild(tdS);
       const tdSt = el('td'); tdSt.appendChild(txt(fmtTs(a.started))); tr.appendChild(tdSt);
       const tdFi = el('td'); tdFi.appendChild(txt(fmtTs(a.finished))); tr.appendChild(tdFi);
-      const tdW  = el('td'); tdW.appendChild(safeText(a.worker_id || a.agent || '—')); tr.appendChild(tdW);
-      const tdE  = el('td'); tdE.appendChild(safeText(a.error || '—')); tr.appendChild(tdE);
+      const tdW  = el('td'); tdW.appendChild(txt(a.worker_id || a.agent || '—')); tr.appendChild(tdW);
+      const tdE  = el('td'); tdE.appendChild(txt(a.error || '—')); tr.appendChild(tdE);
       tbody.appendChild(tr);
     });
     table.appendChild(tbody);
@@ -1314,6 +1340,10 @@ registerView('dossier', async (container, route) => {
 ═══════════════════════════════════════════════════════════════════ */
 
 startClock();
+// ONE-TIME: catch up immediately when tab returns to the foreground.
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden) refreshCurrentView();
+});
 render();
 </script>
 </body>
