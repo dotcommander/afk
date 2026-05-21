@@ -865,7 +865,14 @@ WHERE task_id = ?`, taskID)
 }
 
 func sqliteDSN(path string) string {
-	u := url.URL{Scheme: "file", Path: path}
+	// Normalize for SQLite URI form. On Windows, paths like C:\Users\foo must
+	// become /C:/Users/foo so the leading drive letter is part of the path and
+	// not parsed as a URI authority.
+	p := filepath.ToSlash(path)
+	if filepath.IsAbs(path) && !strings.HasPrefix(p, "/") {
+		p = "/" + p
+	}
+	u := url.URL{Scheme: "file", Path: p}
 	q := u.Query()
 	q.Add("_pragma", "busy_timeout(5000)")
 	q.Add("_pragma", "journal_mode(WAL)")
