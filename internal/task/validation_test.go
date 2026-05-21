@@ -31,7 +31,7 @@ func TestValidateAddOptionsRequiresEvidenceForGeneratedTasks(t *testing.T) {
 	t.Parallel()
 
 	err := task.ValidateAddOptions(task.AddOptions{
-		Body:   "[discovery:repo:file] Scope: /tmp/repo/file.go. Fix /tmp/repo/file.go. Verify with go test ./...",
+		Body:   "[discovery:repo:file] Scope: /tmp/repo/file.go. Fix /tmp/repo/file.go. Success: focused issue is fixed. Verify with go test ./... Reject-if: evidence no longer matches",
 		Source: "task-discovery",
 		CWD:    "/tmp/repo",
 	})
@@ -39,7 +39,7 @@ func TestValidateAddOptionsRequiresEvidenceForGeneratedTasks(t *testing.T) {
 	require.True(t, errors.Is(err, task.ErrInvalidTask), "got %v", err)
 
 	err = task.ValidateAddOptions(task.AddOptions{
-		Body:   "[discovery:repo:file] Evidence: /tmp/repo/file.go:1. Scope: /tmp/repo/file.go. Fix /tmp/repo/file.go. Verify with go test ./...",
+		Body:   "[discovery:repo:file] Evidence: /tmp/repo/file.go:1. Scope: /tmp/repo/file.go. Fix /tmp/repo/file.go. Success: focused issue is fixed. Verify with go test ./... Reject-if: evidence no longer matches",
 		Source: "task-discovery",
 		CWD:    "/tmp/repo",
 	})
@@ -74,7 +74,7 @@ func TestValidateAddOptionsRequiresDiscoveryPrefixAndScopeForGeneratedTasks(t *t
 	t.Parallel()
 
 	err := task.ValidateAddOptions(task.AddOptions{
-		Body:   "Evidence: /tmp/repo/file.go:1. Scope: /tmp/repo/file.go. Fix /tmp/repo/file.go. Verify with go test ./...",
+		Body:   "Evidence: /tmp/repo/file.go:1. Scope: /tmp/repo/file.go. Fix /tmp/repo/file.go. Success: focused issue is fixed. Verify with go test ./... Reject-if: evidence no longer matches",
 		Source: "task-discovery",
 		CWD:    "/tmp/repo",
 	})
@@ -82,7 +82,7 @@ func TestValidateAddOptionsRequiresDiscoveryPrefixAndScopeForGeneratedTasks(t *t
 	require.True(t, errors.Is(err, task.ErrInvalidTask), "got %v", err)
 
 	err = task.ValidateAddOptions(task.AddOptions{
-		Body:   "[discovery:repo:file] Evidence: /tmp/repo/file.go:1. Fix /tmp/repo/file.go. Verify with go test ./...",
+		Body:   "[discovery:repo:file] Evidence: /tmp/repo/file.go:1. Fix /tmp/repo/file.go. Success: focused issue is fixed. Verify with go test ./... Reject-if: evidence no longer matches",
 		Source: "task-discovery",
 		CWD:    "/tmp/repo",
 	})
@@ -94,9 +94,9 @@ func TestValidateAddOptionsRejectsChurnPhrasesForGeneratedTasks(t *testing.T) {
 	t.Parallel()
 
 	for _, body := range []string{
-		"[discovery:repo:cleanup] Evidence: /tmp/repo/file.go:1. Scope: /tmp/repo/file.go. Clean up the file. Verify with go test ./...",
-		"[discovery:repo:broad] Evidence: /tmp/repo/file.go:1. Scope: /tmp/repo/file.go. Refactor broadly across the package. Verify with go test ./...",
-		"[discovery:repo:choice] Evidence: /tmp/repo/file.go:1. Scope: /tmp/repo/file.go. Implement X or Y. Verify with go test ./...",
+		"[discovery:repo:cleanup] Evidence: /tmp/repo/file.go:1. Scope: /tmp/repo/file.go. Clean up the file. Success: file is cleaned up. Verify with go test ./... Reject-if: evidence no longer matches",
+		"[discovery:repo:broad] Evidence: /tmp/repo/file.go:1. Scope: /tmp/repo/file.go. Refactor broadly across the package. Success: package is refactored. Verify with go test ./... Reject-if: evidence no longer matches",
+		"[discovery:repo:choice] Evidence: /tmp/repo/file.go:1. Scope: /tmp/repo/file.go. Implement X or Y. Success: one option is implemented. Verify with go test ./... Reject-if: evidence no longer matches",
 	} {
 		body := body
 		t.Run(body, func(t *testing.T) {
@@ -116,13 +116,13 @@ func TestValidateImportTaskUsesGeneratedCandidateRules(t *testing.T) {
 	t.Parallel()
 
 	err := task.ValidateImportTask(task.ImportTask{
-		Body:   "[discovery:repo:file] Evidence: /tmp/repo/file.go:1. Scope: /tmp/repo/file.go. Fix /tmp/repo/file.go. Verify with go test ./...",
+		Body:   "[discovery:repo:file] Evidence: /tmp/repo/file.go:1. Scope: /tmp/repo/file.go. Fix /tmp/repo/file.go. Success: focused issue is fixed. Verify with go test ./... Reject-if: evidence no longer matches",
 		Source: "task-discovery",
 	})
 	require.NoError(t, err)
 
 	err = task.ValidateImportTask(task.ImportTask{
-		Body:   "[discovery:repo:file] Evidence: file.go:1. Scope: file.go. Fix file.go. Verify with go test ./...",
+		Body:   "[discovery:repo:file] Evidence: file.go:1. Scope: file.go. Fix file.go. Success: focused issue is fixed. Verify with go test ./... Reject-if: evidence no longer matches",
 		Source: "task-discovery",
 	})
 	require.Error(t, err)
@@ -137,7 +137,7 @@ func TestValidateAddOptionsGeneratedCandidateTags(t *testing.T) {
 		t.Run(tag, func(t *testing.T) {
 			t.Parallel()
 			err := task.ValidateAddOptions(task.AddOptions{
-				Body: "[discovery:repo:file] Evidence: /tmp/repo/file.go:1. Scope: /tmp/repo/file.go. Fix /tmp/repo/file.go. Verify with go test ./...",
+				Body: "[discovery:repo:file] Evidence: /tmp/repo/file.go:1. Scope: /tmp/repo/file.go. Fix /tmp/repo/file.go. Success: focused issue is fixed. Verify with go test ./... Reject-if: evidence no longer matches",
 				Tags: []string{" " + tag + " "},
 			})
 			require.NoError(t, err)
@@ -148,7 +148,7 @@ func TestValidateAddOptionsGeneratedCandidateTags(t *testing.T) {
 func TestValidateAddOptionsNamedErrors(t *testing.T) {
 	t.Parallel()
 
-	const validBody = "[discovery:repo:file] Evidence: /tmp/repo/file.go:1. Scope: /tmp/repo/file.go. Fix /tmp/repo/file.go. Verify with go test ./..."
+	const validBody = "[discovery:repo:file] Evidence: /tmp/repo/file.go:1. Scope: /tmp/repo/file.go. Fix /tmp/repo/file.go. Success: focused issue is fixed. Verify with go test ./... Reject-if: evidence no longer matches"
 
 	cases := []struct {
 		name     string
@@ -159,7 +159,7 @@ func TestValidateAddOptionsNamedErrors(t *testing.T) {
 		{
 			name: "missing discovery prefix",
 			opts: task.AddOptions{
-				Body:   "Evidence: /tmp/repo/file.go:1. Scope: /tmp/repo/file.go. Fix /tmp/repo/file.go. Verify with go test ./...",
+				Body:   "Evidence: /tmp/repo/file.go:1. Scope: /tmp/repo/file.go. Fix /tmp/repo/file.go. Success: focused issue is fixed. Verify with go test ./... Reject-if: evidence no longer matches",
 				Source: "task-discovery",
 				CWD:    "/tmp/repo",
 			},
@@ -169,7 +169,7 @@ func TestValidateAddOptionsNamedErrors(t *testing.T) {
 		{
 			name: "missing verify",
 			opts: task.AddOptions{
-				Body:   "[discovery:repo:file] Evidence: /tmp/repo/file.go:1. Scope: /tmp/repo/file.go. Fix /tmp/repo/file.go.",
+				Body:   "[discovery:repo:file] Evidence: /tmp/repo/file.go:1. Scope: /tmp/repo/file.go. Fix /tmp/repo/file.go. Success: focused issue is fixed.",
 				Source: "task-discovery",
 				CWD:    "/tmp/repo",
 			},
@@ -177,9 +177,19 @@ func TestValidateAddOptionsNamedErrors(t *testing.T) {
 			contains: "verification command",
 		},
 		{
+			name: "missing success",
+			opts: task.AddOptions{
+				Body:   "[discovery:repo:file] Evidence: /tmp/repo/file.go:1. Scope: /tmp/repo/file.go. Fix /tmp/repo/file.go. Verify with go test ./... Reject-if: evidence no longer matches",
+				Source: "task-discovery",
+				CWD:    "/tmp/repo",
+			},
+			target:   task.ErrMissingSuccess,
+			contains: "success criteria",
+		},
+		{
 			name: "missing evidence",
 			opts: task.AddOptions{
-				Body:   "[discovery:repo:file] Scope: /tmp/repo/file.go. Fix /tmp/repo/file.go. Verify with go test ./...",
+				Body:   "[discovery:repo:file] Scope: /tmp/repo/file.go. Fix /tmp/repo/file.go. Success: focused issue is fixed. Verify with go test ./... Reject-if: evidence no longer matches",
 				Source: "task-discovery",
 				CWD:    "/tmp/repo",
 			},
@@ -189,7 +199,7 @@ func TestValidateAddOptionsNamedErrors(t *testing.T) {
 		{
 			name: "missing scope",
 			opts: task.AddOptions{
-				Body:   "[discovery:repo:file] Evidence: /tmp/repo/file.go:1. Fix /tmp/repo/file.go. Verify with go test ./...",
+				Body:   "[discovery:repo:file] Evidence: /tmp/repo/file.go:1. Fix /tmp/repo/file.go. Success: focused issue is fixed. Verify with go test ./... Reject-if: evidence no longer matches",
 				Source: "task-discovery",
 				CWD:    "/tmp/repo",
 			},
@@ -199,11 +209,21 @@ func TestValidateAddOptionsNamedErrors(t *testing.T) {
 		{
 			name: "missing cwd",
 			opts: task.AddOptions{
-				Body:   "[discovery:repo:file] Evidence: file.go:1. Scope: file.go. Fix file.go. Verify with go test ./...",
+				Body:   "[discovery:repo:file] Evidence: file.go:1. Scope: file.go. Fix file.go. Success: focused issue is fixed. Verify with go test ./... Reject-if: evidence no longer matches",
 				Source: "task-discovery",
 			},
 			target:   task.ErrMissingCwd,
 			contains: "cwd metadata or an absolute path",
+		},
+		{
+			name: "missing reject-if",
+			opts: task.AddOptions{
+				Body:   "[discovery:repo:file] Evidence: /tmp/repo/file.go:1. Scope: /tmp/repo/file.go. Fix /tmp/repo/file.go. Success: focused issue is fixed. Verify with go test ./...",
+				Source: "task-discovery",
+				CWD:    "/tmp/repo",
+			},
+			target:   task.ErrMissingRejectIf,
+			contains: "reject-if criteria",
 		},
 	}
 
@@ -237,17 +257,17 @@ func TestValidateAddOptionsChurnPhraseError(t *testing.T) {
 	}{
 		{
 			name:   "cleanup",
-			body:   "[discovery:repo:cleanup] Evidence: /tmp/repo/file.go:1. Scope: /tmp/repo/file.go. Clean up the file. Verify with go test ./...",
+			body:   "[discovery:repo:cleanup] Evidence: /tmp/repo/file.go:1. Scope: /tmp/repo/file.go. Clean up the file. Success: file is cleaned up. Verify with go test ./... Reject-if: evidence no longer matches",
 			phrase: "clean up",
 		},
 		{
 			name:   "refactor broadly",
-			body:   "[discovery:repo:broad] Evidence: /tmp/repo/file.go:1. Scope: /tmp/repo/file.go. Refactor broadly across the package. Verify with go test ./...",
+			body:   "[discovery:repo:broad] Evidence: /tmp/repo/file.go:1. Scope: /tmp/repo/file.go. Refactor broadly across the package. Success: package is refactored. Verify with go test ./... Reject-if: evidence no longer matches",
 			phrase: "refactor broadly",
 		},
 		{
 			name:   "x or y",
-			body:   "[discovery:repo:choice] Evidence: /tmp/repo/file.go:1. Scope: /tmp/repo/file.go. Implement X or Y. Verify with go test ./...",
+			body:   "[discovery:repo:choice] Evidence: /tmp/repo/file.go:1. Scope: /tmp/repo/file.go. Implement X or Y. Success: one option is implemented. Verify with go test ./... Reject-if: evidence no longer matches",
 			phrase: "x or y",
 		},
 	}
@@ -278,7 +298,7 @@ func TestValidateAddOptionsAllReturnsNilForValidGeneratedBody(t *testing.T) {
 	t.Parallel()
 
 	err := task.ValidateAddOptionsAll(task.AddOptions{
-		Body:   "[discovery:repo:file] Evidence: /tmp/repo/file.go:1. Scope: /tmp/repo/file.go. Fix /tmp/repo/file.go. Verify with go test ./...",
+		Body:   "[discovery:repo:file] Evidence: /tmp/repo/file.go:1. Scope: /tmp/repo/file.go. Fix /tmp/repo/file.go. Success: focused issue is fixed. Verify with go test ./... Reject-if: evidence no longer matches",
 		Source: "task-discovery",
 		CWD:    "/tmp/repo",
 	})
@@ -305,14 +325,16 @@ func TestValidateAddOptionsAllJoinsEveryFailure(t *testing.T) {
 	require.Error(t, err)
 	require.True(t, errors.Is(err, task.ErrInvalidTask))
 	require.True(t, errors.Is(err, task.ErrMissingDiscoveryPrefix))
+	require.True(t, errors.Is(err, task.ErrMissingSuccess))
 	require.True(t, errors.Is(err, task.ErrMissingVerify))
 	require.True(t, errors.Is(err, task.ErrMissingEvidence))
+	require.True(t, errors.Is(err, task.ErrMissingRejectIf))
 	require.False(t, errors.Is(err, task.ErrMissingScope))
 	require.False(t, errors.Is(err, task.ErrMissingCwd))
 
 	var joined interface{ Unwrap() []error }
 	require.True(t, errors.As(err, &joined))
-	require.Len(t, joined.Unwrap(), 3)
+	require.Len(t, joined.Unwrap(), 5)
 }
 
 func TestValidateAddOptionsAllShortCircuitsOnInvalidBody(t *testing.T) {

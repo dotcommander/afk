@@ -19,7 +19,7 @@ func newDiscoverCmd(d *Deps) *cobra.Command {
 				return nil
 			}
 			cmd.SilenceUsage = true
-			return fmt.Errorf("afk discover accepts no arguments; run it from the target repo and follow the printed workflow")
+			return fmt.Errorf("afk discover accepts no arguments; run it from the target path and follow the printed workflow")
 		},
 		Annotations: map[string]string{
 			"skipStoreInit": "true",

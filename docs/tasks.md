@@ -26,7 +26,7 @@ Validate a generated task without mutating the queue:
 
 ```sh
 afk add --dry-run --source task-discovery --tag discovery --cwd /path/to/repo \
-  "[discovery:repo:topic] Evidence: /path/to/repo/file.go:1. Scope: /path/to/repo/file.go. Fix one focused issue. Verify with go test ./..."
+  "[discovery:repo:topic] Evidence: /path/to/repo/file.go:1. Scope: /path/to/repo/file.go. Fix one focused issue. Success: focused issue is fixed. Verify with go test ./... Reject-if: evidence no longer matches"
 ```
 
 `--dry-run` applies the same validation as `afk add` but does not create a task.

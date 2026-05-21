@@ -80,6 +80,6 @@ The second task stays `pending` and is excluded from `afk ready` until the first
 ## next steps
 
 - Read [tasks.md](tasks.md) for metadata flags (`--tag`, `--priority`, `--source`, `--cwd`).
-- Run `afk discover` or read [task-discovery.md](task-discovery.md) to mine concrete candidate tasks.
+- Run `afk discover` or read [task-discovery.md](task-discovery.md) to mine concrete candidate tasks from a local path.
 - Read [runner.md](runner.md) for `afk run`, the built-in worker loop.
 - Read [command-reference.md](command-reference.md) for the full surface.

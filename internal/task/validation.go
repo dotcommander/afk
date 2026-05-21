@@ -14,10 +14,12 @@ var ErrInvalidTask = errors.New("invalid task")
 // Named generated-candidate rejection reasons. Each wraps ErrInvalidTask so
 // existing callers using errors.Is(err, ErrInvalidTask) continue to match.
 var (
-	ErrMissingDiscoveryPrefix = errors.New("generated task must start with [discovery:<repo>:<topic>]")
+	ErrMissingDiscoveryPrefix = errors.New("generated task must start with [discovery:<kind>:<topic>]")
+	ErrMissingSuccess         = errors.New("generated task must include success criteria")
 	ErrMissingVerify          = errors.New("generated task must include a verification command")
 	ErrMissingEvidence        = errors.New("generated task must include evidence")
 	ErrMissingScope           = errors.New("generated task must include scope")
+	ErrMissingRejectIf        = errors.New("generated task must include reject-if criteria")
 	ErrMissingCwd             = errors.New("generated task must include cwd metadata or an absolute path")
 	ErrInvalidPriority        = errors.New("priority must be urgent, high, normal, or low")
 )
@@ -107,6 +109,9 @@ func generatedCandidateChecks(opts AddOptions) []error {
 	if !discoveryPrefixRE.MatchString(strings.TrimSpace(opts.Body)) {
 		failures = append(failures, ErrMissingDiscoveryPrefix)
 	}
+	if !containsFold(opts.Body, "success:") {
+		failures = append(failures, ErrMissingSuccess)
+	}
 	if !containsFold(opts.Body, "verify") && !containsFold(opts.Body, "verification") {
 		failures = append(failures, ErrMissingVerify)
 	}
@@ -115,6 +120,9 @@ func generatedCandidateChecks(opts AddOptions) []error {
 	}
 	if !containsFold(opts.Body, "scope:") {
 		failures = append(failures, ErrMissingScope)
+	}
+	if !containsFold(opts.Body, "reject-if:") {
+		failures = append(failures, ErrMissingRejectIf)
 	}
 	if phrase := firstGeneratedChurnPhrase(opts.Body); phrase != "" {
 		failures = append(failures, &ChurnPhraseError{Phrase: phrase})

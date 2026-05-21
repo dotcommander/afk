@@ -114,9 +114,13 @@ func TestDiscoverCommandPrintsStubWithoutCreatingQueue(t *testing.T) {
 
 	require.NoError(t, root.Execute(), "stderr: %s", stderr.String())
 	require.Contains(t, stdout.String(), "afk discover is a workflow stub")
-	require.Contains(t, stdout.String(), "Mine concrete AFK-ready candidate tasks")
-	require.Contains(t, stdout.String(), "Ask one confirmation question such as: add all, add 1 3, or no.")
-	require.Contains(t, stdout.String(), `afk add --dry-run --cwd "$(pwd)" --source task-discovery --tag discovery --resource "repo:$(pwd)"`)
+	require.Contains(t, stdout.String(), "Mine concrete AFK-ready candidate tasks from the current local path")
+	require.Contains(t, stdout.String(), "1. Classify the path")
+	require.Contains(t, stdout.String(), "code repo, web app, docs set, knowledge base, media archive, data folder, mixed workspace")
+	require.Contains(t, stdout.String(), "Evidence:, Scope:, Success:, Verify with, and Reject-if:")
+	require.Contains(t, stdout.String(), "Ask exactly one question such as: add all, add 1 3, or no.")
+	require.Contains(t, stdout.String(), `afk add --dry-run --cwd "$(pwd)" --source task-discovery --tag discovery --resource "<kind>:$(pwd)"`)
+	require.Contains(t, stdout.String(), "Use a stable kind such as repo, docs, kb, web, media, data, or path.")
 	require.Contains(t, stdout.String(), "Use absolute paths in Evidence:/Scope:, or pass --cwd")
 	require.Contains(t, stdout.String(), "Queue inspection commands such as afk count, afk ready, and afk ls may initialize")
 	require.NotContains(t, stdout.String(), "docs/task-discovery.md")
@@ -135,6 +139,7 @@ func TestDiscoverCommandRejectsArgs(t *testing.T) {
 	err := root.Execute()
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "afk discover accepts no arguments")
+	require.Contains(t, err.Error(), "target path")
 	require.Empty(t, stdout.String())
 	require.NoFileExists(t, queuePath)
 }
@@ -368,7 +373,7 @@ func TestAddDryRunValidatesWithoutAddingTask(t *testing.T) {
 		"--json",
 		"--source", "task-discovery",
 		"--cwd", dir,
-		"[discovery:afk:validate] Evidence: /tmp/repo/file.go:1. Scope: /tmp/repo/file.go. Fix the focused issue. Verify with go test ./...",
+		"[discovery:afk:validate] Evidence: /tmp/repo/file.go:1. Scope: /tmp/repo/file.go. Fix the focused issue. Success: focused issue is fixed. Verify with go test ./... Reject-if: evidence no longer matches",
 	})
 
 	require.NoError(t, root.Execute(), "stderr: %s", stderr.String())
@@ -991,8 +996,10 @@ func TestAddDiagnoseReportsAllFailures(t *testing.T) {
 
 	out := stderr.String()
 	require.Contains(t, out, "must start with [discovery:")
+	require.Contains(t, out, "success criteria")
 	require.Contains(t, out, "verification command")
 	require.Contains(t, out, "must include evidence")
+	require.Contains(t, out, "reject-if criteria")
 	require.NoFileExists(t, filepath.Join(dir, "rejected.jsonl"), "diagnose must not write rejection sidecar")
 }
 
@@ -1034,7 +1041,7 @@ func TestAddDiagnoseAcceptsValidGeneratedBody(t *testing.T) {
 		"add", "--diagnose",
 		"--source", "task-discovery",
 		"--cwd", dir,
-		"[discovery:afk:diag] Evidence: /tmp/repo/file.go:1. Scope: /tmp/repo/file.go. Fix the focused issue. Verify with go test ./...",
+		"[discovery:afk:diag] Evidence: /tmp/repo/file.go:1. Scope: /tmp/repo/file.go. Fix the focused issue. Success: focused issue is fixed. Verify with go test ./... Reject-if: evidence no longer matches",
 	})
 
 	require.NoError(t, root.Execute(), "stderr: %s", stderr.String())
@@ -1084,7 +1091,7 @@ func TestAddDiagnoseDoesNotInsertRow(t *testing.T) {
 		"add", "--diagnose",
 		"--source", "task-discovery",
 		"--cwd", dir,
-		"[discovery:afk:diag] Evidence: /tmp/repo/file.go:1. Scope: /tmp/repo/file.go. Fix the focused issue. Verify with go test ./...",
+		"[discovery:afk:diag] Evidence: /tmp/repo/file.go:1. Scope: /tmp/repo/file.go. Fix the focused issue. Success: focused issue is fixed. Verify with go test ./... Reject-if: evidence no longer matches",
 	})
 	require.NoError(t, root.Execute(), "stderr: %s", stderr.String())
 
