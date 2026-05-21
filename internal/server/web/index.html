@@ -167,6 +167,7 @@ nav {
   padding: 24px;
   max-width: 1400px;
   margin: 0 auto;
+  overflow-x: hidden;
 }
 
 /* ─── SECTION HEADING ────────────────────────────────────────────── */
@@ -319,6 +320,7 @@ nav {
 }
 .task-body {
   flex: 1;
+  min-width: 0; /* lets the flex item shrink so text-overflow can ellipsis-clip */
   font-size: 0.8rem;
   white-space: nowrap;
   overflow: hidden;
@@ -357,6 +359,24 @@ nav {
   color: var(--orange);
   border-color: var(--orange);
   box-shadow: 0 0 6px rgba(255,107,53,0.25);
+}
+
+/* ─── PAGINATION ─────────────────────────────────────────────────── */
+.pager {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  justify-content: flex-end;
+  margin-top: 12px;
+  font-size: 0.7rem;
+  color: var(--text-dim);
+  letter-spacing: 0.1em;
+}
+.pager-info { text-transform: uppercase; }
+.pager .chip[disabled] {
+  opacity: 0.4;
+  cursor: not-allowed;
+  pointer-events: none;
 }
 
 /* ─── TABLE ──────────────────────────────────────────────────────── */
@@ -915,12 +935,28 @@ function parseRoute(hash) {
   const h = (hash || '#/').replace(/^#/, '') || '/';
   if (h === '/')             return { name: 'home' };
   if (h === '/tasks/new')    return { name: 'tasksNew' };
-  if (h === '/tasks')        return { name: 'tasks', filter: '' };
-  const m = h.match(/^\/tasks\?status=(.+)$/);
-  if (m)              return { name: 'tasks', filter: decodeURIComponent(m[1]) };
+  const tasksMatch = h.match(/^\/tasks(?:\?(.*))?$/);
+  if (tasksMatch) {
+    const params = new URLSearchParams(tasksMatch[1] || '');
+    const pageRaw = parseInt(params.get('page'), 10);
+    return {
+      name: 'tasks',
+      filter: params.get('status') || '',
+      page: Number.isFinite(pageRaw) && pageRaw >= 1 ? pageRaw : 1,
+    };
+  }
   const m2 = h.match(/^\/task\/(.+)$/);
   if (m2)             return { name: 'dossier', id: decodeURIComponent(m2[1]) };
   return { name: 'home' };
+}
+
+// Build the hash for the roster route. Omits page when 1 so old URLs stay clean.
+function tasksHash(filter, page) {
+  const params = new URLSearchParams();
+  if (filter) params.set('status', filter);
+  if (page && page > 1) params.set('page', String(page));
+  const qs = params.toString();
+  return qs ? `#/tasks?${qs}` : '#/tasks';
 }
 
 function updateNav(route) {
@@ -1065,6 +1101,8 @@ registerView('home', async (container, _route) => {
    VIEW: ROSTER  (#/tasks)
 ═══════════════════════════════════════════════════════════════════ */
 
+const TASKS_PAGE_SIZE = 100;
+
 registerView('tasks', async (container, route) => {
   let tasks;
   try {
@@ -1073,6 +1111,11 @@ registerView('tasks', async (container, route) => {
     container.appendChild(el('div', { class: 'state-msg' }, txt(err.message)));
     return;
   }
+
+  // Newest first. created is RFC3339, so lexical sort works.
+  tasks = (tasks || []).slice().sort((a, b) =>
+    (b.created || '').localeCompare(a.created || '')
+  );
 
   // Heading row with prune button
   const pruneRow = el('div', { class: 'prune-row' });
@@ -1102,18 +1145,24 @@ registerView('tasks', async (container, route) => {
     const chip = el('button', {
       class: 'chip' + (route.filter === f.value ? ' active-chip' : ''),
       onclick: () => {
-        _currentRoute = { name: 'tasks', filter: f.value };
-        navigate(f.value ? `#/tasks?status=${encodeURIComponent(f.value)}` : '#/tasks');
+        _currentRoute = { name: 'tasks', filter: f.value, page: 1 };
+        navigate(tasksHash(f.value, 1));
       },
     }, txt(f.label));
     filterBar.appendChild(chip);
   }
   container.appendChild(filterBar);
 
-  if (!tasks || tasks.length === 0) {
+  if (tasks.length === 0) {
     container.appendChild(el('div', { class: 'state-msg' }, txt('ALL QUIET ON THE LAUNCHPAD')));
     return;
   }
+
+  // Pagination: clamp the requested page into the available range.
+  const totalPages = Math.max(1, Math.ceil(tasks.length / TASKS_PAGE_SIZE));
+  const currentPage = Math.min(Math.max(1, route.page || 1), totalPages);
+  const sliceStart = (currentPage - 1) * TASKS_PAGE_SIZE;
+  const pageTasks = tasks.slice(sliceStart, sliceStart + TASKS_PAGE_SIZE);
 
   // Table
   const panel = el('div', { class: 'panel' });
@@ -1127,7 +1176,7 @@ registerView('tasks', async (container, route) => {
   table.appendChild(thead);
 
   const tbody = el('tbody');
-  for (const t of tasks) {
+  for (const t of pageTasks) {
     const tr = el('tr', asButton({ 'aria-label': `Open task ${t.id}` }, () => navigate(`#/task/${encodeURIComponent(t.id)}`)));
 
     // lamp
@@ -1157,6 +1206,27 @@ registerView('tasks', async (container, route) => {
   table.appendChild(tbody);
   panel.appendChild(table);
   container.appendChild(panel);
+
+  // Pager (only when there is more than one page).
+  if (totalPages > 1) {
+    const rangeStart = sliceStart + 1;
+    const rangeEnd = sliceStart + pageTasks.length;
+    const pager = el('div', { class: 'pager' });
+    pager.appendChild(el('span', { class: 'pager-info' },
+      txt(`${rangeStart}–${rangeEnd} OF ${tasks.length} · PAGE ${currentPage} / ${totalPages}`)));
+
+    const mkBtn = (label, targetPage, enabled) => {
+      const attrs = { class: 'chip', onclick: () => {
+        _currentRoute = { name: 'tasks', filter: route.filter, page: targetPage };
+        navigate(tasksHash(route.filter, targetPage));
+      }};
+      if (!enabled) attrs.disabled = true;
+      return el('button', attrs, txt(label));
+    };
+    pager.appendChild(mkBtn('PREV', currentPage - 1, currentPage > 1));
+    pager.appendChild(mkBtn('NEXT', currentPage + 1, currentPage < totalPages));
+    container.appendChild(pager);
+  }
 });
 
 /* ═══════════════════════════════════════════════════════════════════
