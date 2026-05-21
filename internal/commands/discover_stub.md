@@ -34,10 +34,15 @@ Mine concrete AFK-ready candidate tasks from the current local path. This comman
   - about one hour or less for a fresh worker
   - Evidence:, Scope:, Success:, Verify with, and Reject-if:
   - exact verification command or deterministic local check
-  - low churn risk and no broad cleanup/refactor wording
+  - clear value, low churn risk, and no broad cleanup/refactor wording
   - no duplicate pending or working task for the same behavior
 
 5. Rank by impact and reject before enqueueing.
+
+  First ask: is this value or churn?
+  Value changes remove a real bug, unblock a workflow, prevent a plausible failure mode, reduce operator pain, or make future work less ambiguous with measured payoff.
+  Churn changes are style-only, cosmetic polish, generic cleanup, speculative abstraction, pure test/docs padding, or "nice to have" work without current proof.
+  Reject churn even when it is easy.
 
   Rank 3-7 strong candidates using this priority order:
   1. core behavior or correctness: real bugs, broken workflows, bad state handling, auth/session/cache/data issues, race or stale-state hazards
@@ -47,7 +52,7 @@ Mine concrete AFK-ready candidate tasks from the current local path. This comman
   5. maintainability with measured payoff: small duplication removal only when current code proves risk or friction
   6. tests/docs only as enablers for higher-impact work or broken command/docs-source contradictions
   7. pure test gaps or docs polish last; do not present them as primary discoveries when stronger codebase tasks exist
-  Show rejected stale, broad, duplicate, risky, or unverified leads.
+  Show rejected stale, broad, duplicate, risky, unverified, or churn leads.
   Use blocked_by when candidates must run in order.
 
 6. Validate task bodies with dry-run.
