@@ -74,6 +74,24 @@ func newCountCmd(d *Deps) *cobra.Command {
 	return cmd
 }
 
+func newStatusCmd(d *Deps) *cobra.Command {
+	var asJSON bool
+
+	cmd := &cobra.Command{
+		Use:   "status",
+		Short: "Print a queue snapshot: tallies plus pending and working tasks",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			snapshot, err := d.Service.Status(cmd.Context())
+			if err != nil {
+				return err
+			}
+			return output.WriteStatus(d.Stdout, snapshot.Counts, snapshot.Pending, snapshot.Working, asJSON)
+		},
+	}
+	cmd.Flags().BoolVar(&asJSON, "json", false, "emit JSON output")
+	return cmd
+}
+
 func newNextCmd(d *Deps) *cobra.Command {
 	var asJSON bool
 
