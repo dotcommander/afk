@@ -300,7 +300,7 @@ nav {
 /* ─── TASK ROW ───────────────────────────────────────────────────── */
 .task-row {
   display: flex;
-  align-items: center;
+  align-items: flex-start; /* keep lamp/id/age aligned to top when body wraps */
   gap: 10px;
   padding: 8px 10px;
   border-radius: var(--radius);
@@ -317,20 +317,21 @@ nav {
   color: var(--text-dim);
   white-space: nowrap;
   min-width: 60px;
+  padding-top: 2px; /* nudge to align with first line of wrapped body */
 }
 .task-body {
   flex: 1;
-  min-width: 0; /* lets the flex item shrink so text-overflow can ellipsis-clip */
+  min-width: 0;
   font-size: 0.8rem;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  white-space: pre-wrap;   /* preserve newlines in task bodies */
+  word-break: break-word;  /* let long paths/URLs wrap inside the panel */
   color: var(--text);
 }
 .task-age {
   font-size: 0.65rem;
   color: var(--text-dim);
   white-space: nowrap;
+  padding-top: 2px; /* match .task-id so right column aligns with first body line */
 }
 
 /* ─── FILTER CHIPS ───────────────────────────────────────────────── */
