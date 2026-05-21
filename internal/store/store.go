@@ -3,7 +3,6 @@ package store
 
 import (
 	"errors"
-	"time"
 )
 
 // ErrNotFound is returned when a task id is absent.
@@ -29,8 +28,3 @@ var ErrDuplicateTask = errors.New("duplicate task")
 
 // ErrWorkerMismatch is returned when worker-owned state is modified by another worker.
 var ErrWorkerMismatch = errors.New("worker mismatch")
-
-// ReadyOptions controls ready-task selection.
-type ReadyOptions struct {
-	Now time.Time
-}

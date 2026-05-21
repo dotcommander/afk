@@ -12,7 +12,7 @@ import (
 // Defined here (where consumed) per Go interface idiom.
 type Store interface {
 	List(ctx context.Context) ([]task.Task, error)
-	Ready(ctx context.Context, opts store.ReadyOptions) ([]task.Task, error)
+	Ready(ctx context.Context) ([]task.Task, error)
 	Add(ctx context.Context, t task.Task) error
 	Update(ctx context.Context, id string, event task.EventType, message string, fn func(*task.Task) bool) error
 	Delete(ctx context.Context, id string) error

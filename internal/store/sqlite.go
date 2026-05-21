@@ -110,7 +110,7 @@ ORDER BY ordinal, rowid`)
 }
 
 // Ready returns tasks that are currently eligible to be claimed, in scheduler order.
-func (s *SQLiteStore) Ready(ctx context.Context, _ ReadyOptions) ([]task.Task, error) {
+func (s *SQLiteStore) Ready(ctx context.Context) ([]task.Task, error) {
 	rows, err := s.db.QueryContext(ctx, `
 SELECT id, created, status, body, started, lease_expires, finished, error,
 	priority, tags, cwd, source, agent, group_id, resource_key

@@ -162,7 +162,7 @@ func TestSQLiteStoreReadyReturnsPendingTasksInClaimOrder(t *testing.T) {
 	require.NoError(t, s.Add(ctx, task.Task{ID: "failed", Status: task.StatusFailed, Body: "failed"}))
 	require.NoError(t, s.Add(ctx, task.Task{ID: "second", Status: task.StatusPending, Body: "second"}))
 
-	ready, err := s.Ready(ctx, store.ReadyOptions{})
+	ready, err := s.Ready(ctx)
 	require.NoError(t, err)
 	require.Len(t, ready, 2)
 	require.Equal(t, "first", ready[0].ID)
@@ -184,7 +184,7 @@ func TestSQLiteStoreReadyOrdersByPriority(t *testing.T) {
 		require.NoError(t, s.Add(ctx, tsk))
 	}
 
-	ready, err := s.Ready(ctx, store.ReadyOptions{})
+	ready, err := s.Ready(ctx)
 	require.NoError(t, err)
 	requireIDs(t, ready, "urgent", "high", "normal", "unknown", "low")
 }
@@ -214,7 +214,6 @@ func TestSQLiteStorePriorityDoesNotBypassReadinessConstraints(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	s := newStore(t)
-	now := time.Date(2025, 1, 2, 3, 4, 5, 0, time.UTC)
 
 	require.NoError(t, s.Add(ctx, task.Task{ID: "blocked-by-dep", Status: task.StatusPending, Body: "blocked", Priority: "urgent"}))
 	require.NoError(t, s.Add(ctx, task.Task{ID: "prereq", Status: task.StatusPending, Body: "prereq"}))
@@ -226,7 +225,7 @@ func TestSQLiteStorePriorityDoesNotBypassReadinessConstraints(t *testing.T) {
 	require.NoError(t, s.Add(ctx, task.Task{ID: "resource-active", Status: task.StatusWorking, Body: "active", ResourceKey: "repo:x"}))
 	require.NoError(t, s.Add(ctx, task.Task{ID: "resource-blocked", Status: task.StatusPending, Body: "blocked", Priority: "urgent", ResourceKey: "repo:x"}))
 
-	ready, err := s.Ready(ctx, store.ReadyOptions{Now: now.Add(time.Second)})
+	ready, err := s.Ready(ctx)
 	require.NoError(t, err)
 	requireIDs(t, ready, "prereq")
 }
@@ -241,7 +240,7 @@ func TestSQLiteStoreReadyAgreesWithClaimNext(t *testing.T) {
 	require.NoError(t, s.Add(ctx, task.Task{ID: "first", Status: task.StatusPending, Body: "first"}))
 	require.NoError(t, s.Add(ctx, task.Task{ID: "second", Status: task.StatusPending, Body: "second"}))
 
-	ready, err := s.Ready(ctx, store.ReadyOptions{Now: now})
+	ready, err := s.Ready(ctx)
 	require.NoError(t, err)
 	require.Len(t, ready, 2)
 
@@ -262,7 +261,7 @@ func TestSQLiteStorePromote(t *testing.T) {
 
 	require.NoError(t, s.Promote(ctx, "second"))
 
-	ready, err := s.Ready(ctx, store.ReadyOptions{})
+	ready, err := s.Ready(ctx)
 	require.NoError(t, err)
 	requireIDs(t, ready, "urgent", "second", "first")
 
@@ -299,7 +298,7 @@ func TestSQLiteStoreReadyExcludesUnfinishedDependencies(t *testing.T) {
 	require.NoError(t, s.Add(ctx, task.Task{ID: "prereq", Status: task.StatusPending, Body: "prereq"}))
 	require.NoError(t, s.AddDependency(ctx, "blocked", "prereq"))
 
-	ready, err := s.Ready(ctx, store.ReadyOptions{})
+	ready, err := s.Ready(ctx)
 	require.NoError(t, err)
 	require.Len(t, ready, 1)
 	require.Equal(t, "prereq", ready[0].ID)
@@ -316,7 +315,7 @@ func TestSQLiteStoreReadyExcludesMissingDependencies(t *testing.T) {
 	require.NoError(t, s.AddDependency(ctx, "blocked", "prereq"))
 	require.NoError(t, s.Delete(ctx, "prereq"))
 
-	ready, err := s.Ready(ctx, store.ReadyOptions{Now: now})
+	ready, err := s.Ready(ctx)
 	require.NoError(t, err)
 	require.Empty(t, ready)
 
@@ -479,7 +478,7 @@ func TestSQLiteStoreManualBlocks(t *testing.T) {
 	require.NotNil(t, block)
 	require.Equal(t, "waiting on credentials", block.Reason)
 
-	ready, err := s.Ready(ctx, store.ReadyOptions{Now: now})
+	ready, err := s.Ready(ctx)
 	require.NoError(t, err)
 	require.Len(t, ready, 1)
 	require.Equal(t, "next", ready[0].ID)
@@ -495,7 +494,7 @@ func TestSQLiteStoreManualBlocks(t *testing.T) {
 	require.Nil(t, block)
 	require.ErrorIs(t, s.Unblock(ctx, "blocked"), store.ErrBlockNotFound)
 
-	ready, err = s.Ready(ctx, store.ReadyOptions{Now: now})
+	ready, err = s.Ready(ctx)
 	require.NoError(t, err)
 	require.Len(t, ready, 1)
 	require.Equal(t, "blocked", ready[0].ID)
@@ -520,7 +519,7 @@ func TestSQLiteStoreResourceLocksAffectClaim(t *testing.T) {
 	require.NotNil(t, claimed)
 	require.Equal(t, "first", claimed.ID)
 
-	ready, err := s.Ready(ctx, store.ReadyOptions{Now: now})
+	ready, err := s.Ready(ctx)
 	require.NoError(t, err)
 	require.Len(t, ready, 1)
 	require.Equal(t, "other", ready[0].ID)
@@ -546,7 +545,7 @@ func TestSQLiteStoreExpiredLeaseRequeueReleasesResourceLock(t *testing.T) {
 	_, err := s.ClaimNext(ctx, now.Add(-time.Hour), now.Add(-30*time.Minute))
 	require.NoError(t, err)
 
-	ready, err := s.Ready(ctx, store.ReadyOptions{Now: now})
+	ready, err := s.Ready(ctx)
 	require.NoError(t, err)
 	require.Empty(t, ready)
 
@@ -557,7 +556,7 @@ func TestSQLiteStoreExpiredLeaseRequeueReleasesResourceLock(t *testing.T) {
 	_, err = s.RequeueStale(ctx, time.Minute, now)
 	require.NoError(t, err)
 
-	ready, err = s.Ready(ctx, store.ReadyOptions{Now: now})
+	ready, err = s.Ready(ctx)
 	require.NoError(t, err)
 	require.Len(t, ready, 2)
 	require.Equal(t, "first", ready[0].ID)

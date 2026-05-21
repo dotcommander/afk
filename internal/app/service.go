@@ -214,7 +214,7 @@ func (s *Service) Status(ctx context.Context) (StatusSnapshot, error) {
 
 // Next returns the first pending task without mutation.
 func (s *Service) Next(ctx context.Context) (*task.Task, error) {
-	tasks, err := s.store.Ready(ctx, store.ReadyOptions{Now: s.now()})
+	tasks, err := s.store.Ready(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -263,7 +263,7 @@ func (s *Service) Unblock(ctx context.Context, taskID string) error {
 
 // Ready returns pending tasks with no unfinished dependencies in scheduler order.
 func (s *Service) Ready(ctx context.Context) ([]task.Task, error) {
-	return s.store.Ready(ctx, store.ReadyOptions{Now: s.now()})
+	return s.store.Ready(ctx)
 }
 
 // Why returns computed readiness information for one task.
@@ -282,7 +282,7 @@ func (s *Service) Why(ctx context.Context, id string) (ReadinessData, error) {
 	if err != nil {
 		return ReadinessData{}, err
 	}
-	ready, err := s.store.Ready(ctx, store.ReadyOptions{Now: s.now()})
+	ready, err := s.store.Ready(ctx)
 	if err != nil {
 		return ReadinessData{}, err
 	}
