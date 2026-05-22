@@ -14,6 +14,7 @@ func newPromptCmd(d *Deps) *cobra.Command {
 	var outputPath string
 	var taskID string
 	var discover bool
+	var discoverFull bool
 
 	cmd := &cobra.Command{
 		Use:   "prompt",
@@ -34,18 +35,22 @@ func newPromptCmd(d *Deps) *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			exe := "afk"
 			var body string
+			if discoverFull && !discover {
+				cmd.SilenceUsage = true
+				return fmt.Errorf("--full requires --discover")
+			}
 			if taskID != "" && discover {
 				cmd.SilenceUsage = true
 				return fmt.Errorf("--task and --discover are mutually exclusive")
 			}
 			if discover {
 				if outputPath == "" {
-					return writeDiscoverPrompt(d)
+					return writeDiscoverPrompt(d, discoverFull)
 				}
 				var stdout strings.Builder
 				promptDeps := *d
 				promptDeps.Stdout = &stdout
-				if err := writeDiscoverPrompt(&promptDeps); err != nil {
+				if err := writeDiscoverPrompt(&promptDeps, discoverFull); err != nil {
 					return err
 				}
 				body = stdout.String()
@@ -71,5 +76,6 @@ func newPromptCmd(d *Deps) *cobra.Command {
 	cmd.Flags().StringVar(&outputPath, "output", "", "write prompt Markdown to path instead of stdout")
 	cmd.Flags().StringVar(&taskID, "task", "", "generate a focused prompt for one task id")
 	cmd.Flags().BoolVar(&discover, "discover", false, "generate task-discovery workflow guidance")
+	cmd.Flags().BoolVar(&discoverFull, "full", false, "print the full task-discovery policy with --discover")
 	return cmd
 }

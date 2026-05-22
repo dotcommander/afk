@@ -54,9 +54,9 @@ type attemptView struct {
 }
 
 type loopView struct {
-	SQLitePath, PopCmd, StatusCmd, LsPendingCmd, LsWorkingCmd   string
-	DoneCmd, FailCmd, ExplainCmd, RecoverFailCmd, RecoverAddCmd string
-	RetryCmd                                                    string
+	SQLitePath, PopCmd, PreviewCmd, StatusCmd, LsPendingCmd string
+	LsWorkingCmd, DoneCmd, FailCmd, ExplainCmd              string
+	RecoverFailCmd, RecoverAddCmd, RetryCmd                 string
 }
 
 // joinCmd joins exe and args into a single command string.
@@ -153,12 +153,13 @@ func Loop(opts LoopOptions) string {
 
 	v := loopView{
 		SQLitePath:     sqlitePath,
-		PopCmd:         joinCmd(exe, "take"),
-		StatusCmd:      joinCmd(exe, "status"),
+		PopCmd:         joinCmd(exe, "take --worker <name> --lease 60m --summary"),
+		PreviewCmd:     joinCmd(exe, "take --dry-run --summary --full --envelope --limit 5"),
+		StatusCmd:      joinCmd(exe, "status --summary"),
 		LsPendingCmd:   joinCmd(exe, "tasks --status todo --json"),
 		LsWorkingCmd:   joinCmd(exe, "tasks --status doing --json"),
-		DoneCmd:        joinCmd(exe, `set <id> done --note "<verification evidence>"`),
-		FailCmd:        joinCmd(exe, `set <id> failed --note "<one-line reason>"`),
+		DoneCmd:        joinCmd(exe, `set <id> done --note "<verification evidence>" --summary`),
+		FailCmd:        joinCmd(exe, `set <id> failed --note "<one-line reason>" --summary`),
 		RetryCmd:       joinCmd(exe, `retry <id> --reason "<why retrying now>"`),
 		ExplainCmd:     joinCmd(exe, "task <id>"),
 		RecoverFailCmd: joinCmd(exe, `set <id> failed --note "orphaned doing claim"`),

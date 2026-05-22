@@ -5,10 +5,17 @@ import (
 	"fmt"
 )
 
-//go:embed discover_stub.md
-var discoverStubText string
+//go:embed discover_concise.md
+var discoverConciseText string
 
-func writeDiscoverPrompt(d *Deps) error {
-	_, err := fmt.Fprint(d.Stdout, discoverStubText)
+//go:embed discover_stub.md
+var discoverFullText string
+
+func writeDiscoverPrompt(d *Deps, full bool) error {
+	body := discoverConciseText
+	if full {
+		body = discoverFullText
+	}
+	_, err := fmt.Fprint(d.Stdout, body)
 	return err
 }
