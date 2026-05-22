@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.4.0 (2026-05-22)
+
+### Features
+
+- Harden AFK attempt lifecycle semantics so targeted `set <id> doing` retries open a fresh attempt, terminal `set` operations keep attempt history coherent, and successful completion clears stale task-level errors.
+- Add structured completion and context helpers: `afk set --json`, `afk take --summary`, and `afk snapshot` for durable before/after evidence.
+
 ## v0.3.6 (2026-05-22)
 
 ### Fixes
