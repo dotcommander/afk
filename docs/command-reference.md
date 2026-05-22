@@ -18,6 +18,7 @@ The public command surface is intentionally small.
 | `afk find <query> [--status STATUS] [--json]` | Search id, body, status, cwd, source, tags, resource, agent, group, and error text. |
 | `afk take [--dry-run] [--limit N] [--lease DURATION] [--worker ID] [--json] [--summary]` | Preview or atomically claim the first ready task. |
 | `afk set <id> <status> [note...] [--json]` | Move a task to `todo`, `doing`, `done`, `failed`, or `deleted`. |
+| `afk retry <id> [--reason TEXT] [--json]` | Convenience command for reopening a failed task as `doing` with a new attempt. |
 | `afk snapshot [--label LABEL] [--task ID] [--output PATH]` | Export a read-only JSON evidence snapshot for before/after comparisons. |
 | `afk prompt [--task ID] [--discover] [--output PATH]` | Emit LLM-agent instruction prompts. |
 | `afk serve [--addr HOST:PORT]` | Start the local web UI and API. |
@@ -54,16 +55,20 @@ afk take --summary
 
 ## targeted retry
 
-Use `set <id> doing` when retrying one specific failed task. This opens a new
-attempt, clears stale task-level error text, and keeps prior failed attempts in
-history:
+Use `retry <id>` when retrying one specific failed task. This opens a new
+attempt by moving the task to `doing`, clears stale task-level error text, and
+keeps prior failed attempts in history:
 
 ```sh
 afk task "$id" --json
-afk set "$id" doing "retrying after fixing the blocker"
+afk retry "$id" --reason "fixed the blocker"
 # do the work
 afk set "$id" done
 ```
+
+`afk retry <id>` is equivalent to `afk set <id> doing "retrying: <reason>"`.
+Use `afk set <id> todo <note>` instead when you are not retrying it now and
+only want to return it to the ready queue.
 
 `afk set <id> done` and `afk set <id> failed` always leave attempt history
 coherent. If there is no open attempt, AFK records a synthetic terminal attempt
@@ -90,7 +95,8 @@ afk snapshot --label after --task "$id" --output after.json
 | `afk ready` / `afk run --dry-run` | `afk take --dry-run` |
 | `afk done <id>` | `afk set <id> done` |
 | `afk fail <id> <reason>` | `afk set <id> failed <reason>` |
-| `afk retry <id>` / `afk reset <id>` | `afk set <id> doing "retrying"` for a targeted retry, or `afk set <id> todo <note>` to return work to the ready queue. |
+| `afk retry <id>` | Still supported. Prefer `afk retry <id> --reason <reason>` for a targeted retry. |
+| `afk reset <id>` | `afk set <id> doing "retrying"` for a targeted retry, or `afk set <id> todo <note>` to return work to the ready queue. |
 | `afk prune` / `afk rm` | `afk set <id> deleted` |
 | `afk run` | External loop: `afk take`, execute the task, then `afk set`. |
 

@@ -29,6 +29,13 @@ If `{{.CWD}}` exists and the task body does not specify another absolute path, s
 {{- end}}
 ## Finalize
 
+{{if .CanRetry}}This task is currently failed. If you are retrying it now, open a new attempt before doing work:
+
+```bash
+{{.RetryCmd}}
+```
+
+{{end}}
 On success:
 
 ```bash

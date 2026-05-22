@@ -24,6 +24,7 @@ Tasks move through `todo`, `doing`, `done`, `failed`, and `deleted`. Scheduler s
 | `afk find <query> [--json]` | Search task text and metadata for duplicate checks. |
 | `afk take [--dry-run] [--lease DURATION] [--worker ID] [--summary]` | Preview or claim ready work. |
 | `afk set <id> <status> [note...] [--json]` | Set `todo`, `doing`, `done`, `failed`, or `deleted`. |
+| `afk retry <id> [--reason TEXT] [--json]` | Open a new attempt for a failed task. |
 | `afk snapshot [--label LABEL] [--task ID] [--output PATH]` | Export read-only JSON evidence for before/after comparisons. |
 | `afk prompt [--task ID]` | Generate LLM-agent instructions. |
 | `afk serve` | Run the web visibility layer. |
@@ -36,7 +37,8 @@ Tasks move through `todo`, `doing`, `done`, `failed`, and `deleted`. Scheduler s
 - `ready` / `run --dry-run` -> `take --dry-run`
 - `done` -> `set <id> done`
 - `fail` -> `set <id> failed <reason>`
-- `retry` / `reset` -> `set <id> doing "retrying"` for targeted retry, or `set <id> todo <note>` to return work to the ready queue
+- `retry` -> `retry <id> --reason <reason>`
+- `reset` -> `set <id> doing "retrying"` for targeted retry, or `set <id> todo <note>` to return work to the ready queue
 - `prune` / `rm` -> `set <id> deleted`
 - `run` -> a shell or agent loop that calls `take`, executes the task, then calls `set`
 
@@ -58,6 +60,7 @@ fi
 ## docs
 
 - [`docs/command-reference.md`](docs/command-reference.md)
+- [`docs/faq.md`](docs/faq.md)
 - [`docs/getting-started.md`](docs/getting-started.md)
 - [`docs/tasks.md`](docs/tasks.md)
 - [`docs/scheduling.md`](docs/scheduling.md)

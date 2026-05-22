@@ -35,11 +35,13 @@ type taskView struct {
 	ID, Status, Body, CWD string
 	MetaLines             []string
 	HasHistory            bool
+	CanRetry              bool
 	OmittedEvents         int
 	OmittedAttempts       int
 	Events                []eventView
 	Attempts              []attemptView
 	DoneCmd, FailCmd      string
+	RetryCmd              string
 }
 
 type eventView struct {
@@ -54,6 +56,7 @@ type attemptView struct {
 type loopView struct {
 	SQLitePath, PopCmd, StatusCmd, LsPendingCmd, LsWorkingCmd   string
 	DoneCmd, FailCmd, ExplainCmd, RecoverFailCmd, RecoverAddCmd string
+	RetryCmd                                                    string
 }
 
 // joinCmd joins exe and args into a single command string.
@@ -123,12 +126,14 @@ func Task(exe string, t task.Task, events []task.Event, attempts []task.Attempt)
 		CWD:             t.CWD,
 		MetaLines:       meta,
 		HasHistory:      len(events) > 0 || len(attempts) > 0,
+		CanRetry:        task.NormalizeStatus(t.Status) == task.StatusFailed,
 		OmittedEvents:   omE,
 		OmittedAttempts: omA,
 		Events:          evs,
 		Attempts:        atts,
 		DoneCmd:         joinCmd(exe, "set "+t.ID+" done"),
 		FailCmd:         joinCmd(exe, "set "+t.ID+` failed "<one-line reason>"`),
+		RetryCmd:        joinCmd(exe, "retry "+t.ID+` --reason "<why retrying now>"`),
 	}
 
 	var b strings.Builder
@@ -154,6 +159,7 @@ func Loop(opts LoopOptions) string {
 		LsWorkingCmd:   joinCmd(exe, "tasks --status doing --json"),
 		DoneCmd:        joinCmd(exe, "set <id> done"),
 		FailCmd:        joinCmd(exe, `set <id> failed "<one-line reason>"`),
+		RetryCmd:       joinCmd(exe, `retry <id> --reason "<why retrying now>"`),
 		ExplainCmd:     joinCmd(exe, "task <id>"),
 		RecoverFailCmd: joinCmd(exe, `set <id> failed "orphaned doing claim"`),
 		RecoverAddCmd:  joinCmd(exe, `add "replacement task body, if still needed"`),

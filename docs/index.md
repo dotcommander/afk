@@ -12,6 +12,7 @@ Start here:
 |---|---|
 | [getting-started.md](getting-started.md) | Add, inspect, claim, finish, serve. |
 | [command-reference.md](command-reference.md) | Public commands and removed-command replacements. |
+| [faq.md](faq.md) | Troubleshooting, how-to recipes, and common queue surprises. |
 | [tasks.md](tasks.md) | Task metadata, search, deletion, and history. |
 | [workers.md](workers.md) | Claiming and finalizing work. |
 | [runner.md](runner.md) | How to replace the removed `afk run`. |

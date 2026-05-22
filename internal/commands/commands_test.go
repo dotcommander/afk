@@ -195,6 +195,63 @@ func TestSetDoingCreatesRetryAttempt(t *testing.T) {
 	require.Contains(t, fmt.Sprint(attempts[1]), "done")
 }
 
+func TestRetryCommandCreatesRetryAttempt(t *testing.T) {
+	t.Parallel()
+
+	queuePath := filepath.Join(t.TempDir(), "tasks.sqlite")
+	stdout, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	d := testDepsWithWriters(stdout, stderr)
+
+	run := func(args ...string) string {
+		t.Helper()
+		stdout.Reset()
+		stderr.Reset()
+		root := NewRoot(d, "test")
+		root.SetArgs(append([]string{"--queue", queuePath}, args...))
+		require.NoError(t, root.Execute(), "stderr: %s", stderr.String())
+		return stdout.String()
+	}
+
+	id := strings.TrimSpace(run("add", "--no-cwd", "retry command task"))
+	run("take")
+	run("set", id, "failed", "workspace permission blocked")
+
+	require.JSONEq(t, `{"id":"`+id+`","status":"doing","note":"retrying: workspace permission approved"}`, run("retry", id, "--reason", "workspace permission approved", "--json"))
+	run("set", id, "done")
+
+	var doc map[string]any
+	require.NoError(t, json.Unmarshal([]byte(strings.TrimSpace(run("task", id, "--json"))), &doc))
+	taskDoc := doc["task"].(map[string]any)
+	require.Equal(t, "done", taskDoc["status"])
+	require.NotContains(t, taskDoc, "error")
+	attempts := doc["attempts"].([]any)
+	require.Len(t, attempts, 2)
+	require.Contains(t, fmt.Sprint(attempts[0]), "workspace permission blocked")
+	require.Contains(t, fmt.Sprint(attempts[1]), "done")
+}
+
+func TestRetryCommandDefaultReason(t *testing.T) {
+	t.Parallel()
+
+	queuePath := filepath.Join(t.TempDir(), "tasks.sqlite")
+	stdout, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	d := testDepsWithWriters(stdout, stderr)
+
+	run := func(args ...string) string {
+		t.Helper()
+		stdout.Reset()
+		stderr.Reset()
+		root := NewRoot(d, "test")
+		root.SetArgs(append([]string{"--queue", queuePath}, args...))
+		require.NoError(t, root.Execute(), "stderr: %s", stderr.String())
+		return stdout.String()
+	}
+
+	id := strings.TrimSpace(run("add", "--no-cwd", "retry default task"))
+	require.Equal(t, "retry "+id+" doing\n", run("retry", id))
+	require.Contains(t, run("task", id), "retrying")
+}
+
 func TestSnapshotCommandJSONAndOutputFile(t *testing.T) {
 	t.Parallel()
 
@@ -525,6 +582,7 @@ func TestCommandRunEPropagatesServiceErrors(t *testing.T) {
 		{name: "set", cmd: newSetCmd(d), args: []string{"id", "done"}},
 		{name: "take dry-run", cmd: newTakeCmd(d), args: []string{"--dry-run"}},
 		{name: "take claim", cmd: newTakeCmd(d)},
+		{name: "retry", cmd: newRetryCmd(d), args: []string{"id"}},
 		{name: "snapshot", cmd: newSnapshotCmd(d)},
 		{name: "requeue", cmd: newRequeueStaleCmd(d), args: []string{"--older-than", "1s"}},
 		{name: "heartbeat", cmd: newHeartbeatCmd(d), args: []string{"id", "--worker", "worker"}},

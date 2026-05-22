@@ -47,6 +47,7 @@ func TestLoopIncludesCurrentQueueInstructions(t *testing.T) {
 	require.Contains(t, out, "afk take")
 	require.Contains(t, out, "afk set <id> done")
 	require.Contains(t, out, "afk set <id> failed")
+	require.Contains(t, out, `afk retry <id> --reason`)
 	require.Contains(t, out, "/tmp/tasks.sqlite")
 	require.Contains(t, out, "record `id`, `body`, and any metadata")
 	require.Contains(t, out, "If the task has `cwd`, treat it as the likely working directory")
@@ -105,6 +106,7 @@ func TestTaskPromptIncludesContextHistoryAndFinalization(t *testing.T) {
 	require.Contains(t, out, "/tmp/repo")
 	require.Contains(t, out, "/tmp/afk set 123 done")
 	require.Contains(t, out, "/tmp/afk set 123 failed")
+	require.Contains(t, out, `/tmp/afk retry 123 --reason`)
 	require.Contains(t, out, "attempt #1")
 
 	// Regression: body must be wrapped in XML delimiters (prompt-injection hardening).
