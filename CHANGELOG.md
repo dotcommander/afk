@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.3.5 (2026-05-22)
+
+### Fixes
+
+- Build installed binaries with the current git tag as `afk --version`.
+
 ## v0.3.4 (2026-05-22)
 
 ### Fixes
