@@ -21,6 +21,24 @@ The public command surface is intentionally small.
 | `afk prompt [--task ID] [--discover] [--output PATH]` | Emit LLM-agent instruction prompts. |
 | `afk serve [--addr HOST:PORT]` | Start the local web UI and API. |
 
+## take readiness
+
+`afk take` claims only tasks that are ready. A `todo` task is not ready while it
+has unfinished dependencies or while another `doing` task holds the same
+non-empty resource key.
+
+Preview ready tasks without claiming:
+
+```sh
+afk take --dry-run --limit 5 --json
+```
+
+Use `--limit 0` to print all currently ready tasks:
+
+```sh
+afk take --dry-run --limit 0 --json
+```
+
 ## replacement map
 
 | Old behavior | New command |

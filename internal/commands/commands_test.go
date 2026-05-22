@@ -68,6 +68,31 @@ func TestCommandsLifecycleThroughRoot(t *testing.T) {
 	require.Contains(t, run("tasks", "--status", "deleted"), failedID)
 }
 
+func TestTakeDryRunLimitZeroReturnsAllReadyTasks(t *testing.T) {
+	t.Parallel()
+
+	queuePath := filepath.Join(t.TempDir(), "tasks.sqlite")
+	stdout, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	d := testDepsWithWriters(stdout, stderr)
+
+	run := func(args ...string) string {
+		t.Helper()
+		stdout.Reset()
+		stderr.Reset()
+		root := NewRoot(d, "test")
+		root.SetArgs(append([]string{"--queue", queuePath}, args...))
+		require.NoError(t, root.Execute(), "stderr: %s", stderr.String())
+		return stdout.String()
+	}
+
+	firstID := strings.TrimSpace(run("add", "--no-cwd", "first ready task"))
+	secondID := strings.TrimSpace(run("add", "--no-cwd", "second ready task"))
+
+	ready := run("take", "--dry-run", "--limit", "0", "--json")
+	require.Contains(t, ready, firstID)
+	require.Contains(t, ready, secondID)
+}
+
 func TestStatusSummaryJSON(t *testing.T) {
 	t.Parallel()
 

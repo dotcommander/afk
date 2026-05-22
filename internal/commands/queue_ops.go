@@ -30,7 +30,7 @@ func newTakeCmd(d *Deps) *cobra.Command {
 				if err != nil {
 					return err
 				}
-				if limit >= 0 && len(ready) > limit {
+				if limit > 0 && len(ready) > limit {
 					ready = ready[:limit]
 				}
 				return output.WriteList(d.Stdout, ready, asJSON)

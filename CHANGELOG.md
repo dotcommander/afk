@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.3.4 (2026-05-22)
+
+### Fixes
+
+- Treat `afk take --dry-run --limit 0` as an unbounded ready-task preview.
+
+### Other
+
+- Clarify `take` readiness, resource locks, and `--limit 0` behavior in docs.
+
 ## v0.3.3 (2026-05-22)
 
 ### Other
