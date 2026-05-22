@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.3.3 (2026-05-22)
+
+### Other
+
+- Simplify the public CLI around `add`, `tasks`, `task`, `status`, `find`, `take`, `set`, `prompt`, and `serve`.
+- Remove legacy queue commands and document replacements for external worker loops.
+- Extract AFK loop and task prompts into embedded templates.
+- Expand regression coverage for the trimmed command surface.
+
 ## v0.3.0 (2026-05-21)
 
 ### Features
