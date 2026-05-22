@@ -86,7 +86,7 @@ Mine concrete AFK-ready candidate tasks from the material the user wants reviewe
   Duplicate-check against todo and doing tasks early — before broad evidence collection — so effort is not spent re-discovering an already-queued task.
 
   afk status
-  afk take --dry-run --limit 0 --json
+  afk take --dry-run --limit 0 --json --full
   afk tasks --status todo --json
   afk tasks --status doing --json
   afk tasks --status failed --json
@@ -170,4 +170,4 @@ When comparing a focused pass with an earlier breadth pass, preserve the earlier
 
 Ask exactly one question such as: add all, add 1 3, or no. Queue only the confirmed candidates that pass dry-run validation.
 
-Queue inspection commands such as afk status, afk take --dry-run --limit 0 --json, and afk tasks may initialize the configured queue if it does not exist yet.
+Queue inspection commands such as afk status, afk take --dry-run --limit 0 --json --full, and afk tasks may initialize the configured queue if it does not exist yet.

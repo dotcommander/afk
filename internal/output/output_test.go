@@ -258,6 +258,7 @@ func TestWriteListJSONBoundsRowsAndBody(t *testing.T) {
 	var first map[string]any
 	require.NoError(t, json.Unmarshal([]byte(lines[0]), &first))
 	require.Equal(t, true, first["body_truncated"])
+	require.NotContains(t, first, "body_hint")
 	require.Less(t, len([]rune(first["body"].(string))), 600)
 
 	var summary map[string]any

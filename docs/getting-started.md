@@ -18,29 +18,29 @@ afk task "$id"
 Preview what an agent could claim:
 
 ```sh
-afk take --dry-run --limit 5 --json
+afk take --dry-run --limit 5 --json --full
 ```
 
 Claim and finish one task:
 
 ```sh
-claimed=$(afk take --lease 30m --worker codex:1)
-id=$(printf '%s\n' "$claimed" | jq -r .id)
+claimed=$(afk take --lease 30m --worker codex:1 --summary)
+id=$(printf '%s\n' "$claimed" | jq -r .task.id)
 
 # do the work
-afk set "$id" done
+afk set "$id" done --note "verified" --summary
 ```
 
 Record failure without losing history:
 
 ```sh
-afk set "$id" failed "missing credentials"
+afk set "$id" failed --note "missing credentials" --summary
 ```
 
 Hide obsolete work without deleting history:
 
 ```sh
-afk set "$id" deleted "superseded by a narrower task"
+afk set "$id" deleted --note "superseded by a narrower task"
 ```
 
 Run the visibility layer:

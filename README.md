@@ -6,9 +6,9 @@
 id=$(afk add "fix the failing queue test")
 afk tasks
 afk task "$id"
-afk take --dry-run --limit 5 --json
-afk take --lease 30m --worker codex:1
-afk set "$id" done
+afk take --dry-run --limit 5 --json --full
+afk take --lease 30m --worker codex:1 --summary
+afk set "$id" done --note "verified" --summary
 ```
 
 Tasks move through `todo`, `doing`, `done`, `failed`, and `deleted`. Scheduler state such as dependencies, leases, and resource locks is stored separately.
@@ -22,8 +22,8 @@ Tasks move through `todo`, `doing`, `done`, `failed`, and `deleted`. Scheduler s
 | `afk task <id> [--json]` | Show one full task with events and attempts. |
 | `afk status [--summary] [--json]` | Get queue counts, plus active task lists by default. |
 | `afk find <query> [--json]` | Search task text and metadata for duplicate checks. |
-| `afk take [--dry-run] [--lease DURATION] [--worker ID] [--summary]` | Preview or claim ready work. |
-| `afk set <id> <status> [note...] [--json]` | Set `todo`, `doing`, `done`, `failed`, or `deleted`. |
+| `afk take [--dry-run] [--lease DURATION] [--worker ID] [--summary] [--full] [--envelope]` | Preview or claim ready work. |
+| `afk set <id> <status> [note...] [--note TEXT] [--note-file PATH|-] [--json] [--summary]` | Set `todo`, `doing`, `done`, `failed`, or `deleted`. |
 | `afk retry <id> [--reason TEXT] [--json]` | Open a new attempt for a failed task. |
 | `afk snapshot [--label LABEL] [--task ID] [--output PATH]` | Export read-only JSON evidence for before/after comparisons. |
 | `afk prompt [--task ID]` | Generate LLM-agent instructions. |
@@ -35,8 +35,8 @@ Tasks move through `todo`, `doing`, `done`, `failed`, and `deleted`. Scheduler s
 - `explain` / `show` -> `task <id>`
 - `pop` -> `take`
 - `ready` / `run --dry-run` -> `take --dry-run`
-- `done` -> `set <id> done`
-- `fail` -> `set <id> failed <reason>`
+- `done` -> `set <id> done --note <evidence>`
+- `fail` -> `set <id> failed --note <reason>`
 - `retry` -> `retry <id> --reason <reason>`
 - `reset` -> `set <id> doing "retrying"` for targeted retry, or `set <id> todo <note>` to return work to the ready queue
 - `prune` / `rm` -> `set <id> deleted`
@@ -45,15 +45,15 @@ Tasks move through `todo`, `doing`, `done`, `failed`, and `deleted`. Scheduler s
 Example worker loop:
 
 ```sh
-task_json=$(afk take --lease 30m --worker "$USER:$$")
+task_json=$(afk take --lease 30m --worker "$USER:$$" --summary)
 test -n "$task_json" || exit 0
-id=$(printf '%s\n' "$task_json" | jq -r .id)
-body=$(printf '%s\n' "$task_json" | jq -r .body)
+id=$(printf '%s\n' "$task_json" | jq -r .task.id)
+body=$(printf '%s\n' "$task_json" | jq -r .task.body)
 
 if agent-command "$body"; then
-  afk set "$id" done
+  afk set "$id" done --note "agent-command completed" --summary
 else
-  afk set "$id" failed "agent-command failed"
+  afk set "$id" failed --note "agent-command failed" --summary
 fi
 ```
 

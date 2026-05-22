@@ -11,20 +11,20 @@ A task is ready when:
 Preview readiness:
 
 ```sh
-afk take --dry-run --limit 10 --json
+afk take --dry-run --limit 10 --json --full
 ```
 
 Use `--limit 0` to print every ready task. This is useful for duplicate checks
 and discovery runs that need the whole ready set:
 
 ```sh
-afk take --dry-run --limit 0 --json
+afk take --dry-run --limit 0 --json --full
 ```
 
 Claim readiness:
 
 ```sh
-afk take --lease 30m --worker codex:1
+afk take --lease 30m --worker codex:1 --summary
 ```
 
 A blocked task remains `todo`; it simply will not be returned by `take` until its dependencies and resource locks clear.
@@ -37,5 +37,5 @@ To replace a bad dependency shape, add a corrected task and mark the old one fai
 
 ```sh
 afk add --blocked-by 42 "corrected dependent task"
-afk set 43 deleted "superseded by corrected dependency set"
+afk set 43 deleted --note "superseded by corrected dependency set"
 ```

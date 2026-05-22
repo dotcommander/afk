@@ -12,6 +12,9 @@ import (
 )
 
 const (
+	// DefaultListBodyRunes is the default JSON body limit for task-list previews.
+	DefaultListBodyRunes = maxListBodyRunes
+
 	maxListTasks       = 100
 	maxListBodyRunes   = 500
 	maxDetailBodyRunes = 8000
@@ -21,8 +24,9 @@ const (
 
 type boundedTask struct {
 	task.Task
-	BodyTruncated  bool `json:"body_truncated,omitzero"`
-	ErrorTruncated bool `json:"error_truncated,omitzero"`
+	BodyTruncated  bool   `json:"body_truncated,omitzero"`
+	ErrorTruncated bool   `json:"error_truncated,omitzero"`
+	BodyHint       string `json:"body_hint,omitzero"`
 }
 
 type listSummary struct {
@@ -33,19 +37,36 @@ type listSummary struct {
 
 // WriteList renders a bounded task list as either JSONL or an aligned table.
 func WriteList(w io.Writer, tasks []task.Task, asJSON bool) error {
+	return WriteListWithBodyLimit(w, tasks, asJSON, maxListBodyRunes)
+}
+
+// WriteListFull renders a task list without truncating task bodies.
+func WriteListFull(w io.Writer, tasks []task.Task, asJSON bool) error {
+	return WriteListWithBodyLimit(w, tasks, asJSON, 0)
+}
+
+// WriteListWithBodyLimit renders a task list with caller-selected JSON body
+// bounds. A bodyLimit of 0 leaves task bodies intact.
+func WriteListWithBodyLimit(w io.Writer, tasks []task.Task, asJSON bool, bodyLimit int) error {
+	return WriteListWithBodyLimitHint(w, tasks, asJSON, bodyLimit, "")
+}
+
+// WriteListWithBodyLimitHint renders a task list and adds bodyHint to JSON
+// objects whose body was truncated.
+func WriteListWithBodyLimitHint(w io.Writer, tasks []task.Task, asJSON bool, bodyLimit int, bodyHint string) error {
 	if len(tasks) == 0 {
 		return nil
 	}
 	visible, omitted := limitTasks(tasks)
 	if asJSON {
-		return writeListJSON(w, visible, omitted)
+		return writeListJSON(w, visible, omitted, bodyLimit, bodyHint)
 	}
 	return writeListTable(w, visible, omitted)
 }
 
-func writeListJSON(w io.Writer, tasks []task.Task, omitted int) error {
+func writeListJSON(w io.Writer, tasks []task.Task, omitted int, bodyLimit int, bodyHint string) error {
 	for _, t := range tasks {
-		if err := WriteBoundTaskJSONLine(w, t, maxListBodyRunes, "list"); err != nil {
+		if err := WriteBoundTaskJSONLineWithHint(w, t, bodyLimit, bodyHint, "list"); err != nil {
 			return err
 		}
 	}
@@ -126,6 +147,12 @@ func WriteBoundTaskJSONLine(w io.Writer, t task.Task, bodyLimit int, op string) 
 	return WriteJSONLine(w, boundTask(t, bodyLimit), op)
 }
 
+// WriteBoundTaskJSONLineWithHint renders one task as bounded JSON, adding
+// bodyHint only when body truncation occurs.
+func WriteBoundTaskJSONLineWithHint(w io.Writer, t task.Task, bodyLimit int, bodyHint string, op string) error {
+	return WriteJSONLine(w, boundTaskWithHint(t, bodyLimit, bodyHint), op)
+}
+
 // WriteJSONLine renders v as one JSON line.
 func WriteJSONLine(w io.Writer, v any, op string) error {
 	b, err := json.Marshal(v)
@@ -160,11 +187,30 @@ func limitAttempts(attempts []task.Attempt) ([]task.Attempt, int) {
 }
 
 func boundTask(t task.Task, bodyLimit int) boundedTask {
+	return boundTaskWithHint(t, bodyLimit, "")
+}
+
+func boundTaskWithHint(t task.Task, bodyLimit int, bodyHint string) boundedTask {
 	body, bodyTruncated := truncateWithStatus(t.Body, bodyLimit)
 	errorText, errorTruncated := truncateWithStatus(t.Error, maxMessageRunes)
 	t.Body = body
 	t.Error = errorText
-	return boundedTask{Task: t, BodyTruncated: bodyTruncated, ErrorTruncated: errorTruncated}
+	if !bodyTruncated {
+		bodyHint = ""
+	}
+	return boundedTask{Task: t, BodyTruncated: bodyTruncated, ErrorTruncated: errorTruncated, BodyHint: bodyHint}
+}
+
+func boundTasks(tasks []task.Task, bodyLimit int) []boundedTask {
+	return boundTasksWithHint(tasks, bodyLimit, "")
+}
+
+func boundTasksWithHint(tasks []task.Task, bodyLimit int, bodyHint string) []boundedTask {
+	bounded := make([]boundedTask, 0, len(tasks))
+	for _, t := range tasks {
+		bounded = append(bounded, boundTaskWithHint(t, bodyLimit, bodyHint))
+	}
+	return bounded
 }
 
 func boundEvents(events []task.Event) []task.Event {
@@ -192,6 +238,9 @@ func truncate(s string, limit int) string {
 }
 
 func truncateWithStatus(s string, limit int) (string, bool) {
+	if limit <= 0 {
+		return s, false
+	}
 	runes := []rune(s)
 	if len(runes) <= limit {
 		return s, false

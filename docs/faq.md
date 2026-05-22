@@ -2,7 +2,7 @@
 
 ```sh
 afk status --summary
-afk take --dry-run --limit 5 --json
+afk take --dry-run --limit 5 --json --full
 afk tasks --status doing --json
 afk tasks --status failed --json
 ```
@@ -15,7 +15,7 @@ holding resources, and what failed recently.
 
 | Symptom | First commands | Likely cause |
 |---|---|---|
-| `afk take` prints no task | `afk take --dry-run --limit 0 --json` and `afk tasks --status doing --json` | No ready work, unfinished dependencies, or active resource locks. |
+| `afk take` prints no task | `afk take --dry-run --limit 0 --json --full` and `afk tasks --status doing --json` | No ready work, unfinished dependencies, or active resource locks. |
 | `afk status` shows `todo`, but workers claim nothing | `afk task <id>` for todo tasks and `afk tasks --status doing --json` | `todo` is not the same as ready. Dependencies or resource locks can block it. |
 | A failed task still looks failed after retry | `afk task <id> --json` | Retry must start with `afk retry <id> --reason "..."`; direct `done` is allowed but may not match the intended retry story. |
 | Deleted work disappeared from lists | `afk tasks --status deleted` | Default task lists hide `deleted`. History is still available. |
@@ -48,11 +48,11 @@ afk add "fix the failing queue test"
 afk tasks
 afk task "$id"
 afk find queue --json
-afk take --dry-run --limit 5 --json
-afk take --lease 30m --worker codex:1
-afk set "$id" done
-afk set "$id" failed "missing credentials"
-afk set "$id" deleted "superseded"
+afk take --dry-run --limit 5 --json --full
+afk take --lease 30m --worker codex:1 --summary
+afk set "$id" done --note "verified" --summary
+afk set "$id" failed --note "missing credentials" --summary
+afk set "$id" deleted --note "superseded"
 afk snapshot --label after --task "$id"
 ```
 
@@ -68,10 +68,10 @@ Use these replacements:
 | `afk show <id>` or `afk explain <id>` | `afk task <id>` |
 | `afk pop` | `afk take` |
 | `afk ready` or `afk run --dry-run` | `afk take --dry-run` |
-| `afk done <id>` | `afk set <id> done` |
-| `afk fail <id> <reason>` | `afk set <id> failed <reason>` |
+| `afk done <id>` | `afk set <id> done --note <evidence>` |
+| `afk fail <id> <reason>` | `afk set <id> failed --note <reason>` |
 | `afk retry <id>` | Still supported. Prefer `afk retry <id> --reason <reason>` for a targeted retry. |
-| `afk reset <id>` | `afk set <id> doing "retrying"` for a targeted retry, or `afk set <id> todo <note>` to return work to the queue. |
+| `afk reset <id>` | `afk set <id> doing --note "retrying"` for a targeted retry, or `afk set <id> todo --note <note>` to return work to the queue. |
 | `afk prune` or `afk rm` | `afk set <id> deleted` |
 | `afk run` | An external loop that calls `take`, executes the task, then calls `set`. |
 
@@ -206,7 +206,7 @@ worker loops can test for an empty claim.
 Diagnose readiness:
 
 ```sh
-afk take --dry-run --limit 0 --json
+afk take --dry-run --limit 0 --json --full
 afk status
 afk tasks --status todo --json
 afk tasks --status doing --json
@@ -229,20 +229,22 @@ Inspect the task and active work:
 ```sh
 afk task "$id"
 afk tasks --status doing --json
-afk take --dry-run --limit 0 --json
+afk take --dry-run --limit 0 --json --full
 ```
 
 ### How do I preview all ready tasks?
 
 ```sh
-afk take --dry-run --limit 0 --json
+afk take --dry-run --limit 0 --json --full
 ```
 
 Use a positive `--limit` for a bounded preview:
 
 ```sh
-afk take --dry-run --limit 5 --json
+afk take --dry-run --limit 5 --json --full
 ```
+
+Dry-run JSON previews truncate long task bodies unless you pass `--full`.
 
 ### How do I claim a task and also get queue counts?
 
@@ -251,7 +253,12 @@ afk take --lease 30m --worker codex:1 --summary
 ```
 
 `--summary` includes the claimed task plus queue counts and
-`ready_remaining` after the claim.
+`ready_remaining` after the claim. With `--dry-run`, it returns the ready
+preview plus queue counts without claiming work.
+
+Use `--envelope` when you want the same top-level object style for both dry-run
+and claimed output. Dry-runs return `claimed:false`, `tasks`, and `queue`;
+claims return `claimed:true`, `task`, and `queue`.
 
 ### What worker id should I use?
 
@@ -318,7 +325,7 @@ Prefer creating a corrected task and hiding the old one:
 
 ```sh
 afk add --blocked-by "$right_id" "corrected dependent task"
-afk set "$old_id" deleted "superseded by corrected dependency"
+afk set "$old_id" deleted --note "superseded by corrected dependency"
 ```
 
 Use `failed` instead of `deleted` when the old task records a real attempted
@@ -329,25 +336,33 @@ failure that should remain visible in failure reports.
 ### How do I mark work done?
 
 ```sh
-afk set "$id" done "implemented and tested"
+afk set "$id" done --note "implemented and tested" --summary
 ```
 
 Use `--json` when another tool or agent needs a structured confirmation:
 
 ```sh
-afk set "$id" done "implemented and tested" --json
+afk set "$id" done --note "implemented and tested" --json
+```
+
+Use `--note-file -` when the evidence contains quotes, `&&`, or multiple
+lines:
+
+```sh
+printf '%s\n' "$evidence" | afk set "$id" done --note-file - --summary
 ```
 
 ### Why should finalization print a confirmation?
 
 `afk set` prints a small confirmation on success, such as the task id and new
 status. That gives humans and agents a visible checkpoint while remaining easy
-for scripts to ignore. Use `--json` when the caller needs a parseable result.
+for scripts to ignore. Use `--json` when the caller needs a parseable result,
+or `--summary` when the caller also needs queue counts in the receipt.
 
 ### How do I record failure?
 
 ```sh
-afk set "$id" failed "missing credentials"
+afk set "$id" failed --note "missing credentials" --summary
 ```
 
 Good failure notes name the blocking condition and the smallest next action,
@@ -359,14 +374,14 @@ Use `deleted` for obsolete, duplicate, or superseded work that should disappear
 from default lists:
 
 ```sh
-afk set "$id" deleted "superseded by task 42"
+afk set "$id" deleted --note "superseded by task 42"
 ```
 
 Use `failed` when a worker attempted the task and hit a real blocker or
 execution failure:
 
 ```sh
-afk set "$id" failed "test environment requires credentials"
+afk set "$id" failed --note "test environment requires credentials" --summary
 ```
 
 Deleted tasks remain inspectable through:
@@ -384,7 +399,7 @@ For a targeted retry, reopen the same task with a reason:
 afk task "$id" --json
 afk retry "$id" --reason "fixed the blocker"
 # do the work
-afk set "$id" done
+afk set "$id" done --note "verified" --summary
 ```
 
 `retry` moves the task to `doing`, clears stale task-level error text, and opens
@@ -402,13 +417,13 @@ afk retry "$id" --reason "fixed the blocker"
 That is equivalent to:
 
 ```sh
-afk set "$id" doing "retrying: fixed the blocker"
+afk set "$id" doing --note "retrying: fixed the blocker"
 ```
 
 If you do not want to retry the exact task now, return it to the queue:
 
 ```sh
-afk set "$id" todo "ready for another worker"
+afk set "$id" todo --note "ready for another worker"
 ```
 
 ### What if I accidentally marked a failed task done?
@@ -430,7 +445,7 @@ afk retry "$id" --reason "correcting accidental done"
 or:
 
 ```sh
-afk set "$id" failed "accidental done; work still blocked"
+afk set "$id" failed --note "accidental done; work still blocked" --summary
 ```
 
 ## Abandoned or stale `doing` tasks
@@ -451,7 +466,7 @@ If the original worker is gone and the work should not remain active, close the
 attempt explicitly:
 
 ```sh
-afk set "$id" failed "orphaned doing claim"
+afk set "$id" failed --note "orphaned doing claim" --summary
 ```
 
 Then either add a fresh task or retry the same one:
@@ -502,15 +517,15 @@ in one JSON evidence artifact.
 Own the execution loop outside AFK:
 
 ```sh
-task_json=$(afk take --lease 30m --worker "$USER:$$")
+task_json=$(afk take --lease 30m --worker "$USER:$$" --summary)
 test -n "$task_json" || exit 0
-id=$(printf '%s\n' "$task_json" | jq -r .id)
-body=$(printf '%s\n' "$task_json" | jq -r .body)
+id=$(printf '%s\n' "$task_json" | jq -r .task.id)
+body=$(printf '%s\n' "$task_json" | jq -r .task.body)
 
 if agent-command "$body"; then
-  afk set "$id" done
+  afk set "$id" done --note "agent-command completed" --summary
 else
-  afk set "$id" failed "agent-command failed"
+  afk set "$id" failed --note "agent-command failed" --summary
 fi
 ```
 
@@ -527,10 +542,11 @@ shell loops simple and avoids treating "no ready task" as a task payload.
 Use JSON for automation:
 
 ```sh
-afk take --json
+afk take --summary
+afk take --dry-run --json --full --envelope
 afk tasks --status todo --json
 afk task "$id" --json
-afk set "$id" done --json
+afk set "$id" done --note "verified" --json
 ```
 
 Plain text is for humans and quick terminal checks.
@@ -712,8 +728,8 @@ todo doing done failed deleted
 Old command names like `done` or `fail` are not statuses by themselves. Use:
 
 ```sh
-afk set "$id" done
-afk set "$id" failed "reason"
+afk set "$id" done --note "verified"
+afk set "$id" failed --note "reason"
 ```
 
 ## Practical recipes
@@ -722,18 +738,18 @@ afk set "$id" failed "reason"
 
 ```sh
 afk status --summary
-afk take --dry-run --limit 5 --json
+afk take --dry-run --limit 5 --json --full
 ```
 
 ### Claim one task, work it, and finalize
 
 ```sh
-task_json=$(afk take --lease 30m --worker "$USER:$$")
+task_json=$(afk take --lease 30m --worker "$USER:$$" --summary)
 test -n "$task_json" || exit 0
-id=$(printf '%s\n' "$task_json" | jq -r .id)
+id=$(printf '%s\n' "$task_json" | jq -r .task.id)
 afk task "$id"
 # do the work
-afk set "$id" done "verified"
+afk set "$id" done --note "verified" --summary
 ```
 
 ### Retry a specific failed task
@@ -742,14 +758,14 @@ afk set "$id" done "verified"
 afk task "$id" --json
 afk retry "$id" --reason "fixed blocker"
 # do the work
-afk set "$id" done "verified on retry"
+afk set "$id" done --note "verified on retry" --summary
 ```
 
 ### Preserve evidence around a queue operation
 
 ```sh
 afk snapshot --label before --output before.json
-afk set "$id" done --json
+afk set "$id" done --note "verified" --json
 afk snapshot --label after --task "$id" --output after.json
 ```
 
@@ -757,13 +773,13 @@ afk snapshot --label after --task "$id" --output after.json
 
 ```sh
 afk task "$duplicate_id"
-afk set "$duplicate_id" deleted "duplicate of task $canonical_id"
+afk set "$duplicate_id" deleted --note "duplicate of task $canonical_id"
 ```
 
 ### Move one failed task back to the ready queue
 
 ```sh
-afk set "$id" todo "ready for another worker"
+afk set "$id" todo --note "ready for another worker"
 ```
 
 Use this when no worker is actively retrying it now. Use `retry` when you are

@@ -2,6 +2,7 @@ package commands
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -17,10 +18,23 @@ func newTakeCmd(d *Deps) *cobra.Command {
 	var limit int
 	var asJSON bool
 	var summary bool
+	var full bool
+	var envelope bool
 
 	cmd := &cobra.Command{
 		Use:   "take",
 		Short: "Claim the first ready task",
+		Long: strings.TrimSpace(`Claim the first ready task.
+
+Agent loop:
+  afk take --worker <name> --lease 60m --summary
+  # execute exactly one returned task
+  afk set <id> done --note "<verification>"
+  # or
+  afk set <id> failed --note "<one-line reason>"
+
+Use --dry-run to preview ready tasks without claiming. If preview output shows
+body_truncated=true, add --full to inspect complete task bodies.`),
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			leaseDuration, err := parseOptionalDuration("lease", lease)
 			if err != nil {
@@ -31,10 +45,26 @@ func newTakeCmd(d *Deps) *cobra.Command {
 				if err != nil {
 					return err
 				}
+				readyCount := len(ready)
 				if limit > 0 && len(ready) > limit {
 					ready = ready[:limit]
 				}
-				return output.WriteList(d.Stdout, ready, asJSON)
+				bodyLimit := output.DefaultListBodyRunes
+				if full {
+					bodyLimit = 0
+				}
+				bodyHint := ""
+				if !full {
+					bodyHint = "use --full to see the complete task body"
+				}
+				if envelope || summary {
+					snapshot, err := d.Service.Status(cmd.Context())
+					if err != nil {
+						return err
+					}
+					return output.WriteTakePreview(d.Stdout, ready, snapshot.Counts, readyCount, bodyLimit, bodyHint)
+				}
+				return output.WriteListWithBodyLimitHint(d.Stdout, ready, asJSON, bodyLimit, bodyHint)
 			}
 			claimed, err := d.Service.Take(cmd.Context(), leaseDuration, workerID, "")
 			if err != nil {
@@ -49,8 +79,11 @@ func newTakeCmd(d *Deps) *cobra.Command {
 				}
 				return fmt.Errorf("pop %s: %w", claimed.ID, err)
 			}
-			if summary {
-				return writeTakeSummary(cmd, d, *claimed)
+			if summary || envelope {
+				return writeTakeSummary(cmd, d, *claimed, full)
+			}
+			if full {
+				return output.WriteBoundTaskJSONLine(d.Stdout, *claimed, 0, "pop")
 			}
 			return output.WriteTaskJSONLine(d.Stdout, *claimed, "pop")
 		},
@@ -59,12 +92,14 @@ func newTakeCmd(d *Deps) *cobra.Command {
 	cmd.Flags().StringVar(&workerID, "worker", "", "worker id for the claim")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "preview ready tasks without claiming")
 	cmd.Flags().IntVar(&limit, "limit", 20, "maximum ready tasks to print with --dry-run")
-	cmd.Flags().BoolVar(&asJSON, "json", true, "emit JSONL output")
-	cmd.Flags().BoolVar(&summary, "summary", false, "include queue counts with the claimed task")
+	cmd.Flags().BoolVar(&asJSON, "json", true, "emit JSONL output; enabled by default")
+	cmd.Flags().BoolVar(&summary, "summary", false, "include queue counts with the claimed task or dry-run preview")
+	cmd.Flags().BoolVar(&full, "full", false, "include full task bodies in JSON output")
+	cmd.Flags().BoolVar(&envelope, "envelope", false, "emit a stable JSON object envelope")
 	return cmd
 }
 
-func writeTakeSummary(cmd *cobra.Command, d *Deps, claimed task.Task) error {
+func writeTakeSummary(cmd *cobra.Command, d *Deps, claimed task.Task, full bool) error {
 	snapshot, err := d.Service.Status(cmd.Context())
 	if err != nil {
 		return err
@@ -72,6 +107,9 @@ func writeTakeSummary(cmd *cobra.Command, d *Deps, claimed task.Task) error {
 	ready, err := d.Service.Ready(cmd.Context())
 	if err != nil {
 		return err
+	}
+	if full {
+		return output.WriteTakeSummaryFull(d.Stdout, claimed, snapshot.Counts, len(ready))
 	}
 	return output.WriteTakeSummary(d.Stdout, claimed, snapshot.Counts, len(ready))
 }
@@ -120,7 +158,7 @@ func newRequeueStaleCmd(d *Deps) *cobra.Command {
 		Short:  "Reset stale doing tasks to todo",
 		Hidden: true,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			if err := warnDeprecated(d.Stderr, "afk requeue-stale", "afk task <id>, afk set <id> failed <reason>, then afk add <replacement task>"); err != nil {
+			if err := warnDeprecated(d.Stderr, "afk requeue-stale", "afk task <id>, afk set <id> failed --note <reason>, then afk add <replacement task>"); err != nil {
 				return err
 			}
 			dur, err := time.ParseDuration(olderThan)

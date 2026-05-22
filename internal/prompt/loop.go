@@ -131,8 +131,8 @@ func Task(exe string, t task.Task, events []task.Event, attempts []task.Attempt)
 		OmittedAttempts: omA,
 		Events:          evs,
 		Attempts:        atts,
-		DoneCmd:         joinCmd(exe, "set "+t.ID+" done"),
-		FailCmd:         joinCmd(exe, "set "+t.ID+` failed "<one-line reason>"`),
+		DoneCmd:         joinCmd(exe, "set "+t.ID+` done --note "<verification evidence>"`),
+		FailCmd:         joinCmd(exe, "set "+t.ID+` failed --note "<one-line reason>"`),
 		RetryCmd:        joinCmd(exe, "retry "+t.ID+` --reason "<why retrying now>"`),
 	}
 
@@ -157,11 +157,11 @@ func Loop(opts LoopOptions) string {
 		StatusCmd:      joinCmd(exe, "status"),
 		LsPendingCmd:   joinCmd(exe, "tasks --status todo --json"),
 		LsWorkingCmd:   joinCmd(exe, "tasks --status doing --json"),
-		DoneCmd:        joinCmd(exe, "set <id> done"),
-		FailCmd:        joinCmd(exe, `set <id> failed "<one-line reason>"`),
+		DoneCmd:        joinCmd(exe, `set <id> done --note "<verification evidence>"`),
+		FailCmd:        joinCmd(exe, `set <id> failed --note "<one-line reason>"`),
 		RetryCmd:       joinCmd(exe, `retry <id> --reason "<why retrying now>"`),
 		ExplainCmd:     joinCmd(exe, "task <id>"),
-		RecoverFailCmd: joinCmd(exe, `set <id> failed "orphaned doing claim"`),
+		RecoverFailCmd: joinCmd(exe, `set <id> failed --note "orphaned doing claim"`),
 		RecoverAddCmd:  joinCmd(exe, `add "replacement task body, if still needed"`),
 	}
 

@@ -66,9 +66,16 @@ type takeSummaryQueue struct {
 	ReadyRemaining int `json:"ready_remaining"`
 }
 
+type takePreviewDoc struct {
+	Claimed bool             `json:"claimed"`
+	Tasks   []boundedTask    `json:"tasks"`
+	Queue   takeSummaryQueue `json:"queue"`
+}
+
 type takeSummaryDoc struct {
-	Task  boundedTask      `json:"task"`
-	Queue takeSummaryQueue `json:"queue"`
+	Claimed bool             `json:"claimed"`
+	Task    boundedTask      `json:"task"`
+	Queue   takeSummaryQueue `json:"queue"`
 }
 
 // WriteStatus renders a queue snapshot: per-status tallies plus the todo and
@@ -82,12 +89,43 @@ func WriteStatus(w io.Writer, tally map[task.Status]int, todo, doing []task.Task
 
 // WriteTakeSummary renders a claimed task with queue counts after the claim.
 func WriteTakeSummary(w io.Writer, claimed task.Task, tally map[task.Status]int, readyRemaining int) error {
+	return writeTakeSummaryWithLimit(w, claimed, tally, readyRemaining, maxDetailBodyRunes)
+}
+
+// WriteTakeSummaryFull renders a claimed task envelope without truncating the body.
+func WriteTakeSummaryFull(w io.Writer, claimed task.Task, tally map[task.Status]int, readyRemaining int) error {
+	return writeTakeSummaryWithLimit(w, claimed, tally, readyRemaining, 0)
+}
+
+// WriteTakePreview renders a dry-run envelope for ready tasks.
+func WriteTakePreview(w io.Writer, ready []task.Task, tally map[task.Status]int, readyCount int, bodyLimit int, bodyHint string) error {
+	total := 0
+	for _, n := range tally {
+		total += n
+	}
+	return WriteJSONLine(w, takePreviewDoc{
+		Claimed: false,
+		Tasks:   boundTasksWithHint(ready, bodyLimit, bodyHint),
+		Queue: takeSummaryQueue{
+			Todo:           tally[task.StatusPending],
+			Doing:          tally[task.StatusWorking],
+			Done:           tally[task.StatusDone],
+			Failed:         tally[task.StatusFailed],
+			Deleted:        tally[task.StatusDeleted],
+			Total:          total,
+			ReadyRemaining: readyCount,
+		},
+	}, "take preview")
+}
+
+func writeTakeSummaryWithLimit(w io.Writer, claimed task.Task, tally map[task.Status]int, readyRemaining int, bodyLimit int) error {
 	total := 0
 	for _, n := range tally {
 		total += n
 	}
 	return WriteJSONLine(w, takeSummaryDoc{
-		Task: boundTask(claimed, maxDetailBodyRunes),
+		Claimed: true,
+		Task:    boundTask(claimed, bodyLimit),
 		Queue: takeSummaryQueue{
 			Todo:           tally[task.StatusPending],
 			Doing:          tally[task.StatusWorking],
@@ -101,11 +139,7 @@ func WriteTakeSummary(w io.Writer, claimed task.Task, tally map[task.Status]int,
 }
 
 func statusListJSON(tasks []task.Task) []boundedTask {
-	bounded := make([]boundedTask, 0, len(tasks))
-	for _, t := range tasks {
-		bounded = append(bounded, boundTask(t, maxListBodyRunes))
-	}
-	return bounded
+	return boundTasks(tasks, maxListBodyRunes)
 }
 
 func writeStatusJSON(w io.Writer, tally map[task.Status]int, todo, doing []task.Task) error {

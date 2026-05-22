@@ -2,7 +2,7 @@
 
 ```sh
 afk prompt --discover
-afk take --dry-run --limit 0 --json
+afk take --dry-run --limit 0 --json --full
 afk task <id>
 rg -n "TODO|FIXME|HACK|XXX|OPTIMIZE" .
 ```
@@ -155,7 +155,7 @@ git status --porcelain=v2
 git diff --stat HEAD
 rg -n "TODO|FIXME|HACK|XXX|OPTIMIZE" --glob '!vendor/**' --glob '!node_modules/**'
 afk status
-afk take --dry-run --limit 0 --json
+afk take --dry-run --limit 0 --json --full
 afk tasks --status failed --json
 afk tasks --status doing --json
 ```

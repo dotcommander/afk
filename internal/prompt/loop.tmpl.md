@@ -10,7 +10,7 @@ Process exactly one queued task, then stop.
 
 ## Queue Contract
 
-Use the `afk` queue CLI. The live queue is SQLite-backed{{if .SQLitePath}} at `{{.SQLitePath}}`{{end}}.
+Use the `afk` queue CLI. The queue is SQLite-backed{{if .SQLitePath}} at the configured/default path `{{.SQLitePath}}`{{end}}. Override it with `AFK_QUEUE` or `--queue` when an agent must use a different queue.
 
 Do not read, write, patch, edit, or repair the queue database directly.
 
@@ -84,9 +84,10 @@ On failure:
 Rules:
 
 - Finalize every claimed task exactly once.
-- Use `set <id> done` only when the requested work was completed or no-op completed.
-- Use `set <id> failed` when blocked, unsafe, cancelled, impossible, or verification fails.
+- Use `set <id> done --note "<verification evidence>"` only when the requested work was completed or no-op completed.
+- Use `set <id> failed --note "<one-line reason>"` when blocked, unsafe, cancelled, impossible, or verification fails.
 - The failure reason must be one line.
+- Use `--note-file -` instead of `--note` when evidence contains quotes, shell operators, or multiple lines.
 - To retry one specific failed task in a later run, inspect it first, then use `{{.RetryCmd}}` to open a new attempt before doing work.
 - If finalization itself fails, report the claimed `id`, intended status, and one-line reason.
 

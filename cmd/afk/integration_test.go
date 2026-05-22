@@ -113,7 +113,7 @@ func TestAfkLifecycle(t *testing.T) {
 	require.NotEmpty(t, id, "add fail-me: could not capture id from output %q", stdout)
 	stdout, _, code = run("set", id, "failed", "oops", "--json")
 	require.Equal(t, 0, code, "set failed: unexpected exit code")
-	require.JSONEq(t, `{"id":"`+id+`","status":"failed","note":"oops"}`, stdout, "set failed --json: expected structured confirmation")
+	require.JSONEq(t, `{"id":"`+id+`","status":"failed","title":"fail-me","note":"oops"}`, stdout, "set failed --json: expected structured confirmation")
 	stdout, _, code = run("task", id)
 	require.Equal(t, 0, code, "task after failed: unexpected exit code")
 	require.Contains(t, stdout, "failed", "task after failed: expected failed status")

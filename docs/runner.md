@@ -5,21 +5,21 @@
 Use `afk take --dry-run` for the readiness preview that `run --dry-run` used to provide:
 
 ```sh
-afk take --dry-run --limit 5 --json
+afk take --dry-run --limit 5 --json --full
 ```
 
 Use an external loop when you want process supervision:
 
 ```sh
-task_json=$(afk take --lease 30m --worker "$USER:$$")
+task_json=$(afk take --lease 30m --worker "$USER:$$" --summary)
 test -n "$task_json" || exit 0
-id=$(printf '%s\n' "$task_json" | jq -r .id)
-body=$(printf '%s\n' "$task_json" | jq -r .body)
+id=$(printf '%s\n' "$task_json" | jq -r .task.id)
+body=$(printf '%s\n' "$task_json" | jq -r .task.body)
 
 if agent-command "$body"; then
-  afk set "$id" done
+  afk set "$id" done --note "agent-command completed" --summary
 else
-  afk set "$id" failed "agent-command failed"
+  afk set "$id" failed --note "agent-command failed" --summary
 fi
 ```
 

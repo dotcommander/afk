@@ -79,8 +79,8 @@ SQLite is the only queue backend. A `--queue`/`AFK_QUEUE` path with a non-`.sqli
 
 - **`afk prompt` does not open the DB** unless `--task <id>` is given. Controlled by the `skipStoreInit` cobra annotation helper in `internal/commands/root.go` (`func skipStoreInit`). Don't accidentally remove that — it's what lets `/loop` call `afk prompt` cheaply.
 - **`afk run` is not public.** Use `afk take --dry-run` for readiness previews and external loops for execution.
-- **Worker contract**: claim with `afk take`, then explicitly finish with `afk set <id> done` or `afk set <id> failed <reason>`.
-- **Targeted retry**: inspect the task, then use `afk set <id> doing "retrying: <reason>"` to open a fresh attempt before doing retry work.
+- **Worker contract**: preview with `afk take --dry-run --json --full` when triaging; claim with `afk take`, then explicitly finish with `afk set <id> done --note <evidence>` or `afk set <id> failed --note <reason>`. Use `--summary` when a receipt should include queue counts.
+- **Targeted retry**: inspect the task, then use `afk retry <id> --reason "<reason>"` or `afk set <id> doing --note "retrying: <reason>"` to open a fresh attempt before doing retry work.
 - **Readiness has one authority**: `store.Ready` (SQL) is the single source of truth for whether a task is ready. `take` and `take --dry-run` consult it directly. Change the readiness predicate only in `store.Ready`.
 - **No viper.** Queue path comes from flag/env/default — there is no config file layer. Don't add one without a reason.
 - **`afk serve` binds `127.0.0.1` by default** (loopback only — task bodies may be sensitive); supplying a non-loopback `--addr` prints a warning to stderr. The front-end is a single `go:embed`'d `web/index.html` (no build step required); opens a browser tab by default (`--open=false` to suppress).

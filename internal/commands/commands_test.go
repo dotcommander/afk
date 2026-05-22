@@ -61,12 +61,84 @@ func TestCommandsLifecycleThroughRoot(t *testing.T) {
 	require.NotContains(t, run("tasks", "--status", "todo"), id)
 
 	failedID := strings.TrimSpace(run("add", "--no-cwd", "fail-me"))
-	require.JSONEq(t, `{"id":"`+failedID+`","status":"failed","note":"oops"}`, run("set", failedID, "failed", "oops", "--json"))
+	require.JSONEq(t, `{"id":"`+failedID+`","status":"failed","title":"fail-me","note":"oops"}`, run("set", failedID, "failed", "oops", "--json"))
 	require.Contains(t, run("task", failedID), "Error: oops")
 
 	require.Equal(t, "set "+failedID+" deleted\n", run("set", failedID, "deleted", "cleanup"))
 	require.NotContains(t, run("tasks"), failedID)
 	require.Contains(t, run("tasks", "--status", "deleted"), failedID)
+}
+
+func TestTakeDryRunFullAndEnvelope(t *testing.T) {
+	t.Parallel()
+
+	queuePath := filepath.Join(t.TempDir(), "tasks.sqlite")
+	stdout, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	d := testDepsWithWriters(stdout, stderr)
+
+	run := func(args ...string) string {
+		t.Helper()
+		stdout.Reset()
+		stderr.Reset()
+		root := NewRoot(d, "test")
+		root.SetArgs(append([]string{"--queue", queuePath}, args...))
+		require.NoError(t, root.Execute(), "stderr: %s", stderr.String())
+		return stdout.String()
+	}
+
+	body := strings.Repeat("x", 700)
+	id := strings.TrimSpace(run("add", "--no-cwd", body))
+
+	truncated := run("take", "--dry-run", "--limit", "1", "--json")
+	require.Contains(t, truncated, id)
+	require.Contains(t, truncated, `"body_truncated":true`)
+	require.Contains(t, truncated, `"body_hint":"use --full to see the complete task body"`)
+
+	var summaryDoc map[string]any
+	require.NoError(t, json.Unmarshal([]byte(strings.TrimSpace(run("take", "--dry-run", "--limit", "1", "--summary"))), &summaryDoc))
+	require.Equal(t, false, summaryDoc["claimed"])
+	require.NotNil(t, summaryDoc["queue"])
+	summaryTasks := summaryDoc["tasks"].([]any)
+	require.Len(t, summaryTasks, 1)
+	summaryTask := summaryTasks[0].(map[string]any)
+	require.Equal(t, id, summaryTask["id"])
+	require.Equal(t, true, summaryTask["body_truncated"])
+	require.Equal(t, "use --full to see the complete task body", summaryTask["body_hint"])
+
+	full := run("take", "--dry-run", "--limit", "1", "--json", "--full")
+	require.Contains(t, full, id)
+	require.NotContains(t, full, "body_truncated")
+	require.NotContains(t, full, "body_hint")
+	require.Contains(t, full, body)
+
+	var doc map[string]any
+	require.NoError(t, json.Unmarshal([]byte(strings.TrimSpace(run("take", "--dry-run", "--limit", "1", "--full", "--envelope"))), &doc))
+	require.Equal(t, false, doc["claimed"])
+	require.NotNil(t, doc["queue"])
+	tasks := doc["tasks"].([]any)
+	require.Len(t, tasks, 1)
+	taskDoc := tasks[0].(map[string]any)
+	require.Equal(t, id, taskDoc["id"])
+	require.Equal(t, body, taskDoc["body"])
+}
+
+func TestTakeHelpIncludesAgentLoop(t *testing.T) {
+	t.Parallel()
+
+	stdout, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	d := testDepsWithWriters(stdout, stderr)
+	root := NewRoot(d, "test")
+	root.SetOut(stdout)
+	root.SetErr(stderr)
+	root.SetArgs([]string{"take", "--help"})
+
+	require.NoError(t, root.Execute(), "stderr: %s", stderr.String())
+	out := stdout.String()
+	require.Contains(t, out, "Agent loop:")
+	require.Contains(t, out, "afk take --worker <name> --lease 60m --summary")
+	require.Contains(t, out, `afk set <id> done --note "<verification>"`)
+	require.Contains(t, out, "body_truncated=true")
+	require.Contains(t, out, "emit JSONL output; enabled by default")
 }
 
 func TestTakeDryRunLimitZeroReturnsAllReadyTasks(t *testing.T) {
@@ -159,6 +231,34 @@ func TestTakeSummaryJSON(t *testing.T) {
 	require.Equal(t, float64(0), queue["deleted"])
 	require.Equal(t, float64(3), queue["total"])
 	require.Equal(t, float64(1), queue["ready_remaining"])
+}
+
+func TestSetNoteFlagsAndSummary(t *testing.T) {
+	t.Parallel()
+
+	queuePath := filepath.Join(t.TempDir(), "tasks.sqlite")
+	stdout, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	d := testDepsWithWriters(stdout, stderr)
+
+	run := func(args ...string) string {
+		t.Helper()
+		stdout.Reset()
+		stderr.Reset()
+		root := NewRoot(d, "test")
+		root.SetArgs(append([]string{"--queue", queuePath}, args...))
+		require.NoError(t, root.Execute(), "stderr: %s", stderr.String())
+		return stdout.String()
+	}
+
+	id := strings.TrimSpace(run("add", "--no-cwd", "task title. second sentence"))
+	require.JSONEq(t, `{"id":"`+id+`","status":"failed","title":"task title","note":"go test ./... && echo ok","queue":{"todo":0,"doing":0,"done":0,"failed":1,"deleted":0,"total":1}}`, run("set", id, "failed", "--note", "go test ./... && echo ok", "--summary"))
+
+	notePath := filepath.Join(t.TempDir(), "note.txt")
+	require.NoError(t, os.WriteFile(notePath, []byte("ready again\n"), 0o600))
+	require.JSONEq(t, `{"id":"`+id+`","status":"todo","title":"task title","note":"ready again"}`, run("set", id, "todo", "--note-file", notePath, "--json"))
+
+	d.Stdin = strings.NewReader("verified with quotes \"ok\" && done\n")
+	require.JSONEq(t, `{"id":"`+id+`","status":"done","title":"task title","note":"verified with quotes \"ok\" && done"}`, run("set", id, "done", "--note-file", "-", "--json"))
 }
 
 func TestSetDoingCreatesRetryAttempt(t *testing.T) {
