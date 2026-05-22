@@ -17,9 +17,6 @@ var ErrDependencyCycle = errors.New("dependency cycle")
 // ErrDependencyNotFound is returned when a dependency edge is absent.
 var ErrDependencyNotFound = errors.New("dependency not found")
 
-// ErrBlockNotFound is returned when a manual block is absent.
-var ErrBlockNotFound = errors.New("block not found")
-
 // ErrInvalidState is returned when an operation does not apply to the current task state.
 var ErrInvalidState = errors.New("invalid state")
 

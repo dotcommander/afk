@@ -3,6 +3,8 @@ package server_test
 import (
 	"context"
 	"encoding/json"
+	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -12,9 +14,6 @@ import (
 	"testing"
 	"time"
 
-	"io"
-	"log/slog"
-
 	"github.com/dotcommander/afk/internal/app"
 	"github.com/dotcommander/afk/internal/server"
 	"github.com/dotcommander/afk/internal/store"
@@ -22,33 +21,25 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// newServerFixture opens a temp SQLite store, seeds tasks, and returns a
-// ready-to-call http.Handler. It also returns the store for post-call
-// assertions. The caller is responsible for no cleanup beyond t.Cleanup
-// (registered inside this function).
-func newServerFixture(t *testing.T) (http.Handler, *app.Service, *store.SQLiteStore) {
+func newServerFixture(t *testing.T) (http.Handler, *app.Service) {
 	t.Helper()
 	ctx := context.Background()
-	queuePath := filepath.Join(t.TempDir(), "tasks.sqlite")
-	st, err := store.NewSQLite(ctx, store.Paths{SQLitePath: queuePath})
+	st, err := store.NewSQLite(ctx, store.Paths{SQLitePath: filepath.Join(t.TempDir(), "tasks.sqlite")})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, st.Close()) })
 
-	now := func() time.Time { return time.Now().UTC() }
-	svc := app.NewService(st, now)
-
-	// Seed: two pending tasks + one done task.
-	_, err = svc.Add(ctx, "pending one")
+	svc := app.NewService(st, func() time.Time { return time.Now().UTC() })
+	_, err = svc.Add(ctx, "todo one")
 	require.NoError(t, err)
-	_, err = svc.Add(ctx, "pending two")
+	_, err = svc.Add(ctx, "todo two")
 	require.NoError(t, err)
 	doneID, err := svc.Add(ctx, "done task")
 	require.NoError(t, err)
-	require.NoError(t, svc.Done(ctx, doneID, ""))
+	require.NoError(t, svc.SetStatus(ctx, doneID, task.StatusDone, ""))
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	srv := server.New(svc, logger, "127.0.0.1:0", false)
-	return srv.Handler(), svc, st
+	return srv.Handler(), svc
 }
 
 func withCSRF(t *testing.T, h http.Handler, req *http.Request) *http.Request {
@@ -65,7 +56,6 @@ func withCSRF(t *testing.T, h http.Handler, req *http.Request) *http.Request {
 	require.True(t, ok)
 	token, _, ok := strings.Cut(after, `">`)
 	require.True(t, ok)
-	require.NotEmpty(t, token)
 	req.Header.Set("X-AFK-CSRF-Token", token)
 	return req
 }
@@ -73,276 +63,155 @@ func withCSRF(t *testing.T, h http.Handler, req *http.Request) *http.Request {
 func TestGETIndexReturns200AndHTML(t *testing.T) {
 	t.Parallel()
 
-	h, _, _ := newServerFixture(t)
+	h, _ := newServerFixture(t)
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
-	h.ServeHTTP(rec, req)
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
 
 	require.Equal(t, http.StatusOK, rec.Code)
-	ct := rec.Header().Get("Content-Type")
-	require.Contains(t, ct, "text/html")
+	require.Contains(t, rec.Header().Get("Content-Type"), "text/html")
 	require.Contains(t, rec.Body.String(), "<html")
 }
 
 func TestGETStatusReturnsCountsAndTasks(t *testing.T) {
 	t.Parallel()
 
-	h, _, _ := newServerFixture(t)
+	h, _ := newServerFixture(t)
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/api/status", nil)
-	h.ServeHTTP(rec, req)
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/status", nil))
 
 	require.Equal(t, http.StatusOK, rec.Code)
-	require.Contains(t, rec.Header().Get("Content-Type"), "application/json")
-
 	var body map[string]any
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
-	counts, ok := body["counts"].(map[string]any)
-	require.True(t, ok, "counts field must be a JSON object")
-	require.Equal(t, float64(2), counts["pending"])
+	counts := body["counts"].(map[string]any)
+	require.Equal(t, float64(2), counts["todo"])
 	require.Equal(t, float64(1), counts["done"])
-
-	_, hasPending := body["pending"]
-	_, hasWorking := body["working"]
-	require.True(t, hasPending, "status response must include pending list")
-	require.True(t, hasWorking, "status response must include working list")
+	_, hasTodo := body["todo"]
+	_, hasDoing := body["doing"]
+	require.True(t, hasTodo)
+	require.True(t, hasDoing)
 }
 
-func TestGETTasksReturnsAllSeededTasks(t *testing.T) {
+func TestGETTasksStatusAndSearch(t *testing.T) {
 	t.Parallel()
 
-	h, _, _ := newServerFixture(t)
+	h, _ := newServerFixture(t)
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/api/tasks", nil)
-	h.ServeHTTP(rec, req)
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/tasks?status=todo&q=one", nil))
 
 	require.Equal(t, http.StatusOK, rec.Code)
 	var tasks []map[string]any
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &tasks))
-	require.Len(t, tasks, 3, "all three seeded tasks must be returned")
+	require.Len(t, tasks, 1)
+	require.Equal(t, "todo", tasks[0]["status"])
+	require.Contains(t, tasks[0]["body"], "one")
 }
 
-func TestGETTasksStatusFilterReturnsPendingOnly(t *testing.T) {
-	t.Parallel()
-
-	h, _, _ := newServerFixture(t)
-	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/api/tasks?status=pending", nil)
-	h.ServeHTTP(rec, req)
-
-	require.Equal(t, http.StatusOK, rec.Code)
-	var tasks []map[string]any
-	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &tasks))
-	require.Len(t, tasks, 2, "status=pending must return only the two pending tasks")
-	for _, tk := range tasks {
-		require.Equal(t, "pending", tk["status"])
-	}
-}
-
-func TestGETTaskByIDReturnsExplainData(t *testing.T) {
+func TestGETTaskReturnsHistory(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
-	h, svc, _ := newServerFixture(t)
-
-	// Grab a known pending task id.
-	tasks, err := svc.List(ctx, "pending")
+	h, svc := newServerFixture(t)
+	tasks, err := svc.List(ctx, "todo")
 	require.NoError(t, err)
-	require.NotEmpty(t, tasks)
-	id := tasks[0].ID
 
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/api/tasks/"+id, nil)
-	h.ServeHTTP(rec, req)
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/tasks/"+tasks[0].ID, nil))
 
 	require.Equal(t, http.StatusOK, rec.Code)
 	var body map[string]any
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
-	tk, ok := body["task"].(map[string]any)
-	require.True(t, ok, "response must include task object")
-	require.Equal(t, id, tk["id"])
+	require.NotNil(t, body["task"])
 	_, hasEvents := body["events"]
-	require.True(t, hasEvents, "explain response must include events")
 	_, hasAttempts := body["attempts"]
-	require.True(t, hasAttempts, "explain response must include attempts")
+	require.True(t, hasEvents)
+	require.True(t, hasAttempts)
 }
 
-func TestGETTaskByIDMissingReturns404(t *testing.T) {
+func TestPOSTTakeDryRunAndClaim(t *testing.T) {
 	t.Parallel()
 
-	h, _, _ := newServerFixture(t)
-	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/api/tasks/no-such-id", nil)
-	h.ServeHTTP(rec, req)
+	h, _ := newServerFixture(t)
 
-	require.Equal(t, http.StatusNotFound, rec.Code)
-}
+	dry := httptest.NewRecorder()
+	dryReq := withCSRF(t, h, httptest.NewRequest(http.MethodPost, "/api/take?dry_run=true", nil))
+	h.ServeHTTP(dry, dryReq)
+	require.Equal(t, http.StatusOK, dry.Code)
+	var ready []map[string]any
+	require.NoError(t, json.Unmarshal(dry.Body.Bytes(), &ready))
+	require.Len(t, ready, 2)
 
-func TestGETTaskWhyReturnsReadinessVerdict(t *testing.T) {
-	t.Parallel()
+	claim := httptest.NewRecorder()
+	claimReq := withCSRF(t, h, httptest.NewRequest(http.MethodPost, "/api/take?worker=w1&lease=30m", nil))
+	h.ServeHTTP(claim, claimReq)
+	require.Equal(t, http.StatusOK, claim.Code)
+	var claimed map[string]any
+	require.NoError(t, json.Unmarshal(claim.Body.Bytes(), &claimed))
+	require.Equal(t, "doing", claimed["status"])
 
-	ctx := context.Background()
-	h, svc, _ := newServerFixture(t)
-
-	tasks, err := svc.List(ctx, "pending")
-	require.NoError(t, err)
-	require.NotEmpty(t, tasks)
-	id := tasks[0].ID
-
-	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/api/tasks/"+id+"/why", nil)
-	h.ServeHTTP(rec, req)
-
-	require.Equal(t, http.StatusOK, rec.Code)
-	var body map[string]any
-	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
-	_, hasReady := body["ready"]
-	require.True(t, hasReady, "why response must include ready field")
-	_, hasTask := body["task"]
-	require.True(t, hasTask, "why response must include task field")
-}
-
-func TestGETReadyReturnsReadyTasks(t *testing.T) {
-	t.Parallel()
-
-	h, _, _ := newServerFixture(t)
-	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/api/ready", nil)
-	h.ServeHTTP(rec, req)
-
-	require.Equal(t, http.StatusOK, rec.Code)
-	var tasks []map[string]any
-	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &tasks))
-	// Both pending tasks are unblocked so both are ready.
-	require.Len(t, tasks, 2)
-	for _, tk := range tasks {
-		require.Equal(t, "pending", tk["status"])
+	for {
+		rec := httptest.NewRecorder()
+		req := withCSRF(t, h, httptest.NewRequest(http.MethodPost, "/api/take", nil))
+		h.ServeHTTP(rec, req)
+		require.Equal(t, http.StatusOK, rec.Code)
+		if strings.TrimSpace(rec.Body.String()) == "null" {
+			break
+		}
 	}
 }
 
-func TestPOSTRequiresCSRFToken(t *testing.T) {
+func TestPATCHTaskSetsStatus(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
-	h, svc, _ := newServerFixture(t)
-
-	tasks, err := svc.List(ctx, "pending")
+	h, svc := newServerFixture(t)
+	tasks, err := svc.List(ctx, "todo")
 	require.NoError(t, err)
-	require.NotEmpty(t, tasks)
 	id := tasks[0].ID
 
+	body := `{"status":"failed","error":"test failure reason"}`
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/api/tasks/"+id+"/done", nil)
-	h.ServeHTTP(rec, req)
-
-	require.Equal(t, http.StatusForbidden, rec.Code)
-	got, err := svc.Show(ctx, id)
-	require.NoError(t, err)
-	require.Equal(t, task.StatusPending, got.Status)
-}
-
-func TestPOSTDoneTransitionsTaskAndReturnsDone(t *testing.T) {
-	t.Parallel()
-
-	ctx := context.Background()
-	h, svc, _ := newServerFixture(t)
-
-	tasks, err := svc.List(ctx, "pending")
-	require.NoError(t, err)
-	require.NotEmpty(t, tasks)
-	id := tasks[0].ID
-
-	rec := httptest.NewRecorder()
-	req := withCSRF(t, h, httptest.NewRequest(http.MethodPost, "/api/tasks/"+id+"/done", nil))
-	h.ServeHTTP(rec, req)
-
-	require.Equal(t, http.StatusOK, rec.Code)
-
-	// Verify the task is now done via the service.
-	got, err := svc.Show(ctx, id)
-	require.NoError(t, err)
-	require.Equal(t, task.StatusDone, got.Status)
-}
-
-func TestPOSTUnknownActionReturns400(t *testing.T) {
-	t.Parallel()
-
-	ctx := context.Background()
-	h, svc, _ := newServerFixture(t)
-
-	tasks, err := svc.List(ctx, "pending")
-	require.NoError(t, err)
-	require.NotEmpty(t, tasks)
-	id := tasks[0].ID
-
-	rec := httptest.NewRecorder()
-	req := withCSRF(t, h, httptest.NewRequest(http.MethodPost, "/api/tasks/"+id+"/bogus", nil))
-	h.ServeHTTP(rec, req)
-
-	require.Equal(t, http.StatusBadRequest, rec.Code)
-	var body map[string]any
-	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
-	errMsg, ok := body["error"].(string)
-	require.True(t, ok)
-	require.Contains(t, errMsg, "unknown action")
-}
-
-func TestPOSTPruneReturnsOK(t *testing.T) {
-	t.Parallel()
-
-	h, _, _ := newServerFixture(t)
-	rec := httptest.NewRecorder()
-	req := withCSRF(t, h, httptest.NewRequest(http.MethodPost, "/api/prune", nil))
-	h.ServeHTTP(rec, req)
-
-	require.Equal(t, http.StatusOK, rec.Code)
-	var body map[string]any
-	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
-	require.Equal(t, true, body["ok"])
-	require.Equal(t, float64(1), body["pruned"])
-}
-
-func TestPOSTPruneRemovesDoneTasks(t *testing.T) {
-	t.Parallel()
-
-	ctx := context.Background()
-	h, svc, _ := newServerFixture(t)
-
-	// Confirm done task exists before prune.
-	before, err := svc.List(ctx, "done")
-	require.NoError(t, err)
-	require.Len(t, before, 1)
-
-	rec := httptest.NewRecorder()
-	req := withCSRF(t, h, httptest.NewRequest(http.MethodPost, "/api/prune", nil))
-	h.ServeHTTP(rec, req)
-	require.Equal(t, http.StatusOK, rec.Code)
-
-	after, err := svc.List(ctx, "done")
-	require.NoError(t, err)
-	require.Empty(t, after, "prune must remove done tasks")
-}
-
-func TestPOSTPruneRejectsInvalidStatus(t *testing.T) {
-	t.Parallel()
-
-	h, _, _ := newServerFixture(t)
-	rec := httptest.NewRecorder()
-	req := withCSRF(t, h, httptest.NewRequest(http.MethodPost, "/api/prune", strings.NewReader(`{"statuses":["faield"]}`)))
+	req := withCSRF(t, h, httptest.NewRequest(http.MethodPatch, "/api/tasks/"+id, strings.NewReader(body)))
 	req.Header.Set("Content-Type", "application/json")
 	h.ServeHTTP(rec, req)
 
-	require.Equal(t, http.StatusBadRequest, rec.Code)
-	var body map[string]any
-	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
-	require.Contains(t, body["error"], "invalid task status")
+	require.Equal(t, http.StatusOK, rec.Code)
+	got, err := svc.Show(ctx, id)
+	require.NoError(t, err)
+	require.Equal(t, task.StatusFailed, got.Status)
+	require.Contains(t, got.Error, "test failure reason")
+}
+
+func TestPATCHTaskUsesNoteAndReasonFallbacks(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	h, svc := newServerFixture(t)
+	tasks, err := svc.List(ctx, "todo")
+	require.NoError(t, err)
+
+	for _, body := range []string{
+		`{"status":"failed","note":"note reason"}`,
+		`{"status":"failed","reason":"fallback reason"}`,
+	} {
+		id := tasks[0].ID
+		rec := httptest.NewRecorder()
+		req := withCSRF(t, h, httptest.NewRequest(http.MethodPatch, "/api/tasks/"+id, strings.NewReader(body)))
+		req.Header.Set("Content-Type", "application/json")
+		h.ServeHTTP(rec, req)
+		require.Equal(t, http.StatusOK, rec.Code)
+		got, showErr := svc.Show(ctx, id)
+		require.NoError(t, showErr)
+		require.Equal(t, task.StatusFailed, got.Status)
+		require.NotEmpty(t, got.Error)
+		require.NoError(t, svc.SetStatus(ctx, id, task.StatusPending, "reset"))
+	}
 }
 
 func TestPOSTCreateInfersRepoDefaults(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
-	h, svc, _ := newServerFixture(t)
+	h, svc := newServerFixture(t)
 	repoDir := t.TempDir()
 	require.NoError(t, os.Mkdir(filepath.Join(repoDir, ".git"), 0o755))
 
@@ -367,27 +236,91 @@ func TestPOSTCreateInfersRepoDefaults(t *testing.T) {
 	require.Contains(t, got.Tags, "repo:"+filepath.Base(repoDir))
 }
 
-func TestPOSTFailTransitionsTaskToFailed(t *testing.T) {
+func TestGETPathsAndErrorResponses(t *testing.T) {
+	t.Parallel()
+
+	h, svc := newServerFixture(t)
+	_, err := svc.AddWithOptions(context.Background(), task.AddOptions{
+		Body: "path task",
+		CWD:  "/tmp/afk-test-repo",
+	})
+	require.NoError(t, err)
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/paths", nil))
+	require.Equal(t, http.StatusOK, rec.Code)
+	var paths []string
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &paths))
+	require.Contains(t, paths, "/tmp/afk-test-repo")
+
+	missing := httptest.NewRecorder()
+	h.ServeHTTP(missing, httptest.NewRequest(http.MethodGet, "/api/tasks/missing-id", nil))
+	require.Equal(t, http.StatusNotFound, missing.Code)
+	require.Contains(t, missing.Body.String(), "not found")
+
+	badStatus := httptest.NewRecorder()
+	h.ServeHTTP(badStatus, httptest.NewRequest(http.MethodGet, "/api/tasks?status=not-real", nil))
+	require.Equal(t, http.StatusInternalServerError, badStatus.Code)
+	require.Contains(t, badStatus.Body.String(), "invalid task status")
+}
+
+func TestMutationHandlersRejectBadInput(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
-	h, svc, _ := newServerFixture(t)
-
-	tasks, err := svc.List(ctx, "pending")
+	h, svc := newServerFixture(t)
+	tasks, err := svc.List(ctx, "todo")
 	require.NoError(t, err)
-	require.NotEmpty(t, tasks)
 	id := tasks[0].ID
 
-	body := `{"error":"test failure reason"}`
+	for _, tt := range []struct {
+		name   string
+		method string
+		path   string
+		body   string
+		want   string
+	}{
+		{name: "patch bad json", method: http.MethodPatch, path: "/api/tasks/" + id, body: "{", want: "decode body"},
+		{name: "patch bad status", method: http.MethodPatch, path: "/api/tasks/" + id, body: `{"status":"nope"}`, want: "invalid task status"},
+		{name: "create bad json", method: http.MethodPost, path: "/api/tasks", body: "{", want: "decode body"},
+		{name: "create invalid task", method: http.MethodPost, path: "/api/tasks", body: `{"body":""}`, want: "invalid task"},
+		{name: "take bad dry run", method: http.MethodPost, path: "/api/take?dry_run=maybe", body: "", want: "parse dry_run"},
+		{name: "take bad lease", method: http.MethodPost, path: "/api/take?lease=soon", body: "", want: "parse lease"},
+	} {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			req := withCSRF(t, h, httptest.NewRequest(tt.method, tt.path, strings.NewReader(tt.body)))
+			req.Header.Set("Content-Type", "application/json")
+			h.ServeHTTP(rec, req)
+			require.Equal(t, http.StatusBadRequest, rec.Code)
+			require.Contains(t, rec.Body.String(), tt.want)
+		})
+	}
+}
+
+func TestMutationHandlersRequireCSRF(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	h, svc := newServerFixture(t)
+	tasks, err := svc.List(ctx, "todo")
+	require.NoError(t, err)
+
 	rec := httptest.NewRecorder()
-	req := withCSRF(t, h, httptest.NewRequest(http.MethodPost, "/api/tasks/"+id+"/fail", strings.NewReader(body)))
+	req := httptest.NewRequest(http.MethodPatch, "/api/tasks/"+tasks[0].ID, strings.NewReader(`{"status":"done"}`))
 	req.Header.Set("Content-Type", "application/json")
 	h.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusForbidden, rec.Code)
+	require.Contains(t, rec.Body.String(), "invalid csrf token")
+}
 
-	require.Equal(t, http.StatusOK, rec.Code)
+func TestServerRunStartsAndStopsOnContextCancel(t *testing.T) {
+	t.Parallel()
 
-	got, err := svc.Show(ctx, id)
-	require.NoError(t, err)
-	require.Equal(t, task.StatusFailed, got.Status)
-	require.Contains(t, got.Error, "test failure reason")
+	_, svc := newServerFixture(t)
+	srv := server.New(svc, slog.New(slog.NewTextHandler(io.Discard, nil)), "127.0.0.1:0", false)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	require.NoError(t, srv.Run(ctx))
 }

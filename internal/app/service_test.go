@@ -80,21 +80,22 @@ func TestServiceLifecycle(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, task.StatusDone, got.Status)
 
-	require.NoError(t, svc.Reset(ctx, id))
+	id, err = svc.Add(ctx, "fail me")
+	require.NoError(t, err)
 	require.NoError(t, svc.Fail(ctx, id, "oops"))
 	tally, err := svc.Count(ctx)
 	require.NoError(t, err)
 	require.Equal(t, 1, tally[task.StatusFailed])
 
-	pruned, err := svc.Prune(ctx, []task.Status{task.StatusFailed})
+	pruned, err := svc.Prune(ctx, []task.Status{task.StatusDone, task.StatusFailed})
 	require.NoError(t, err)
-	require.Equal(t, 1, pruned)
+	require.Equal(t, 2, pruned)
 	tasks, err = svc.List(ctx, "")
 	require.NoError(t, err)
 	require.Empty(t, tasks)
 }
 
-func TestServiceFilteringEditingAndCollisionIDs(t *testing.T) {
+func TestServiceFilteringAndCollisionIDs(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	svc := newService(t)
@@ -106,37 +107,93 @@ func TestServiceFilteringEditingAndCollisionIDs(t *testing.T) {
 	require.NotEqual(t, first, second)
 	require.True(t, strings.HasSuffix(second, "-1"))
 
-	require.NoError(t, svc.Edit(ctx, second, "edited"))
 	pending, err := svc.List(ctx, string(task.StatusPending))
 	require.NoError(t, err)
 	require.Len(t, pending, 2)
-	require.Equal(t, "edited", pending[1].Body)
+	require.Equal(t, "second", pending[1].Body)
 
 	done, err := svc.List(ctx, string(task.StatusDone))
 	require.NoError(t, err)
 	require.Empty(t, done)
 }
 
-func TestServiceEditPreservesGeneratedTaskValidation(t *testing.T) {
+func TestServiceFindAndRecentPaths(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	svc := newService(t)
 
-	id, err := svc.AddWithOptions(ctx, task.AddOptions{
-		Body:   validDiscoveryBody("/tmp/repo/file.go"),
-		Tags:   []string{"discovery"},
-		CWD:    "/tmp/repo",
-		Source: "task-discovery",
+	first, err := svc.AddWithOptions(ctx, task.AddOptions{
+		Body:        "fix search matching",
+		CWD:         "/tmp/alpha",
+		ResourceKey: "repo:/tmp/alpha",
+		Tags:        []string{"area:search"},
 	})
 	require.NoError(t, err)
-
-	err = svc.Edit(ctx, id, "fix focused software issue")
-	require.Error(t, err)
-	require.True(t, errors.Is(err, task.ErrInvalidTask), "got %v", err)
-
-	got, err := svc.Show(ctx, id)
+	second, err := svc.AddWithOptions(ctx, task.AddOptions{
+		Body: "unrelated visible task",
+		CWD:  "/tmp/beta",
+	})
 	require.NoError(t, err)
-	require.Equal(t, validDiscoveryBody("/tmp/repo/file.go"), got.Body)
+	deleted, err := svc.AddWithOptions(ctx, task.AddOptions{
+		Body: "deleted search match",
+		CWD:  "/tmp/deleted",
+	})
+	require.NoError(t, err)
+	require.NoError(t, svc.SetStatus(ctx, deleted, task.StatusDeleted, "obsolete"))
+
+	found, err := svc.Find(ctx, "area:search", "")
+	require.NoError(t, err)
+	require.Len(t, found, 1)
+	require.Equal(t, first, found[0].ID)
+
+	found, err = svc.Find(ctx, "search", "all")
+	require.NoError(t, err)
+	require.Len(t, found, 2)
+
+	found, err = svc.Find(ctx, "visible", "todo")
+	require.NoError(t, err)
+	require.Len(t, found, 1)
+	require.Equal(t, second, found[0].ID)
+
+	_, err = svc.Find(ctx, "anything", "not-real")
+	require.ErrorIs(t, err, task.ErrInvalidStatus)
+
+	paths, err := svc.RecentPaths(ctx)
+	require.NoError(t, err)
+	require.Equal(t, []string{"/tmp/alpha", "/tmp/beta", "/tmp/deleted"}, paths)
+}
+
+func TestServiceStatusSnapshotUsesCanonicalTodoDoing(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	svc := newService(t)
+
+	todoID, err := svc.Add(ctx, "todo task")
+	require.NoError(t, err)
+	doingID, err := svc.Add(ctx, "doing task")
+	require.NoError(t, err)
+	doneID, err := svc.Add(ctx, "done task")
+	require.NoError(t, err)
+	deletedID, err := svc.Add(ctx, "deleted task")
+	require.NoError(t, err)
+
+	claimed, err := svc.Take(ctx, 0, "worker-1", "")
+	require.NoError(t, err)
+	require.NotNil(t, claimed)
+	require.Equal(t, todoID, claimed.ID)
+	require.NoError(t, svc.SetStatus(ctx, doneID, task.StatusDone, "verified"))
+	require.NoError(t, svc.SetStatus(ctx, deletedID, task.StatusDeleted, "obsolete"))
+
+	snapshot, err := svc.Status(ctx)
+	require.NoError(t, err)
+	require.Equal(t, 1, snapshot.Counts[task.StatusPending])
+	require.Equal(t, 1, snapshot.Counts[task.StatusWorking])
+	require.Equal(t, 1, snapshot.Counts[task.StatusDone])
+	require.Equal(t, 1, snapshot.Counts[task.StatusDeleted])
+	require.Len(t, snapshot.Todo, 1)
+	require.Equal(t, doingID, snapshot.Todo[0].ID)
+	require.Len(t, snapshot.Doing, 1)
+	require.Equal(t, todoID, snapshot.Doing[0].ID)
 }
 
 func TestServiceRetriesDuplicateIDOnAdd(t *testing.T) {
@@ -146,10 +203,36 @@ func TestServiceRetriesDuplicateIDOnAdd(t *testing.T) {
 	st := &duplicateOnFirstAddStore{}
 	svc := app.NewService(st, func() time.Time { return fixed })
 
-	id, err := svc.Add(ctx, "retry duplicate id")
+	id, err := svc.Add(ctx, "duplicate id")
 	require.NoError(t, err)
 	require.Equal(t, "1735787045-1", id)
 	require.Equal(t, 2, st.addCalls)
+}
+
+func TestServiceStopsAfterRepeatedDuplicateIDs(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	st := &alwaysDuplicateStore{}
+	svc := app.NewService(st, func() time.Time { return fixed })
+
+	_, err := svc.Add(ctx, "duplicate forever")
+	require.ErrorIs(t, err, store.ErrDuplicateTask)
+	require.Equal(t, 16, st.addCalls)
+}
+
+type alwaysDuplicateStore struct {
+	app.Store
+	addCalls int
+}
+
+func (s *alwaysDuplicateStore) List(context.Context) ([]task.Task, error) {
+	return nil, nil
+}
+
+func (s *alwaysDuplicateStore) Add(context.Context, task.Task) error {
+	s.addCalls++
+	return store.ErrDuplicateTask
 }
 
 type duplicateOnFirstAddStore struct {
@@ -192,7 +275,9 @@ func TestServiceRejectsInvalidTasks(t *testing.T) {
 
 	id, err := svc.Add(ctx, "valid software task")
 	require.NoError(t, err)
-	require.Error(t, svc.Edit(ctx, id, "make it better"))
+	got, err := svc.Show(ctx, id)
+	require.NoError(t, err)
+	require.Equal(t, "valid software task", got.Body)
 }
 
 func TestServiceAddWithOptionsStoresMetadata(t *testing.T) {
@@ -240,13 +325,12 @@ func TestServiceDependencies(t *testing.T) {
 	require.Equal(t, blocked, deps[0].TaskID)
 	require.Equal(t, prereq, deps[0].DependsOnID)
 
-	require.NoError(t, svc.RemoveDependency(ctx, blocked, prereq))
 	deps, err = svc.Dependencies(ctx, blocked)
 	require.NoError(t, err)
-	require.Empty(t, deps)
+	require.Len(t, deps, 1)
 }
 
-func TestServiceReadyAndWhy(t *testing.T) {
+func TestServiceReady(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	svc := newService(t)
@@ -265,21 +349,15 @@ func TestServiceReadyAndWhy(t *testing.T) {
 	require.Equal(t, prereq, ready[0].ID)
 	require.Equal(t, independent, ready[1].ID)
 
-	why, err := svc.Why(ctx, blocked)
-	require.NoError(t, err)
-	require.False(t, why.Ready)
-	require.Len(t, why.Reasons, 1)
-	require.Equal(t, "dependency_pending", why.Reasons[0].Kind)
-	require.Equal(t, prereq, why.Reasons[0].Detail)
-
 	require.NoError(t, svc.Done(ctx, prereq, ""))
-	why, err = svc.Why(ctx, blocked)
+	ready, err = svc.Ready(ctx)
 	require.NoError(t, err)
-	require.True(t, why.Ready)
-	require.Empty(t, why.Reasons)
+	require.Len(t, ready, 2)
+	require.Equal(t, blocked, ready[0].ID)
+	require.Equal(t, independent, ready[1].ID)
 }
 
-func TestServiceWhyReportsFailedDependency(t *testing.T) {
+func TestServiceReadyExcludesFailedDependency(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	svc := newService(t)
@@ -291,41 +369,14 @@ func TestServiceWhyReportsFailedDependency(t *testing.T) {
 	require.NoError(t, svc.AddDependency(ctx, blocked, prereq))
 	require.NoError(t, svc.Fail(ctx, prereq, "boom"))
 
-	why, err := svc.Why(ctx, blocked)
-	require.NoError(t, err)
-	require.False(t, why.Ready)
-	require.Len(t, why.Reasons, 1)
-	require.Equal(t, "dependency_failed", why.Reasons[0].Kind)
-	require.Equal(t, prereq, why.Reasons[0].Detail)
-}
-
-func TestServiceManualBlockReadiness(t *testing.T) {
-	t.Parallel()
-	ctx := context.Background()
-	svc := newService(t)
-
-	id, err := svc.Add(ctx, "blocked")
-	require.NoError(t, err)
-	require.NoError(t, svc.Block(ctx, id, "waiting"))
-
 	ready, err := svc.Ready(ctx)
 	require.NoError(t, err)
-	require.Empty(t, ready)
-
-	why, err := svc.Why(ctx, id)
-	require.NoError(t, err)
-	require.False(t, why.Ready)
-	require.Len(t, why.Reasons, 1)
-	require.Equal(t, "manual_block", why.Reasons[0].Kind)
-	require.Equal(t, "waiting", why.Reasons[0].Detail)
-
-	require.NoError(t, svc.Unblock(ctx, id))
-	why, err = svc.Why(ctx, id)
-	require.NoError(t, err)
-	require.True(t, why.Ready)
+	for _, task := range ready {
+		require.NotEqual(t, blocked, task.ID)
+	}
 }
 
-func TestServiceWhyReportsResourceLock(t *testing.T) {
+func TestServiceReadyExcludesResourceLock(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	svc := newService(t)
@@ -338,15 +389,14 @@ func TestServiceWhyReportsResourceLock(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, claimed)
 
-	why, err := svc.Why(ctx, second)
+	ready, err := svc.Ready(ctx)
 	require.NoError(t, err)
-	require.False(t, why.Ready)
-	require.Len(t, why.Reasons, 1)
-	require.Equal(t, "resource_locked", why.Reasons[0].Kind)
-	require.Equal(t, claimed.ID, why.Reasons[0].Detail)
+	for _, task := range ready {
+		require.NotEqual(t, second, task.ID)
+	}
 }
 
-func TestServiceWhyKeepsExpiredResourceLeaseLockedUntilRequeue(t *testing.T) {
+func TestServiceReadyKeepsExpiredResourceLeaseLockedUntilRequeue(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	now := fixed
@@ -361,19 +411,19 @@ func TestServiceWhyKeepsExpiredResourceLeaseLockedUntilRequeue(t *testing.T) {
 	require.NotNil(t, claimed)
 
 	now = now.Add(2 * time.Second)
-	why, err := svc.Why(ctx, second)
+	ready, err := svc.Ready(ctx)
 	require.NoError(t, err)
-	require.False(t, why.Ready)
-	require.Len(t, why.Reasons, 1)
-	require.Equal(t, "resource_locked", why.Reasons[0].Kind)
-	require.Equal(t, claimed.ID, why.Reasons[0].Detail)
+	for _, task := range ready {
+		require.NotEqual(t, second, task.ID)
+	}
 
 	_, err = svc.RequeueStale(ctx, time.Minute)
 	require.NoError(t, err)
-	why, err = svc.Why(ctx, second)
+	ready, err = svc.Ready(ctx)
 	require.NoError(t, err)
-	require.True(t, why.Ready)
-	require.Empty(t, why.Reasons)
+	require.Len(t, ready, 2)
+	require.Equal(t, claimed.ID, ready[0].ID)
+	require.Equal(t, second, ready[1].ID)
 }
 
 func TestServiceNextAndPopEmptyQueue(t *testing.T) {
@@ -432,31 +482,6 @@ func TestServiceNextAndPopAgreeWithPriorityOrder(t *testing.T) {
 	require.Equal(t, urgent, popped.ID)
 }
 
-func TestServicePromote(t *testing.T) {
-	t.Parallel()
-	ctx := context.Background()
-	svc := newService(t)
-
-	first, err := svc.Add(ctx, "first")
-	require.NoError(t, err)
-	second, err := svc.Add(ctx, "second")
-	require.NoError(t, err)
-
-	require.NoError(t, svc.Promote(ctx, second))
-	next, err := svc.Next(ctx)
-	require.NoError(t, err)
-	require.NotNil(t, next)
-	require.Equal(t, second, next.ID)
-
-	require.NoError(t, svc.Done(ctx, second, ""))
-	require.ErrorIs(t, svc.Promote(ctx, second), store.ErrInvalidState)
-	require.ErrorIs(t, svc.Promote(ctx, "missing"), store.ErrNotFound)
-	next, err = svc.Next(ctx)
-	require.NoError(t, err)
-	require.NotNil(t, next)
-	require.Equal(t, first, next.ID)
-}
-
 func TestServicePopRecordsWorker(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -475,90 +500,33 @@ func TestServicePopRecordsWorker(t *testing.T) {
 	require.Equal(t, "codex", data.Attempts[0].Agent)
 }
 
-func TestServiceRetryRequeueStaleAndPruneByTag(t *testing.T) {
+func TestServiceRequeueStale(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	now := fixed
 	svc := newServiceWithNow(t, func() time.Time { return now })
-
-	failed, err := svc.AddWithOptions(ctx, task.AddOptions{Body: "failed", Tags: []string{"spec:drop"}})
-	require.NoError(t, err)
-	require.NoError(t, svc.Fail(ctx, failed, "boom"))
-	require.NoError(t, svc.Retry(ctx, failed))
-	got, err := svc.Show(ctx, failed)
-	require.NoError(t, err)
-	require.Equal(t, task.StatusPending, got.Status)
 
 	stale, err := svc.Add(ctx, "stale")
 	require.NoError(t, err)
 	claimed, err := svc.PopWithLease(ctx, time.Nanosecond)
 	require.NoError(t, err)
 	require.NotNil(t, claimed)
-	require.Equal(t, failed, claimed.ID)
+	require.Equal(t, stale, claimed.ID)
 	now = now.Add(time.Second)
 	requeued, err := svc.RequeueStale(ctx, time.Hour)
 	require.NoError(t, err)
 	require.Len(t, requeued, 1)
-	require.Equal(t, failed, requeued[0].ID)
+	require.Equal(t, stale, requeued[0].ID)
 
-	claimed, err = svc.Pop(ctx)
-	require.NoError(t, err)
-	require.NotNil(t, claimed)
-	require.Equal(t, failed, claimed.ID)
-	require.NoError(t, svc.Done(ctx, failed, ""))
 	claimed, err = svc.Pop(ctx)
 	require.NoError(t, err)
 	require.NotNil(t, claimed)
 	require.Equal(t, stale, claimed.ID)
 
-	n, err := svc.PruneByTag(ctx, "spec:drop")
+	require.NoError(t, svc.Done(ctx, stale, ""))
+	got, err := svc.Show(ctx, stale)
 	require.NoError(t, err)
-	require.Equal(t, 1, n)
-	_, err = svc.Show(ctx, failed)
-	require.ErrorIs(t, err, app.ErrNotFound)
-}
-
-func TestServiceRetryRejectsInvalidFailedBody(t *testing.T) {
-	t.Parallel()
-	ctx := context.Background()
-	svc := newService(t)
-
-	id, err := svc.AddWithOptionsForce(ctx, task.AddOptions{
-		Body: "HITL GATE FIRST: post this question to the user via AskUserQuestion.",
-	})
-	require.NoError(t, err)
-	require.NoError(t, svc.Fail(ctx, id, "invalid autonomy contract"))
-
-	err = svc.Retry(ctx, id)
-	require.Error(t, err)
-	require.True(t, errors.Is(err, task.ErrInvalidTask), "got %v", err)
-
-	got, err := svc.Show(ctx, id)
-	require.NoError(t, err)
-	require.Equal(t, task.StatusFailed, got.Status)
-}
-
-func TestServiceRetryRejectsInvalidGeneratedTaskShape(t *testing.T) {
-	t.Parallel()
-	ctx := context.Background()
-	svc := newService(t)
-
-	id, err := svc.AddWithOptionsForce(ctx, task.AddOptions{
-		Body:   "[discovery:repo:file] fix focused software issue",
-		Tags:   []string{"discovery"},
-		CWD:    "/tmp/repo",
-		Source: "task-discovery",
-	})
-	require.NoError(t, err)
-	require.NoError(t, svc.Fail(ctx, id, "invalid discovery contract"))
-
-	err = svc.Retry(ctx, id)
-	require.Error(t, err)
-	require.True(t, errors.Is(err, task.ErrInvalidTask), "got %v", err)
-
-	got, err := svc.Show(ctx, id)
-	require.NoError(t, err)
-	require.Equal(t, task.StatusFailed, got.Status)
+	require.Equal(t, task.StatusDone, got.Status)
 }
 
 func TestServiceHeartbeat(t *testing.T) {
@@ -588,76 +556,60 @@ func TestServiceMissingTask(t *testing.T) {
 	require.ErrorIs(t, svc.Remove(ctx, "missing"), app.ErrNotFound)
 }
 
-func TestServiceImportRequiresSuccessAndVerifySections(t *testing.T) {
+func TestServicePropagatesStoreErrors(t *testing.T) {
 	t.Parallel()
+
 	ctx := context.Background()
+	boom := errors.New("boom")
+	svc := app.NewService(&errorStore{err: boom}, func() time.Time { return fixed })
 
-	tests := []struct {
-		name    string
-		body    string
-		wantErr string
-	}{
-		{
-			name:    "missing success",
-			body:    "Add the ledger.\n\nVerify:\n- go test ./internal/store/...",
-			wantErr: `import: task "ledger": missing Success section`,
-		},
-		{
-			name:    "missing verify",
-			body:    "Add the ledger.\n\nSuccess:\n- Duplicate remote imports are ignored.",
-			wantErr: `import: task "ledger": missing Verify section`,
-		},
-		{
-			name:    "inline words do not count",
-			body:    "Add the ledger. Success: dedupe works. Verify: run tests.",
-			wantErr: `import: task "ledger": missing Success section`,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			svc := newService(t)
-			_, err := svc.Import(ctx, task.ImportDoc{Tasks: []task.ImportTask{{
-				Slug: "ledger",
-				Body: tt.body,
-			}}})
-			require.EqualError(t, err, tt.wantErr)
-		})
-	}
+	_, err := svc.Add(ctx, "valid task body")
+	require.ErrorIs(t, err, boom)
+	_, err = svc.List(ctx, "")
+	require.ErrorIs(t, err, boom)
+	_, err = svc.Find(ctx, "", "")
+	require.ErrorIs(t, err, boom)
+	_, err = svc.RecentPaths(ctx)
+	require.ErrorIs(t, err, boom)
+	_, err = svc.Show(ctx, "missing")
+	require.ErrorIs(t, err, boom)
+	_, err = svc.Count(ctx)
+	require.ErrorIs(t, err, boom)
+	_, err = svc.Status(ctx)
+	require.ErrorIs(t, err, boom)
+	_, err = svc.Next(ctx)
+	require.ErrorIs(t, err, boom)
+	require.ErrorIs(t, svc.Done(ctx, "id", ""), boom)
+	require.ErrorIs(t, svc.Fail(ctx, "id", "reason"), boom)
+	require.ErrorIs(t, svc.SetStatus(ctx, "id", task.StatusDone, ""), boom)
+	require.ErrorIs(t, svc.Remove(ctx, "id"), boom)
+	_, err = svc.Prune(ctx, []task.Status{task.StatusDone})
+	require.ErrorIs(t, err, boom)
+	_, err = svc.Pop(ctx)
+	require.ErrorIs(t, err, boom)
+	require.ErrorIs(t, svc.Heartbeat(ctx, "id", "worker", time.Minute), boom)
+	_, err = svc.RequeueStale(ctx, time.Hour)
+	require.ErrorIs(t, err, boom)
 }
 
-func TestServiceImportStoresTasksWithSuccessAndVerifySections(t *testing.T) {
+func TestServiceExplainPropagatesHistoryErrors(t *testing.T) {
 	t.Parallel()
+
 	ctx := context.Background()
-	svc := newService(t)
+	boom := errors.New("boom")
+	base := []task.Task{{ID: "id", Status: task.StatusPending, Body: "body"}}
 
-	results, err := svc.Import(ctx, task.ImportDoc{Tasks: []task.ImportTask{
-		{
-			Slug: "inspect",
-			Body: "Inspect import code in /tmp/example.\n\nEvidence:\n- /tmp/example/import.go is the import surface.\n\nScope:\n- /tmp/example/import.go.\n\nSuccess:\n- Import extension points are listed.\n\nVerify:\n- Include file references in the summary.\n\nReject-if:\n- /tmp/example/import.go is unavailable.",
-			Tags: []string{"spec:remote-drain"},
-		},
-		{
-			Slug:      "implement",
-			Body:      "Implement import validation in /tmp/example.\n\nEvidence:\n- /tmp/example/import.go performs import validation.\n\nScope:\n- /tmp/example/import.go.\n\nSuccess:\n- Missing sections are rejected.\n\nVerify:\n- go test ./internal/app/...\n\nReject-if:\n- /tmp/example/import.go is unavailable.",
-			Tags:      []string{"spec:remote-drain"},
-			BlockedBy: []string{"inspect"},
-		},
-	}})
-	require.NoError(t, err)
-	require.Len(t, results, 2)
+	svc := app.NewService(&historyErrorStore{tasks: base, eventsErr: boom}, func() time.Time { return fixed })
+	_, err := svc.Explain(ctx, "id")
+	require.ErrorIs(t, err, boom)
 
-	tasks, err := svc.List(ctx, "")
-	require.NoError(t, err)
-	require.Len(t, tasks, 2)
-	require.Contains(t, tasks[0].Body, "Success:\n- Import extension points are listed.")
-	require.Contains(t, tasks[1].Body, "Verify:\n- go test ./internal/app/...")
+	svc = app.NewService(&historyErrorStore{tasks: base, attemptsErr: boom}, func() time.Time { return fixed })
+	_, err = svc.Explain(ctx, "id")
+	require.ErrorIs(t, err, boom)
 
-	deps, err := svc.Dependencies(ctx, results[1].ID)
-	require.NoError(t, err)
-	require.Len(t, deps, 1)
-	require.Equal(t, results[0].ID, deps[0].DependsOnID)
+	svc = app.NewService(&historyErrorStore{tasks: base, depsErr: boom}, func() time.Time { return fixed })
+	_, err = svc.Show(ctx, "id")
+	require.ErrorIs(t, err, boom)
 }
 
 func TestServiceRecordsRejectionToSidecar(t *testing.T) {
@@ -714,6 +666,47 @@ func TestServiceAccumulatesRejections(t *testing.T) {
 		var rec app.RejectionRecord
 		require.NoError(t, json.Unmarshal([]byte(line), &rec))
 	}
+}
+
+func TestRejectionSidecarTruncatesAndSkipsMalformedLines(t *testing.T) {
+	t.Parallel()
+
+	sidecar := filepath.Join(t.TempDir(), "rejected.jsonl")
+	longBody := strings.Repeat("x", 6000)
+	require.NoError(t, app.RecordRejection(sidecar, task.AddOptions{
+		Body:   longBody,
+		Tags:   []string{"discovery"},
+		Source: "task-discovery",
+	}, errors.New("too vague"), fixed))
+	require.NoError(t, os.WriteFile(sidecar, append([]byte("{not json}\n"), mustReadFile(t, sidecar)...), 0o600))
+
+	records, err := app.ReadRejections(sidecar)
+	require.NoError(t, err)
+	require.Len(t, records, 1)
+	require.Contains(t, records[0].Body, "...[truncated]")
+	require.LessOrEqual(t, len(records[0].Body), len(longBody))
+
+	err = app.RecordRejection("", task.AddOptions{Body: "bad"}, errors.New("reason"), fixed)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "empty sidecar path")
+}
+
+func TestRejectionSidecarWriteErrors(t *testing.T) {
+	t.Parallel()
+
+	filePath := filepath.Join(t.TempDir(), "file")
+	require.NoError(t, os.WriteFile(filePath, nil, 0o600))
+	err := app.RecordRejection(filepath.Join(filePath, "rejected.jsonl"), task.AddOptions{Body: "bad"}, errors.New("reason"), fixed)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "mkdir")
+
+	_, err = app.RemoveRejectionAt(filepath.Join(filePath, "child.jsonl"), 0)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "read rejection sidecar")
+
+	missingDirPath := filepath.Join(t.TempDir(), "missing", "rejected.jsonl")
+	_, err = app.RemoveRejectionAt(missingDirPath, 0)
+	require.ErrorIs(t, err, app.ErrRejectionIndexOutOfRange)
 }
 
 func TestServiceWithoutSidecarDoesNotWrite(t *testing.T) {
@@ -846,6 +839,31 @@ func TestRetryRejectedSupportsOldSidecarRecords(t *testing.T) {
 	require.Empty(t, created.ResourceKey)
 }
 
+func TestRetryRejectedLeavesInvalidRecordInPlace(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	svc, sidecar := newServiceWithSidecar(t)
+	require.NoError(t, app.RecordRejection(sidecar, task.AddOptions{Body: "pick my nose"}, errors.New("invalid"), fixed))
+
+	_, err := svc.RetryRejected(ctx, 0)
+	require.ErrorIs(t, err, task.ErrInvalidTask)
+	records, readErr := svc.ListRejected()
+	require.NoError(t, readErr)
+	require.Len(t, records, 2)
+	require.Equal(t, "pick my nose", records[0].Body)
+	require.Equal(t, "pick my nose", records[1].Body)
+}
+
+func TestAddWithOptionsForceStillRejectsInvalidPriority(t *testing.T) {
+	t.Parallel()
+	svc, _ := newServiceWithSidecar(t)
+	_, err := svc.AddWithOptionsForce(context.Background(), task.AddOptions{
+		Body:     "valid body",
+		Priority: "later",
+	})
+	require.ErrorIs(t, err, task.ErrInvalidPriority)
+}
+
 func TestAddWithOptionsForceValidTaskBehavesLikeNormalAdd(t *testing.T) {
 	t.Parallel()
 	svc, sidecar := newServiceWithSidecar(t)
@@ -939,73 +957,56 @@ func TestDone_WithoutNote(t *testing.T) {
 	require.True(t, found, "expected an EventDone event")
 }
 
-// TestWhy_ReadyMatchesStoreReady asserts the invariant: Why(id).Ready == (id is present in Ready(ctx) output).
-func TestWhy_ReadyMatchesStoreReady(t *testing.T) {
-	t.Parallel()
-	ctx := context.Background()
+type errorStore struct {
+	app.Store
+	err error
+}
 
-	t.Run("plain pending task is ready", func(t *testing.T) {
-		t.Parallel()
-		svc := newService(t)
+func (s *errorStore) List(context.Context) ([]task.Task, error)  { return nil, s.err }
+func (s *errorStore) Ready(context.Context) ([]task.Task, error) { return nil, s.err }
+func (s *errorStore) Add(context.Context, task.Task) error       { return s.err }
+func (s *errorStore) Update(context.Context, string, task.EventType, string, func(*task.Task) bool) error {
+	return s.err
+}
+func (s *errorStore) Delete(context.Context, string) error              { return s.err }
+func (s *errorStore) Prune(context.Context, []task.Status) (int, error) { return 0, s.err }
+func (s *errorStore) ClaimNextForWorker(context.Context, time.Time, time.Time, string, string) (*task.Task, error) {
+	return nil, s.err
+}
+func (s *errorStore) Heartbeat(context.Context, string, string, time.Time, time.Time) error {
+	return s.err
+}
+func (s *errorStore) RequeueStale(context.Context, time.Duration, time.Time) ([]task.Task, error) {
+	return nil, s.err
+}
 
-		id, err := svc.Add(ctx, "independent pending task")
-		require.NoError(t, err)
+type historyErrorStore struct {
+	app.Store
+	tasks       []task.Task
+	depsErr     error
+	eventsErr   error
+	attemptsErr error
+}
 
-		why, err := svc.Why(ctx, id)
-		require.NoError(t, err)
-		require.True(t, why.Ready)
+func (s *historyErrorStore) List(context.Context) ([]task.Task, error) {
+	return append([]task.Task(nil), s.tasks...), nil
+}
 
-		ready, err := svc.Ready(ctx)
-		require.NoError(t, err)
-		found := false
-		for _, r := range ready {
-			if r.ID == id {
-				found = true
-				break
-			}
-		}
-		require.True(t, found, "id must be present in Ready() output when Why().Ready is true")
-	})
+func (s *historyErrorStore) Dependencies(context.Context, string) ([]task.Dependency, error) {
+	return nil, s.depsErr
+}
 
-	t.Run("pending task blocked by unfinished dep is not ready", func(t *testing.T) {
-		t.Parallel()
-		svc := newService(t)
+func (s *historyErrorStore) Events(context.Context, string) ([]task.Event, error) {
+	return nil, s.eventsErr
+}
 
-		prereq, err := svc.Add(ctx, "prereq task")
-		require.NoError(t, err)
-		blocked, err := svc.Add(ctx, "blocked downstream task")
-		require.NoError(t, err)
-		require.NoError(t, svc.AddDependency(ctx, blocked, prereq))
+func (s *historyErrorStore) Attempts(context.Context, string) ([]task.Attempt, error) {
+	return nil, s.attemptsErr
+}
 
-		why, err := svc.Why(ctx, blocked)
-		require.NoError(t, err)
-		require.False(t, why.Ready)
-		require.NotEmpty(t, why.Reasons, "Reasons must be non-empty when blocked by a dependency")
-		require.Equal(t, "dependency_pending", why.Reasons[0].Kind)
-
-		ready, err := svc.Ready(ctx)
-		require.NoError(t, err)
-		for _, r := range ready {
-			require.NotEqual(t, blocked, r.ID, "blocked id must be absent from Ready() output")
-		}
-	})
-
-	t.Run("done task is not ready", func(t *testing.T) {
-		t.Parallel()
-		svc := newService(t)
-
-		id, err := svc.Add(ctx, "task to complete")
-		require.NoError(t, err)
-		require.NoError(t, svc.Done(ctx, id, ""))
-
-		why, err := svc.Why(ctx, id)
-		require.NoError(t, err)
-		require.False(t, why.Ready)
-
-		ready, err := svc.Ready(ctx)
-		require.NoError(t, err)
-		for _, r := range ready {
-			require.NotEqual(t, id, r.ID, "done id must be absent from Ready() output")
-		}
-	})
+func mustReadFile(t *testing.T, path string) []byte {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+	return data
 }

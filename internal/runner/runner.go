@@ -106,7 +106,7 @@ func runTask(ctx context.Context, service *app.Service, t task.Task, opts Option
 
 	// newShellCommand is platform-specific: /bin/sh on Unix, cmd.exe on Windows.
 	// It also wires cmd.Cancel to kill the whole process group/tree so that
-	// children spawned by the shell (afk done, agent CLIs) are not orphaned.
+	// children spawned by the shell or agent CLIs are not orphaned.
 	cmd := newShellCommand(ctx, commandText)
 	if t.CWD != "" {
 		cmd.Dir = t.CWD

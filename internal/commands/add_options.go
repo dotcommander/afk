@@ -11,10 +11,7 @@ import (
 )
 
 func buildAddCommandOptions(input addCommandInput) (task.AddOptions, string, error) {
-	dependsOnID, err := normalizeBlockedBy(input.blockedBy, input.after)
-	if err != nil {
-		return task.AddOptions{}, "", err
-	}
+	dependsOnID := normalizeBlockedBy(input.blockedBy)
 	resolvedCWD, err := resolveAddCWD(input.cwd, input.noCWD)
 	if err != nil {
 		return task.AddOptions{}, "", err
@@ -68,16 +65,9 @@ func inferAddDefaults(cwd string) app.AddDefaults {
 	return app.InferAddDefaults(cwd)
 }
 
-func normalizeBlockedBy(blockedBy, after string) (string, error) {
-	if blockedBy != "" && after != "" && blockedBy != after {
-		return "", fmt.Errorf("--blocked-by and --after disagree")
+func normalizeBlockedBy(blockedBy string) string {
+	if blockedBy == "" || strings.EqualFold(blockedBy, "none") {
+		return ""
 	}
-	value := blockedBy
-	if value == "" {
-		value = after
-	}
-	if value == "" || strings.EqualFold(value, "none") {
-		return "", nil
-	}
-	return value, nil
+	return blockedBy
 }

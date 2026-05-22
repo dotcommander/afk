@@ -53,9 +53,18 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	writeResult(w, snap, err)
 }
 
-// handleTasks serves GET /api/tasks[?status=<filter>] → []task.Task.
+// handleTasks serves GET /api/tasks[?status=<filter>&q=<query>] → []task.Task.
 func (s *Server) handleTasks(w http.ResponseWriter, r *http.Request) {
-	tasks, err := s.svc.List(r.Context(), r.URL.Query().Get("status"))
+	query := r.URL.Query().Get("q")
+	var (
+		tasks any
+		err   error
+	)
+	if query == "" {
+		tasks, err = s.svc.List(r.Context(), r.URL.Query().Get("status"))
+	} else {
+		tasks, err = s.svc.Find(r.Context(), query, r.URL.Query().Get("status"))
+	}
 	writeResult(w, tasks, err)
 }
 
@@ -67,22 +76,6 @@ func (s *Server) handleTask(w http.ResponseWriter, r *http.Request) {
 	}
 	data, err := s.svc.Explain(r.Context(), id)
 	writeResult(w, data, err)
-}
-
-// handleWhy serves GET /api/tasks/{id}/why → ReadinessData.
-func (s *Server) handleWhy(w http.ResponseWriter, r *http.Request) {
-	id, ok := resolveID(w, r)
-	if !ok {
-		return
-	}
-	data, err := s.svc.Why(r.Context(), id)
-	writeResult(w, data, err)
-}
-
-// handleReady serves GET /api/ready → []task.Task.
-func (s *Server) handleReady(w http.ResponseWriter, r *http.Request) {
-	tasks, err := s.svc.Ready(r.Context())
-	writeResult(w, tasks, err)
 }
 
 // handlePaths serves GET /api/paths — recently used task working directories.

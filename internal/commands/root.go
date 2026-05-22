@@ -33,6 +33,9 @@ func NewRoot(d *Deps, version string) *cobra.Command {
 		Version:       version,
 		SilenceUsage:  true,
 		SilenceErrors: false,
+		CompletionOptions: cobra.CompletionOptions{
+			DisableDefaultCmd: true,
+		},
 		PersistentPreRunE: func(cmd *cobra.Command, _ []string) error {
 			paths, err := resolveQueuePaths(queuePath)
 			if err != nil {
@@ -52,39 +55,26 @@ func NewRoot(d *Deps, version string) *cobra.Command {
 	}
 
 	root.PersistentFlags().StringVar(&queuePath, "queue", "", "queue database path (overrides AFK_QUEUE env)")
+	root.SetHelpCommand(&cobra.Command{
+		Use:    "__help [command]",
+		Hidden: true,
+		Run: func(cmd *cobra.Command, _ []string) {
+			_ = cmd.Root().Help()
+		},
+	})
 
 	root.AddCommand(
 		newAddCmd(d),
-		newImportCmd(d),
-		newDepsCmd(d),
-		newLsCmd(d),
-		newShowCmd(d),
-		newCountCmd(d),
+		newTasksCmd(d),
+		newTaskCmd(d),
 		newStatusCmd(d),
-		newNextCmd(d),
-		newReadyCmd(d),
-		newWhyCmd(d),
-		newExplainCmd(d),
-		newEditCmd(d),
-		newDoneCmd(d),
-		newFailCmd(d),
-		newBlockCmd(d),
-		newUnblockCmd(d),
-		newResetCmd(d),
-		newPromoteCmd(d),
-		newRmCmd(d),
-		newPruneCmd(d),
-		newPopCmd(d),
-		newRunCmd(d),
-		newDrainCmd(d),
+		newFindCmd(d),
+		newTakeCmd(d),
+		newSetCmd(d),
 		newServeCmd(d),
-		newRetryCmd(d),
 		newRequeueStaleCmd(d),
 		newHeartbeatCmd(d),
-		newDoctorCmd(d),
-		newDiscoverCmd(d),
 		newPromptCmd(d),
-		newRejectedCmd(d),
 	)
 
 	return root

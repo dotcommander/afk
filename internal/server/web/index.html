@@ -209,8 +209,8 @@ nav {
   display: inline-block;
   flex-shrink: 0;
 }
-.lamp-pending { background: var(--amber); box-shadow: 0 0 4px var(--amber); }
-.lamp-working {
+.lamp-todo { background: var(--amber); box-shadow: 0 0 4px var(--amber); }
+.lamp-doing {
   background: var(--green);
   box-shadow: 0 0 6px var(--green), 0 0 12px rgba(90,247,142,0.4);
   animation: lamp-pulse 1.4s ease-in-out infinite;
@@ -271,8 +271,8 @@ nav {
   letter-spacing: -0.02em;
   margin-bottom: 4px;
 }
-.gauge-pending .gauge-count { color: var(--amber); text-shadow: 0 0 20px rgba(246,196,83,0.5); }
-.gauge-working .gauge-count { color: var(--green); text-shadow: 0 0 20px rgba(90,247,142,0.5); }
+.gauge-todo .gauge-count { color: var(--amber); text-shadow: 0 0 20px rgba(246,196,83,0.5); }
+.gauge-doing .gauge-count { color: var(--green); text-shadow: 0 0 20px rgba(90,247,142,0.5); }
 .gauge-done    .gauge-count { color: var(--blue);  text-shadow: 0 0 20px rgba(90,155,212,0.5); }
 .gauge-failed  .gauge-count { color: var(--red);   text-shadow: 0 0 20px rgba(255,84,112,0.5); }
 
@@ -285,8 +285,8 @@ nav {
   border-radius: 50%;
   opacity: 0.04;
 }
-.gauge-pending::after { background: var(--amber); }
-.gauge-working::after { background: var(--green); }
+.gauge-todo::after { background: var(--amber); }
+.gauge-doing::after { background: var(--green); }
 .gauge-done::after    { background: var(--blue); }
 .gauge-failed::after  { background: var(--red); }
 
@@ -653,10 +653,11 @@ nav {
   display: inline-flex; align-items: center; gap: 5px;
   font-size: 0.7rem; letter-spacing: 0.1em; text-transform: uppercase;
 }
-.status-pending { color: var(--amber); }
-.status-working { color: var(--green); }
+.status-todo { color: var(--amber); }
+.status-doing { color: var(--green); }
 .status-done    { color: var(--blue); }
 .status-failed  { color: var(--red); }
+.status-deleted { color: var(--muted); }
 
 /* ─── PRUNE BTN ──────────────────────────────────────────────────── */
 .prune-row {
@@ -782,10 +783,11 @@ function statusBadge(status) {
 }
 
 const LABELS = {
-  pending: 'ON THE PAD',
-  working: 'IN ORBIT',
+  todo: 'ON THE PAD',
+  doing: 'IN ORBIT',
   done:    'TOUCHDOWN',
   failed:  'ANOMALY',
+  deleted: 'DELETED',
 };
 function labelFor(status) { return LABELS[status] || status.toUpperCase(); }
 
@@ -817,7 +819,8 @@ const csrfToken = document.querySelector('meta[name="afk-csrf-token"]')?.content
 
 async function api(path, opts) {
   opts = opts || {};
-  if ((opts.method || 'GET').toUpperCase() === 'POST') {
+  const method = (opts.method || 'GET').toUpperCase();
+  if (method === 'POST' || method === 'PATCH') {
     opts.headers = Object.assign({ 'X-AFK-CSRF-Token': csrfToken }, opts.headers || {});
   }
   const res = await fetch(path, opts);
@@ -834,17 +837,11 @@ const API = {
   status:  ()         => api('/api/status'),
   tasks:   (status)   => api('/api/tasks' + (status ? `?status=${encodeURIComponent(status)}` : '')),
   task:    (id)       => api(`/api/tasks/${encodeURIComponent(id)}`),
-  why:     (id)       => api(`/api/tasks/${encodeURIComponent(id)}/why`),
-  ready:   ()         => api('/api/ready'),
-  action:  (id, act, body) => api(`/api/tasks/${encodeURIComponent(id)}/${encodeURIComponent(act)}`, {
-    method: 'POST',
+  ready:   ()         => api('/api/take?dry_run=true', { method: 'POST' }),
+  set:     (id, status, body) => api(`/api/tasks/${encodeURIComponent(id)}`, {
+    method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body || {}),
-  }),
-  prune:   (statuses) => api('/api/prune', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ statuses }),
+    body: JSON.stringify(Object.assign({ status }, body || {})),
   }),
   create: (payload) => api('/api/tasks', {
     method: 'POST',
@@ -1056,8 +1053,8 @@ registerView('home', async (container, _route) => {
   }
 
   const counts = snap.counts || {};
-  const pending = counts.pending || 0;
-  const working = counts.working || 0;
+  const todo = counts.todo || 0;
+  const doing = counts.doing || 0;
   const done    = counts.done    || 0;
   const failed  = counts.failed  || 0;
 
@@ -1068,8 +1065,8 @@ registerView('home', async (container, _route) => {
   // Gauge cards
   const gauges = el('div', { class: 'gauges' });
   const specs = [
-    { status: 'pending', label: 'ON THE PAD',  count: pending, filter: 'pending' },
-    { status: 'working', label: 'IN ORBIT',    count: working, filter: 'working' },
+    { status: 'todo', label: 'ON THE PAD',  count: todo, filter: 'todo' },
+    { status: 'doing', label: 'IN ORBIT',    count: doing, filter: 'doing' },
     { status: 'done',    label: 'TOUCHDOWN',   count: done,    filter: 'done'    },
     { status: 'failed',  label: 'ANOMALY',     count: failed,  filter: 'failed'  },
   ];
@@ -1094,11 +1091,11 @@ registerView('home', async (container, _route) => {
   launchPanel.appendChild(launchScroll);
   twin.appendChild(launchPanel);
 
-  // IN ORBIT (working tasks)
+  // IN ORBIT (doing tasks)
   const orbitPanel = el('div', { class: 'panel' });
   orbitPanel.appendChild(el('div', { class: 'section-heading' }, txt('IN ORBIT')));
   const orbitScroll = el('div', { class: 'panel-scroll' });
-  orbitScroll.appendChild(renderTaskList(snap.working, 'NO ACTIVE MISSIONS'));
+  orbitScroll.appendChild(renderTaskList(snap.doing, 'NO ACTIVE MISSIONS'));
   orbitPanel.appendChild(orbitScroll);
   twin.appendChild(orbitPanel);
 
@@ -1125,29 +1122,17 @@ registerView('tasks', async (container, route) => {
     (b.created || '').localeCompare(a.created || '')
   );
 
-  // Heading row with prune button
-  const pruneRow = el('div', { class: 'prune-row' });
-  pruneRow.appendChild(el('div', { class: 'section-heading', style: { marginBottom: '0', flex: '1' } }, txt('TASK ROSTER')));
-  const pruneBtn = el('button', { class: 'push-btn btn-red', onclick: async () => {
-    const ok = await confirm('PRUNE all TOUCHDOWN and ANOMALY tasks? This cannot be undone.');
-    if (!ok) return;
-    try {
-      await API.prune(['done', 'failed']);
-      _currentRoute = route;
-      await mountView(_currentRoute, true);
-    } catch (err) { showToast(err.message); }
-  }}, txt('PRUNE'));
-  pruneRow.appendChild(pruneBtn);
-  container.appendChild(pruneRow);
+  container.appendChild(el('div', { class: 'section-heading' }, txt('TASK ROSTER')));
 
   // Filter chips
   const filterBar = el('div', { class: 'filter-bar' });
   const filters = [
     { label: 'ALL',        value: '' },
-    { label: 'ON THE PAD', value: 'pending' },
-    { label: 'IN ORBIT',   value: 'working' },
+    { label: 'ON THE PAD', value: 'todo' },
+    { label: 'IN ORBIT',   value: 'doing' },
     { label: 'TOUCHDOWN',  value: 'done' },
     { label: 'ANOMALY',    value: 'failed' },
+    { label: 'DELETED',    value: 'deleted' },
   ];
   for (const f of filters) {
     const chip = el('button', {
@@ -1304,9 +1289,9 @@ registerView('tasksNew', async (container, _route) => {
 ═══════════════════════════════════════════════════════════════════ */
 
 registerView('dossier', async (container, route) => {
-  let data, why;
+  let data;
   try {
-    [data, why] = await Promise.all([API.task(route.id), API.why(route.id)]);
+    data = await API.task(route.id);
   } catch (err) {
     container.appendChild(el('div', { class: 'state-msg' }, txt(err.message)));
     return;
@@ -1380,74 +1365,28 @@ registerView('dossier', async (container, route) => {
   }
   container.appendChild(grid);
 
-  // Readiness verdict
-  const readyLabel = el('div', { class: 'section-heading', style: { marginTop: '16px' } }, txt('LAUNCH CLEARANCE'));
-  container.appendChild(readyLabel);
-  const readyPanel = el('div', { class: 'panel' });
-  if (t.status === 'done') {
-    readyPanel.appendChild(el('div', { class: 'readiness-ok' }, lamp('done'), txt(' TOUCHDOWN — mission complete, no clearance required')));
-  } else if (t.status === 'failed') {
-    readyPanel.appendChild(el('div', { class: 'readiness-block' }, lamp('failed'), txt(' ANOMALY — mission ended; RETRY to request a new launch window')));
-  } else if (t.status === 'working') {
-    readyPanel.appendChild(el('div', { class: 'readiness-ok' }, lamp('working'), txt(' IN ORBIT — mission underway')));
-  } else {
-    // pending: render the why verdict and not-ready reasons
-    if (why.ready) {
-      const ok = el('div', { class: 'readiness-ok' }, lamp('working'), txt(' CLEARED FOR LAUNCH'));
-      readyPanel.appendChild(ok);
-    } else {
-      const block = el('div', { class: 'readiness-block' });
-      const reasons = why.not_ready_reasons || [];
-      if (reasons.length === 0) {
-        block.appendChild(el('div', { class: 'reason-item' }, txt('NOT READY — reason unspecified')));
-      }
-      for (const r of reasons) {
-        const ri = el('div', { class: 'reason-item' });
-        const kind = el('div', { class: 'reason-kind' }); kind.appendChild(txt(r.kind)); ri.appendChild(kind);
-        const detail = el('div', {}); detail.appendChild(txt(r.detail)); ri.appendChild(detail);
-        if (r.task_id && r.task_id !== t.id) {
-          const link = el('div', { style: { fontSize: '0.65rem', color: 'var(--text-dim)', marginTop: '2px' } });
-          link.appendChild(txt('blocked by: ' + r.task_id));
-          ri.appendChild(link);
-        }
-        block.appendChild(ri);
-      }
-      readyPanel.appendChild(block);
-    }
-  }
-  container.appendChild(readyPanel);
-
   // Action buttons
   const actLabel = el('div', { class: 'section-heading', style: { marginTop: '16px' } }, txt('CONTROL PANEL'));
   container.appendChild(actLabel);
   const actPanel = el('div', { class: 'panel' });
   const btnRow = el('div', { class: 'btn-row' });
 
-  async function doAction(action, body) {
+  async function doAction(status, body) {
     try {
-      await API.action(t.id, action, body);
+      await API.set(t.id, status, body);
       _currentRoute = route;
       await mountView(_currentRoute, true);
     } catch (err) { showToast(err.message); }
   }
 
-  // done / fail — pending or working
-  if (t.status === 'pending' || t.status === 'working') {
+  // done / failed — todo or doing
+  if (t.status === 'todo' || t.status === 'doing') {
     btnRow.appendChild(el('button', { class: 'push-btn btn-green', onclick: () => doAction('done', {}) }, txt('TOUCHDOWN')));
-    btnRow.appendChild(el('button', { class: 'push-btn btn-red',   onclick: () => doAction('fail', { reason: 'manual failure' }) }, txt('DECLARE ANOMALY')));
+    btnRow.appendChild(el('button', { class: 'push-btn btn-red',   onclick: () => doAction('failed', { reason: 'manual failure' }) }, txt('DECLARE ANOMALY')));
   }
-  // retry / reset — failed
-  if (t.status === 'failed') {
-    btnRow.appendChild(el('button', { class: 'push-btn btn-orange', onclick: () => doAction('retry', {}) }, txt('RETRY MISSION')));
-    btnRow.appendChild(el('button', { class: 'push-btn btn-dim',    onclick: () => doAction('reset', {}) }, txt('RESET')));
+  if (t.status !== 'deleted') {
+    btnRow.appendChild(el('button', { class: 'push-btn btn-red', onclick: () => doAction('deleted', { note: 'deleted from web UI' }) }, txt('DELETE')));
   }
-  // unblock — always
-  btnRow.appendChild(el('button', { class: 'push-btn btn-dim', onclick: () => doAction('unblock', {}) }, txt('UNBLOCK')));
-  // promote — pending only
-  if (t.status === 'pending') {
-    btnRow.appendChild(el('button', { class: 'push-btn btn-blue', onclick: () => doAction('promote', {}) }, txt('PROMOTE')));
-  }
-
   actPanel.appendChild(btnRow);
   container.appendChild(actPanel);
 

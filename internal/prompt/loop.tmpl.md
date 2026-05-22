@@ -1,4 +1,4 @@
-# Loop Tick - Process One Pending Task
+# Loop Tick - Process One Ready Task
 
 Process exactly one queued task, then stop.
 
@@ -6,7 +6,7 @@ Process exactly one queued task, then stop.
 {{.PopCmd}}
 ```
 
-`afk pop` atomically claims the first pending task, changes it to `working`, and prints the claimed task as JSON.
+`afk take` atomically claims the first ready task, changes it to `doing`, and prints the claimed task as JSON.
 
 ## Queue Contract
 
@@ -36,15 +36,15 @@ Claim work with:
 {{.PopCmd}}
 ```
 
-- If no task JSON is returned, say `No pending tasks.` and stop.
+- If no task JSON is returned, say `No ready tasks.` and stop.
 - Parse the returned JSON and record `id`, `body`, and any metadata such as `cwd`, `tags`, `priority`, `source`, `agent`, `group_id`, and `resource_key`.
-- If the returned JSON cannot be parsed, say `Queue error: invalid afk pop output.` and stop.
-- Do not pick a task from `afk ls`; only `afk pop` claims work.
+- If the returned JSON cannot be parsed, say `Queue error: invalid afk take output.` and stop.
+- Do not pick a task from `afk tasks`; only `afk take` claims work.
 
 Expected task fields:
 
 ```json
-{"id":"<short-id>","created":"<UTC RFC3339>","status":"working","body":"<task text>","cwd":"<likely repo/context path>","tags":["<optional>"],"started":"<UTC RFC3339>","finished":"","error":""}
+{"id":"<short-id>","created":"<UTC RFC3339>","status":"doing","body":"<task text>","cwd":"<likely repo/context path>","tags":["<optional>"],"started":"<UTC RFC3339>","finished":"","error":""}
 ```
 
 Optional empty fields may be omitted from JSON output.
@@ -84,8 +84,8 @@ On failure:
 Rules:
 
 - Finalize every claimed task exactly once.
-- Use `done` only when the requested work was completed or no-op completed.
-- Use `fail` when blocked, unsafe, cancelled, impossible, or verification fails.
+- Use `set <id> done` only when the requested work was completed or no-op completed.
+- Use `set <id> failed` when blocked, unsafe, cancelled, impossible, or verification fails.
 - The failure reason must be one line.
 - If finalization itself fails, report the claimed `id`, intended status, and one-line reason.
 
@@ -97,13 +97,13 @@ After finalization, stop with a concise result:
 
 - `Completed task <id>.`
 - `Failed task <id>: <one-line reason>.`
-- `No pending tasks.`
+- `No ready tasks.`
 
-## Recover Stuck Working Tasks
+## Recover Stuck Doing Tasks
 
-If a previous loop crashed after claiming a task, it may remain `working`.
+If a previous loop crashed after claiming a task, it may remain `doing`.
 
-Inspect working tasks:
+Inspect doing tasks:
 
 ```bash
 {{.LsWorkingCmd}}
@@ -121,5 +121,4 @@ Recover only after deciding the claim is orphaned:
 {{.RecoverAddCmd}}
 ```
 
-Do not recycle a task that another active worker may still be handling. If ownership is unclear, stop and report the `working` task id instead of changing it.
-
+Do not recycle a task that another active worker may still be handling. If ownership is unclear, stop and report the `doing` task id instead of changing it.

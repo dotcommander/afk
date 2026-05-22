@@ -24,7 +24,6 @@ func newAddCmd(d *Deps) *cobra.Command {
 	var groupID string
 	var resourceKey string
 	var blockedBy string
-	var after string
 	var asJSON bool
 	var dryRun bool
 	var diagnose bool
@@ -32,14 +31,9 @@ func newAddCmd(d *Deps) *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "add <body...>",
-		Short: "Append a new pending task",
+		Short: "Append a new todo task",
 		Args:  cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if cmd.Flags().Changed("after") {
-				if err := warnDeprecated(d.Stderr, "afk add --after", "afk add --blocked-by"); err != nil {
-					return err
-				}
-			}
 			return runAddCommand(cmd, d, addCommandInput{
 				args:        args,
 				tags:        tags,
@@ -51,7 +45,6 @@ func newAddCmd(d *Deps) *cobra.Command {
 				groupID:     groupID,
 				resourceKey: resourceKey,
 				blockedBy:   blockedBy,
-				after:       after,
 			}, addCommandMode{
 				asJSON:   asJSON,
 				dryRun:   dryRun,
@@ -69,7 +62,6 @@ func newAddCmd(d *Deps) *cobra.Command {
 	cmd.Flags().StringVar(&groupID, "group", "", "task group id")
 	cmd.Flags().StringVar(&resourceKey, "resource", "", "task resource key (defaults to repo:<git-root>; use none to disable)")
 	cmd.Flags().StringVar(&blockedBy, "blocked-by", "", "task id this task is blocked by, or none")
-	cmd.Flags().StringVar(&after, "after", "", "alias for --blocked-by")
 	cmd.Flags().BoolVar(&asJSON, "json", false, "emit JSON output")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "validate without adding a task")
 	cmd.Flags().BoolVar(&diagnose, "diagnose", false, "run all validation checks and report every failure (read-only)")
@@ -88,7 +80,6 @@ type addCommandInput struct {
 	groupID     string
 	resourceKey string
 	blockedBy   string
-	after       string
 }
 
 type addCommandMode struct {
@@ -191,7 +182,7 @@ func writeAddTTYConfirmation(w io.Writer, id string, opts task.AddOptions, asJSO
 	}
 	fields := []string{
 		"id=" + id,
-		"status=pending",
+		"status=todo",
 		fieldIfSet("cwd", opts.CWD),
 		fieldIfSet("resource", opts.ResourceKey),
 		fieldIfSet("source", opts.Source),

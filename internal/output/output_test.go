@@ -28,7 +28,16 @@ func TestWriteListTableAndJSONL(t *testing.T) {
 	require.Equal(t, "1", got.ID)
 }
 
-func TestWriteShowAndCount(t *testing.T) {
+func TestWriteTaskJSONLine(t *testing.T) {
+	t.Parallel()
+
+	var out bytes.Buffer
+	require.NoError(t, output.WriteTaskJSONLine(&out, task.Task{ID: "1", Status: task.StatusPending, Body: "body"}, "claim"))
+	require.Contains(t, out.String(), `"id":"1"`)
+	require.Contains(t, out.String(), `"status":"todo"`)
+}
+
+func TestWriteExplainTaskDetailAndCount(t *testing.T) {
 	t.Parallel()
 	tk := task.Task{
 		ID:          "1",
@@ -44,24 +53,31 @@ func TestWriteShowAndCount(t *testing.T) {
 		ResourceKey: "repo:/tmp/repo",
 		Finished:    "2025-01-02T03:05:05Z",
 		Error:       "oops",
+		Dependencies: []task.Dependency{{
+			TaskID:      "1",
+			DependsOnID: "0",
+			Created:     "2025-01-02T03:03:05Z",
+		}},
 	}
 
-	var show bytes.Buffer
-	require.NoError(t, output.WriteShow(&show, tk, false))
-	require.Contains(t, show.String(), "Status: failed")
-	require.Contains(t, show.String(), "Priority: high")
-	require.Contains(t, show.String(), "Tags: repo:afk")
-	require.Contains(t, show.String(), "CWD: /tmp/repo")
-	require.Contains(t, show.String(), "Source: cli")
-	require.Contains(t, show.String(), "Agent: codex")
-	require.Contains(t, show.String(), "Group: group")
-	require.Contains(t, show.String(), "Resource: repo:/tmp/repo")
-	require.Contains(t, show.String(), "Finished: 2025-01-02T03:05:05Z")
-	require.Contains(t, show.String(), "Error: oops")
+	var explain bytes.Buffer
+	require.NoError(t, output.WriteExplain(&explain, tk, nil, nil, false))
+	require.Contains(t, explain.String(), "Status: failed")
+	require.Contains(t, explain.String(), "Priority: high")
+	require.Contains(t, explain.String(), "Tags: repo:afk")
+	require.Contains(t, explain.String(), "CWD: /tmp/repo")
+	require.Contains(t, explain.String(), "Source: cli")
+	require.Contains(t, explain.String(), "Agent: codex")
+	require.Contains(t, explain.String(), "Group: group")
+	require.Contains(t, explain.String(), "Resource: repo:/tmp/repo")
+	require.Contains(t, explain.String(), "Finished: 2025-01-02T03:05:05Z")
+	require.Contains(t, explain.String(), "Error: oops")
+	require.Contains(t, explain.String(), "Dependencies:")
+	require.Contains(t, explain.String(), "  0")
 
 	var count bytes.Buffer
 	require.NoError(t, output.WriteCount(&count, map[task.Status]int{task.StatusFailed: 1}))
-	require.Contains(t, count.String(), "pending: 0")
+	require.Contains(t, count.String(), "todo: 0")
 	require.Contains(t, count.String(), "failed: 1")
 }
 
@@ -71,20 +87,6 @@ func TestWriteEmptyListNoOutput(t *testing.T) {
 	var out bytes.Buffer
 	require.NoError(t, output.WriteList(&out, nil, false))
 	require.Empty(t, out.String())
-}
-
-func TestWriteDependencies(t *testing.T) {
-	t.Parallel()
-
-	deps := []task.Dependency{{TaskID: "blocked", DependsOnID: "prereq", Created: "2025-01-02T03:04:05Z"}}
-	var table bytes.Buffer
-	require.NoError(t, output.WriteDependencies(&table, deps, false))
-	require.Contains(t, table.String(), "BLOCKED_BY")
-	require.Contains(t, table.String(), "prereq")
-
-	var jsonOut bytes.Buffer
-	require.NoError(t, output.WriteDependencies(&jsonOut, deps, true))
-	require.Contains(t, jsonOut.String(), `"depends_on_id":"prereq"`)
 }
 
 func TestWriteExplainTextAndJSON(t *testing.T) {
@@ -105,7 +107,7 @@ func TestWriteExplainTextAndJSON(t *testing.T) {
 	require.Contains(t, jsonOut.String(), `"attempts"`)
 }
 
-func TestWriteShowJSONAndOptionalFields(t *testing.T) {
+func TestWriteExplainJSONAndOptionalFields(t *testing.T) {
 	t.Parallel()
 	tk := task.Task{
 		ID:      "1",
@@ -116,13 +118,15 @@ func TestWriteShowJSONAndOptionalFields(t *testing.T) {
 	}
 
 	var jsonOut bytes.Buffer
-	require.NoError(t, output.WriteShow(&jsonOut, tk, true))
-	var got task.Task
+	require.NoError(t, output.WriteExplain(&jsonOut, tk, nil, nil, true))
+	var got struct {
+		Task task.Task `json:"task"`
+	}
 	require.NoError(t, json.Unmarshal([]byte(strings.TrimSpace(jsonOut.String())), &got))
-	require.Equal(t, task.StatusWorking, got.Status)
+	require.Equal(t, task.StatusWorking, got.Task.Status)
 
 	var text bytes.Buffer
-	require.NoError(t, output.WriteShow(&text, tk, false))
+	require.NoError(t, output.WriteExplain(&text, tk, nil, nil, false))
 	require.Contains(t, text.String(), "Started: 2025-01-02T03:04:06Z")
 	require.NotContains(t, text.String(), "Finished:")
 }
@@ -158,11 +162,12 @@ func TestWriteCountJSON(t *testing.T) {
 
 	var got map[string]int
 	require.NoError(t, json.Unmarshal([]byte(out), &got))
-	require.Equal(t, 2, got["pending"])
-	require.Equal(t, 1, got["working"])
+	require.Equal(t, 2, got["todo"])
+	require.Equal(t, 1, got["doing"])
 	require.Equal(t, 3, got["done"])
 	require.Equal(t, 0, got["failed"])
-	require.Len(t, got, 4, "must emit exactly four canonical status keys")
+	require.Equal(t, 0, got["deleted"])
+	require.Len(t, got, 5, "must emit exactly five canonical status keys")
 }
 
 func TestWriteCountJSONEmptyTally(t *testing.T) {
@@ -172,11 +177,64 @@ func TestWriteCountJSONEmptyTally(t *testing.T) {
 
 	var got map[string]int
 	require.NoError(t, json.Unmarshal([]byte(strings.TrimSpace(buf.String())), &got))
-	require.Equal(t, 0, got["pending"])
-	require.Equal(t, 0, got["working"])
+	require.Equal(t, 0, got["todo"])
+	require.Equal(t, 0, got["doing"])
 	require.Equal(t, 0, got["done"])
 	require.Equal(t, 0, got["failed"])
-	require.Len(t, got, 4)
+	require.Equal(t, 0, got["deleted"])
+	require.Len(t, got, 5)
+}
+
+func TestWriteStatusTextAndJSONUseTodoDoing(t *testing.T) {
+	t.Parallel()
+	tally := map[task.Status]int{
+		task.StatusPending: 1,
+		task.StatusWorking: 1,
+		task.StatusDone:    2,
+	}
+	todo := []task.Task{{
+		ID:      "todo-1",
+		Created: "2025-01-02T03:04:05Z",
+		Status:  task.StatusPending,
+		Body:    "todo body",
+	}}
+	doing := []task.Task{{
+		ID:      "doing-1",
+		Created: "2025-01-02T03:04:06Z",
+		Status:  task.StatusWorking,
+		Body:    "doing body",
+	}}
+
+	var text bytes.Buffer
+	require.NoError(t, output.WriteStatus(&text, tally, todo, doing, false))
+	require.Contains(t, text.String(), "todo: 1")
+	require.Contains(t, text.String(), "doing: 1")
+	require.Contains(t, text.String(), "Todo:")
+	require.Contains(t, text.String(), "Doing:")
+	require.Contains(t, text.String(), "todo-1")
+	require.Contains(t, text.String(), "doing-1")
+
+	var jsonOut bytes.Buffer
+	require.NoError(t, output.WriteStatus(&jsonOut, tally, todo, doing, true))
+	var got struct {
+		Todo  int `json:"todo"`
+		Doing int `json:"doing"`
+		Done  int `json:"done"`
+		Tasks struct {
+			Todo  []task.Task `json:"todo"`
+			Doing []task.Task `json:"doing"`
+		} `json:"tasks"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(strings.TrimSpace(jsonOut.String())), &got))
+	require.Equal(t, 1, got.Todo)
+	require.Equal(t, 1, got.Doing)
+	require.Equal(t, 2, got.Done)
+	require.Len(t, got.Tasks.Todo, 1)
+	require.Equal(t, "todo-1", got.Tasks.Todo[0].ID)
+	require.Len(t, got.Tasks.Doing, 1)
+	require.Equal(t, "doing-1", got.Tasks.Doing[0].ID)
+	require.NotContains(t, jsonOut.String(), `"pending"`)
+	require.NotContains(t, jsonOut.String(), `"working"`)
 }
 
 func TestWriteListJSONBoundsRowsAndBody(t *testing.T) {
@@ -250,11 +308,10 @@ func TestWriteOutputPropagatesWriterErrors(t *testing.T) {
 	}{
 		{name: "list table", err: output.WriteList(w, []task.Task{tk}, false)},
 		{name: "list json", err: output.WriteList(w, []task.Task{tk}, true)},
-		{name: "show text", err: output.WriteShow(w, tk, false)},
-		{name: "show json", err: output.WriteShow(w, tk, true)},
 		{name: "count text", err: output.WriteCount(w, map[task.Status]int{})},
-		{name: "dependencies table", err: output.WriteDependencies(w, []task.Dependency{{TaskID: "1", DependsOnID: "0"}}, false)},
-		{name: "dependencies json", err: output.WriteDependencies(w, []task.Dependency{{TaskID: "1", DependsOnID: "0"}}, true)},
+		{name: "status text", err: output.WriteStatus(w, map[task.Status]int{}, nil, nil, false)},
+		{name: "status json", err: output.WriteStatus(w, map[task.Status]int{}, nil, nil, true)},
+		{name: "task json", err: output.WriteTaskJSONLine(w, tk, "task")},
 		{name: "explain text", err: output.WriteExplain(w, tk, []task.Event{event}, []task.Attempt{attempt}, false)},
 		{name: "explain json", err: output.WriteExplain(w, tk, []task.Event{event}, []task.Attempt{attempt}, true)},
 	}

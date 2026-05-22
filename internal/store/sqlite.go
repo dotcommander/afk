@@ -8,7 +8,6 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 	"time"
 
@@ -123,11 +122,6 @@ AND NOT EXISTS (
 	WHERE d.task_id = tasks.id
 	AND (prereq.id IS NULL OR prereq.status != ?)
 )
-AND NOT EXISTS (
-	SELECT 1
-	FROM task_blocks b
-	WHERE b.task_id = tasks.id
-)
 AND (
 	resource_key = ''
 	OR NOT EXISTS (
@@ -205,7 +199,7 @@ ORDER BY id`, taskID)
 		if err := rows.Scan(&attempt.ID, &attempt.TaskID, &attempt.Started, &attempt.Finished, &status, &attempt.Error, &attempt.WorkerID, &attempt.Agent); err != nil {
 			return nil, fmt.Errorf("store: scan attempt: %w", err)
 		}
-		attempt.Status = task.Status(status)
+		attempt.Status = task.NormalizeStatus(task.Status(status))
 		attempts = append(attempts, attempt)
 	}
 	if err := rows.Err(); err != nil {
@@ -214,7 +208,7 @@ ORDER BY id`, taskID)
 	return attempts, nil
 }
 
-// RequeueStale resets working tasks whose lease expired or whose start time is older than olderThan.
+// RequeueStale resets doing tasks whose lease expired or whose start time is older than olderThan.
 func (s *SQLiteStore) RequeueStale(ctx context.Context, olderThan time.Duration, now time.Time) ([]task.Task, error) {
 	cutoff := now.Add(-olderThan).UTC().Format(time.RFC3339)
 	nowText := now.UTC().Format(time.RFC3339)
@@ -289,93 +283,6 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 	return commit(tx)
 }
 
-// BulkAdd inserts tasks and dependency edges in a single transaction.
-// Tasks are inserted with sequential ordinals; each dependency edge is
-// cycle-checked against the in-progress graph before insertion.
-func (s *SQLiteStore) BulkAdd(ctx context.Context, tasks []task.Task, deps []task.Dependency) error {
-	if len(tasks) == 0 && len(deps) == 0 {
-		return nil
-	}
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("store: begin bulk add: %w", err)
-	}
-	defer rollback(tx)
-
-	if err := bulkInsertTasks(ctx, tx, tasks); err != nil {
-		return err
-	}
-	if err := bulkInsertDeps(ctx, tx, deps); err != nil {
-		return err
-	}
-	return commit(tx)
-}
-
-// bulkInsertTasks inserts each task with a fresh ordinal and emits an EventAdded.
-// Caller owns the transaction; on error the caller's deferred rollback fires.
-func bulkInsertTasks(ctx context.Context, tx *sql.Tx, tasks []task.Task) error {
-	for _, t := range tasks {
-		ordinal, err := nextOrdinal(ctx, tx)
-		if err != nil {
-			return err
-		}
-		if _, err := tx.ExecContext(ctx, `
-INSERT INTO tasks (
-	id, created, status, body, started, finished, error, ordinal,
-	priority, tags, cwd, source, agent, group_id, resource_key
-)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-			t.ID, t.Created, string(t.Status), t.Body, t.Started, t.Finished, t.Error, ordinal,
-			t.Priority, encodeTags(t.Tags), t.CWD, t.Source, t.Agent, t.GroupID, t.ResourceKey); err != nil {
-			return fmt.Errorf("store: bulk add task %s: %w", t.ID, err)
-		}
-		if err := insertEvent(ctx, tx, t.ID, task.EventAdded, t.Created, ""); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-// bulkInsertDeps validates and inserts each dependency edge, cycle-checking
-// against the in-progress graph. Returns ErrInvalidDependency for malformed
-// edges and ErrDependencyCycle if the new edge would close a cycle.
-func bulkInsertDeps(ctx context.Context, tx *sql.Tx, deps []task.Dependency) error {
-	for _, dep := range deps {
-		if dep.TaskID == "" || dep.DependsOnID == "" || dep.TaskID == dep.DependsOnID {
-			return ErrInvalidDependency
-		}
-		cycle, err := dependencyPathExists(ctx, tx, dep.DependsOnID, dep.TaskID)
-		if err != nil {
-			return err
-		}
-		if cycle {
-			return ErrDependencyCycle
-		}
-		created := dep.Created
-		if created == "" {
-			created = nowString()
-		}
-		res, err := tx.ExecContext(ctx, `
-	INSERT INTO task_dependencies (task_id, depends_on_id, created)
-	VALUES (?, ?, ?)
-	ON CONFLICT(task_id, depends_on_id) DO NOTHING`, dep.TaskID, dep.DependsOnID, created)
-		if err != nil {
-			return fmt.Errorf("store: bulk add dependency %s -> %s: %w", dep.TaskID, dep.DependsOnID, err)
-		}
-		n, err := res.RowsAffected()
-		if err != nil {
-			return fmt.Errorf("store: bulk add dependency rows affected: %w", err)
-		}
-		if n == 0 {
-			continue
-		}
-		if err := insertEvent(ctx, tx, dep.TaskID, task.EventDependencyAdded, created, dep.DependsOnID); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
 // Update mutates one task. If fn returns false, no write occurs.
 func (s *SQLiteStore) Update(ctx context.Context, id string, event task.EventType, message string, fn func(*task.Task) bool) error {
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -435,7 +342,8 @@ func (s *SQLiteStore) Delete(ctx context.Context, id string) error {
 	return commit(tx)
 }
 
-// Prune removes all tasks with a listed status and returns the number deleted.
+// Prune physically removes all tasks with a listed status and returns the number deleted.
+// The public CLI prefers setting status=deleted so history stays inspectable.
 func (s *SQLiteStore) Prune(ctx context.Context, statuses []task.Status) (int, error) {
 	total := 0
 	for _, status := range statuses {
@@ -490,94 +398,12 @@ func (s *SQLiteStore) pruneStatus(ctx context.Context, status task.Status) (int,
 	return len(ids), commit(tx)
 }
 
-// Promote moves a pending task ahead of other tasks with the same effective priority.
-func (s *SQLiteStore) Promote(ctx context.Context, id string) error {
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("store: begin promote: %w", err)
-	}
-	defer rollback(tx)
-
-	t, err := getTask(ctx, tx, id)
-	if err != nil {
-		return err
-	}
-	if t.Status != task.StatusPending {
-		return ErrInvalidState
-	}
-	ordinal, err := minOrdinal(ctx, tx)
-	if err != nil {
-		return err
-	}
-	if _, err := tx.ExecContext(ctx, `UPDATE tasks SET ordinal = ? WHERE id = ?`, ordinal-1, id); err != nil {
-		return fmt.Errorf("store: promote task %s: %w", id, err)
-	}
-	if err := insertEvent(ctx, tx, id, task.EventPromoted, nowString(), ""); err != nil {
-		return err
-	}
-	return commit(tx)
-}
-
-// PruneByTag deletes all tasks whose tags slice contains tag.
-// Returns count deleted; returns an error if tag is empty.
-func (s *SQLiteStore) PruneByTag(ctx context.Context, tag string) (int, error) {
-	if tag == "" {
-		return 0, fmt.Errorf("prune by tag: tag must not be empty")
-	}
-
-	rows, err := s.db.QueryContext(ctx, `SELECT id, tags FROM tasks`)
-	if err != nil {
-		return 0, fmt.Errorf("store: prune by tag scan: %w", err)
-	}
-	var ids []string
-	for rows.Next() {
-		var id, rawTags string
-		if err := rows.Scan(&id, &rawTags); err != nil {
-			_ = rows.Close()
-			return 0, fmt.Errorf("store: prune by tag row: %w", err)
-		}
-		tags := decodeTags(rawTags)
-		if slices.Contains(tags, tag) {
-			ids = append(ids, id)
-		}
-	}
-	if err := rows.Close(); err != nil {
-		return 0, fmt.Errorf("store: prune by tag close rows: %w", err)
-	}
-	if err := rows.Err(); err != nil {
-		return 0, fmt.Errorf("store: prune by tag rows: %w", err)
-	}
-	if len(ids) == 0 {
-		return 0, nil
-	}
-
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return 0, fmt.Errorf("store: begin prune by tag: %w", err)
-	}
-	defer rollback(tx)
-
-	now := nowString()
-	for _, id := range ids {
-		if _, err := tx.ExecContext(ctx, `DELETE FROM tasks WHERE id = ?`, id); err != nil {
-			return 0, fmt.Errorf("store: prune by tag delete %s: %w", id, err)
-		}
-		if err := insertEvent(ctx, tx, id, task.EventPruned, now, "tag="+tag); err != nil {
-			return 0, err
-		}
-	}
-	if err := commit(tx); err != nil {
-		return 0, err
-	}
-	return len(ids), nil
-}
-
-// ClaimNext atomically marks the first pending task working and returns it.
+// ClaimNext atomically marks the first ready todo task doing and returns it.
 func (s *SQLiteStore) ClaimNext(ctx context.Context, now time.Time, leaseExpires time.Time) (*task.Task, error) {
 	return s.ClaimNextForWorker(ctx, now, leaseExpires, "", "")
 }
 
-// ClaimNextForWorker atomically marks the first ready task working and records worker metadata.
+// ClaimNextForWorker atomically marks the first ready task doing and records worker metadata.
 func (s *SQLiteStore) ClaimNextForWorker(ctx context.Context, now time.Time, leaseExpires time.Time, workerID, agent string) (*task.Task, error) {
 	started := now.UTC().Format(time.RFC3339)
 	lease := ""
@@ -603,11 +429,6 @@ WHERE id = (
 		LEFT JOIN tasks prereq ON prereq.id = d.depends_on_id
 		WHERE d.task_id = tasks.id
 		AND (prereq.id IS NULL OR prereq.status != ?)
-	)
-	AND NOT EXISTS (
-		SELECT 1
-		FROM task_blocks b
-		WHERE b.task_id = tasks.id
 	)
 	AND (
 		resource_key = ''
@@ -739,33 +560,6 @@ ON CONFLICT(task_id, depends_on_id) DO NOTHING`, taskID, dependsOnID, created)
 	return commit(tx)
 }
 
-// RemoveDependency removes a blocked-by edge.
-func (s *SQLiteStore) RemoveDependency(ctx context.Context, taskID, dependsOnID string) error {
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("store: begin remove dependency: %w", err)
-	}
-	defer rollback(tx)
-
-	res, err := tx.ExecContext(ctx, `
-DELETE FROM task_dependencies
-WHERE task_id = ? AND depends_on_id = ?`, taskID, dependsOnID)
-	if err != nil {
-		return fmt.Errorf("store: remove dependency %s -> %s: %w", taskID, dependsOnID, err)
-	}
-	n, err := res.RowsAffected()
-	if err != nil {
-		return fmt.Errorf("store: remove dependency rows affected: %w", err)
-	}
-	if n == 0 {
-		return ErrDependencyNotFound
-	}
-	if err := insertEvent(ctx, tx, taskID, task.EventDependencyRemoved, nowString(), dependsOnID); err != nil {
-		return err
-	}
-	return commit(tx)
-}
-
 // Dependencies returns the tasks that taskID is blocked by.
 func (s *SQLiteStore) Dependencies(ctx context.Context, taskID string) ([]task.Dependency, error) {
 	rows, err := s.db.QueryContext(ctx, `
@@ -790,72 +584,6 @@ ORDER BY created, depends_on_id`, taskID)
 		return nil, fmt.Errorf("store: dependency rows: %w", err)
 	}
 	return deps, nil
-}
-
-// Block records or updates a manual scheduling block.
-func (s *SQLiteStore) Block(ctx context.Context, taskID, reason string) error {
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("store: begin block: %w", err)
-	}
-	defer rollback(tx)
-
-	if _, err := getTask(ctx, tx, taskID); err != nil {
-		return err
-	}
-	created := nowString()
-	if _, err := tx.ExecContext(ctx, `
-INSERT INTO task_blocks (task_id, reason, created, created_by)
-VALUES (?, ?, ?, '')
-ON CONFLICT(task_id) DO UPDATE SET reason = excluded.reason, created = excluded.created`,
-		taskID, reason, created); err != nil {
-		return fmt.Errorf("store: block task %s: %w", taskID, err)
-	}
-	if err := insertEvent(ctx, tx, taskID, task.EventBlocked, created, reason); err != nil {
-		return err
-	}
-	return commit(tx)
-}
-
-// Unblock removes a manual scheduling block.
-func (s *SQLiteStore) Unblock(ctx context.Context, taskID string) error {
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("store: begin unblock: %w", err)
-	}
-	defer rollback(tx)
-
-	res, err := tx.ExecContext(ctx, `DELETE FROM task_blocks WHERE task_id = ?`, taskID)
-	if err != nil {
-		return fmt.Errorf("store: unblock task %s: %w", taskID, err)
-	}
-	n, err := res.RowsAffected()
-	if err != nil {
-		return fmt.Errorf("store: unblock rows affected: %w", err)
-	}
-	if n == 0 {
-		return ErrBlockNotFound
-	}
-	if err := insertEvent(ctx, tx, taskID, task.EventUnblocked, nowString(), ""); err != nil {
-		return err
-	}
-	return commit(tx)
-}
-
-// BlockForTask returns the manual scheduling block for taskID, if present.
-func (s *SQLiteStore) BlockForTask(ctx context.Context, taskID string) (*task.Block, error) {
-	row := s.db.QueryRowContext(ctx, `
-SELECT task_id, reason, created, created_by
-FROM task_blocks
-WHERE task_id = ?`, taskID)
-	var block task.Block
-	if err := row.Scan(&block.TaskID, &block.Reason, &block.Created, &block.CreatedBy); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil, nil
-		}
-		return nil, fmt.Errorf("store: block for task %s: %w", taskID, err)
-	}
-	return &block, nil
 }
 
 func sqliteDSN(path string) string {

@@ -8,15 +8,14 @@ import (
 	"github.com/dotcommander/afk/internal/task"
 )
 
-// This file renders `afk count` and `afk status` output. `count` is a flat
-// per-status tally; `status` is a richer snapshot that also lists the pending
-// and working tasks. Shared bounding and limiting helpers live in output.go.
+// This file renders status output. WriteCount is the shared per-status tally
+// section; WriteStatus adds todo and doing task lists.
 
 // WriteCount renders per-status tallies in canonical order.
 func WriteCount(w io.Writer, tally map[task.Status]int) error {
 	for _, s := range task.OrderedStatuses() {
 		if _, err := fmt.Fprintf(w, "%s: %d\n", s, tally[s]); err != nil {
-			return fmt.Errorf("count: write: %w", err)
+			return fmt.Errorf("status counts: write: %w", err)
 		}
 	}
 	return nil
@@ -27,40 +26,43 @@ func WriteCount(w io.Writer, tally map[task.Status]int) error {
 // can rely on a fixed shape.
 func WriteCountJSON(w io.Writer, tally map[task.Status]int) error {
 	doc := struct {
-		Pending int `json:"pending"`
-		Working int `json:"working"`
+		Pending int `json:"todo"`
+		Working int `json:"doing"`
 		Done    int `json:"done"`
 		Failed  int `json:"failed"`
+		Deleted int `json:"deleted"`
 	}{
 		Pending: tally[task.StatusPending],
 		Working: tally[task.StatusWorking],
 		Done:    tally[task.StatusDone],
 		Failed:  tally[task.StatusFailed],
+		Deleted: tally[task.StatusDeleted],
 	}
-	return WriteJSONLine(w, doc, "count")
+	return WriteJSONLine(w, doc, "status counts")
 }
 
 type statusTasksJSON struct {
-	Pending []boundedTask `json:"pending"`
-	Working []boundedTask `json:"working"`
+	Todo  []boundedTask `json:"todo"`
+	Doing []boundedTask `json:"doing"`
 }
 
 type statusDoc struct {
-	Pending int             `json:"pending"`
-	Working int             `json:"working"`
+	Todo    int             `json:"todo"`
+	Doing   int             `json:"doing"`
 	Done    int             `json:"done"`
 	Failed  int             `json:"failed"`
+	Deleted int             `json:"deleted"`
 	Total   int             `json:"total"`
 	Tasks   statusTasksJSON `json:"tasks"`
 }
 
-// WriteStatus renders a queue snapshot: per-status tallies plus the pending and
-// working task lists.
-func WriteStatus(w io.Writer, tally map[task.Status]int, pending, working []task.Task, asJSON bool) error {
+// WriteStatus renders a queue snapshot: per-status tallies plus the todo and
+// doing task lists.
+func WriteStatus(w io.Writer, tally map[task.Status]int, todo, doing []task.Task, asJSON bool) error {
 	if asJSON {
-		return writeStatusJSON(w, tally, pending, working)
+		return writeStatusJSON(w, tally, todo, doing)
 	}
-	return writeStatusText(w, tally, pending, working)
+	return writeStatusText(w, tally, todo, doing)
 }
 
 func statusListJSON(tasks []task.Task) []boundedTask {
@@ -71,32 +73,33 @@ func statusListJSON(tasks []task.Task) []boundedTask {
 	return bounded
 }
 
-func writeStatusJSON(w io.Writer, tally map[task.Status]int, pending, working []task.Task) error {
+func writeStatusJSON(w io.Writer, tally map[task.Status]int, todo, doing []task.Task) error {
 	total := 0
 	for _, n := range tally {
 		total += n
 	}
 	return WriteJSONLine(w, statusDoc{
-		Pending: tally[task.StatusPending],
-		Working: tally[task.StatusWorking],
+		Todo:    tally[task.StatusPending],
+		Doing:   tally[task.StatusWorking],
 		Done:    tally[task.StatusDone],
 		Failed:  tally[task.StatusFailed],
+		Deleted: tally[task.StatusDeleted],
 		Total:   total,
 		Tasks: statusTasksJSON{
-			Pending: statusListJSON(pending),
-			Working: statusListJSON(working),
+			Todo:  statusListJSON(todo),
+			Doing: statusListJSON(doing),
 		},
 	}, "status")
 }
 
-func writeStatusText(w io.Writer, tally map[task.Status]int, pending, working []task.Task) error {
+func writeStatusText(w io.Writer, tally map[task.Status]int, todo, doing []task.Task) error {
 	if err := WriteCount(w, tally); err != nil {
 		return err
 	}
-	if err := writeStatusSection(w, "Pending:", pending); err != nil {
+	if err := writeStatusSection(w, "Todo:", todo); err != nil {
 		return err
 	}
-	return writeStatusSection(w, "Working:", working)
+	return writeStatusSection(w, "Doing:", doing)
 }
 
 func writeStatusSection(w io.Writer, title string, tasks []task.Task) error {

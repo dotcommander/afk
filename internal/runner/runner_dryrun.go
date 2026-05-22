@@ -10,9 +10,9 @@ import (
 	"github.com/dotcommander/afk/internal/task"
 )
 
-// This file renders `--dry-run` output for the runner: the tasks that would be
-// claimed and run, plus the pending tasks that are waiting and why. It mutates
-// nothing. The live claim/exec loop lives in runner.go.
+// This file renders dry-run output for the legacy internal runner: the ready
+// tasks that would be claimed and run, plus todo tasks not currently claimable.
+// It mutates nothing. The public CLI uses `afk take --dry-run` instead.
 
 const maxDryRunCommandRunes = 1000
 
@@ -48,29 +48,31 @@ func writeRunnableDryRun(ctx context.Context, w io.Writer, service *app.Service,
 }
 
 func writeWaitingDryRun(ctx context.Context, w io.Writer, service *app.Service) error {
-	pending, err := service.List(ctx, string(task.StatusPending))
+	todo, err := service.List(ctx, string(task.StatusPending))
 	if err != nil {
 		return err
 	}
+	ready, err := service.Ready(ctx)
+	if err != nil {
+		return err
+	}
+	readyIDs := make(map[string]struct{}, len(ready))
+	for _, t := range ready {
+		readyIDs[t.ID] = struct{}{}
+	}
 	waiting := false
-	for _, t := range pending {
-		info, err := service.Why(ctx, t.ID)
-		if err != nil {
-			return err
-		}
-		if info.Ready {
+	for _, t := range todo {
+		if _, ok := readyIDs[t.ID]; ok {
 			continue
 		}
 		if !waiting {
-			if _, err := fmt.Fprintln(w, "WAITING\tREASON"); err != nil {
+			if _, err := fmt.Fprintln(w, "WAITING\tSTATUS"); err != nil {
 				return fmt.Errorf("runner: write waiting header: %w", err)
 			}
 			waiting = true
 		}
-		for _, reason := range info.Reasons {
-			if _, err := fmt.Fprintf(w, "%s\t%s: %s\n", t.ID, reason.Kind, reason.Detail); err != nil {
-				return fmt.Errorf("runner: write waiting: %w", err)
-			}
+		if _, err := fmt.Fprintf(w, "%s\tnot ready\n", t.ID); err != nil {
+			return fmt.Errorf("runner: write waiting: %w", err)
 		}
 	}
 	return nil

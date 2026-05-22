@@ -60,16 +60,13 @@ CREATE TABLE IF NOT EXISTS task_dependencies (
 	PRIMARY KEY (task_id, depends_on_id)
 );
 CREATE INDEX IF NOT EXISTS task_dependencies_depends_on_idx ON task_dependencies(depends_on_id);
-CREATE TABLE IF NOT EXISTS task_blocks (
-	task_id TEXT PRIMARY KEY,
-	reason TEXT NOT NULL,
-	created TEXT NOT NULL,
-	created_by TEXT NOT NULL DEFAULT ''
-);
 `); err != nil {
 		return fmt.Errorf("store: create schema: %w", err)
 	}
-	return retrySQLiteBusy(ctx, s.migrateTaskMetadata)
+	if err := retrySQLiteBusy(ctx, s.migrateTaskMetadata); err != nil {
+		return err
+	}
+	return retrySQLiteBusy(ctx, s.migrateStatusNames)
 }
 
 func (s *SQLiteStore) execWithBusyRetry(ctx context.Context, query string, args ...any) error {
@@ -122,6 +119,26 @@ func (s *SQLiteStore) migrateTaskMetadata(ctx context.Context) error {
 	for _, col := range columns {
 		if _, err := s.db.ExecContext(ctx, col.sql); err != nil && !isDuplicateColumn(err) {
 			return fmt.Errorf("store: migrate %s: %w", col.name, err)
+		}
+	}
+	return nil
+}
+
+func (s *SQLiteStore) migrateStatusNames(ctx context.Context) error {
+	updates := []struct {
+		table string
+		from  string
+		to    string
+	}{
+		{table: "tasks", from: "pending", to: "todo"},
+		{table: "tasks", from: "working", to: "doing"},
+		{table: "task_attempts", from: "pending", to: "todo"},
+		{table: "task_attempts", from: "working", to: "doing"},
+	}
+	for _, update := range updates {
+		query := fmt.Sprintf("UPDATE %s SET status = ? WHERE status = ?", update.table)
+		if _, err := s.db.ExecContext(ctx, query, update.to, update.from); err != nil {
+			return fmt.Errorf("store: migrate %s status %s: %w", update.table, update.from, err)
 		}
 	}
 	return nil

@@ -130,6 +130,44 @@ func TestDryRunWithoutExecTemplateShowsPreviewHint(t *testing.T) {
 	require.Contains(t, stdout.String(), "(set --exec to preview command)")
 }
 
+func TestDrainDryRunShowsWaitingTasks(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	svc, st, _ := newRunnerService(t)
+	require.NoError(t, st.Add(ctx, task.Task{ID: "blocked", Created: time.Now().UTC().Format(time.RFC3339), Status: task.StatusPending, Body: "blocked"}))
+	require.NoError(t, st.Add(ctx, task.Task{ID: "prereq", Created: time.Now().UTC().Format(time.RFC3339), Status: task.StatusPending, Body: "prereq"}))
+	require.NoError(t, st.AddDependency(ctx, "blocked", "prereq"))
+
+	var stdout bytes.Buffer
+	require.NoError(t, runner.Drain(ctx, svc, runner.Options{
+		DryRun:       true,
+		Limit:        1,
+		ExecTemplate: "echo {{id}}",
+		Stdout:       &stdout,
+	}))
+	require.Contains(t, stdout.String(), "WOULD_RUN")
+	require.Contains(t, stdout.String(), "prereq")
+	require.Contains(t, stdout.String(), "WAITING")
+	require.Contains(t, stdout.String(), "blocked")
+}
+
+func TestDrainDryRunPropagatesWriterError(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	svc, st, _ := newRunnerService(t)
+	require.NoError(t, st.Add(ctx, task.Task{ID: "ready", Created: time.Now().UTC().Format(time.RFC3339), Status: task.StatusPending, Body: "ready"}))
+
+	err := runner.Drain(ctx, svc, runner.Options{
+		DryRun:       true,
+		ExecTemplate: "echo {{id}}",
+		Stdout:       failingWriter{},
+	})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "write dry-run")
+}
+
 func TestRunCommandFinalizesTask(t *testing.T) {
 	t.Parallel()
 
@@ -182,6 +220,53 @@ func TestRunCommandExitFailureMarksTaskFailed(t *testing.T) {
 	require.NoError(t, showErr)
 	require.Equal(t, task.StatusFailed, got.Status)
 	require.Contains(t, got.Error, "runner command failed")
+}
+
+func TestRunCommandThatDoesNotFinalizeMarksTaskFailed(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	svc, st, _ := newRunnerService(t)
+	require.NoError(t, st.Add(ctx, task.Task{
+		ID:      "unfinalized",
+		Created: time.Now().UTC().Format(time.RFC3339),
+		Status:  task.StatusPending,
+		Body:    "unfinalized",
+	}))
+
+	require.NoError(t, runner.Run(ctx, svc, runner.Options{
+		Limit:        1,
+		ExecTemplate: "true",
+		Stdout:       &bytes.Buffer{},
+		Stderr:       &bytes.Buffer{},
+	}))
+
+	got, err := svc.Show(ctx, "unfinalized")
+	require.NoError(t, err)
+	require.Equal(t, task.StatusFailed, got.Status)
+	require.Contains(t, got.Error, "without finalizing")
+}
+
+func TestRunPropagatesStartWriteError(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	svc, st, _ := newRunnerService(t)
+	require.NoError(t, st.Add(ctx, task.Task{
+		ID:      "write-error",
+		Created: time.Now().UTC().Format(time.RFC3339),
+		Status:  task.StatusPending,
+		Body:    "write-error",
+	}))
+
+	err := runner.Run(ctx, svc, runner.Options{
+		Limit:        1,
+		ExecTemplate: "true",
+		Stdout:       failingWriter{},
+		Stderr:       &bytes.Buffer{},
+	})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "write start")
 }
 
 func TestRunHeartbeatRecordsEventWhileCommandRuns(t *testing.T) {
@@ -406,13 +491,16 @@ func TestDrainBlocksPoisonTask(t *testing.T) {
 		Body:    "poison",
 	}))
 
-	// Fail and retry the task three times so it carries 3 failed attempts
+	// Fail and requeue the task three times so it carries 3 failed attempts
 	// while remaining pending — exactly the poison-guard trigger.
 	for i := 0; i < 3; i++ {
 		_, err := svc.PopWithLease(ctx, time.Minute)
 		require.NoError(t, err)
 		require.NoError(t, svc.Fail(ctx, "poison", "boom"))
-		require.NoError(t, svc.Retry(ctx, "poison"))
+		require.NoError(t, st.Update(ctx, "poison", task.EventRequeued, "test reset", func(tk *task.Task) bool {
+			tk.Reset()
+			return true
+		}))
 	}
 
 	var stdout bytes.Buffer
@@ -423,12 +511,12 @@ func TestDrainBlocksPoisonTask(t *testing.T) {
 		Stdout:       &stdout,
 	}))
 
-	require.Contains(t, stdout.String(), "blocked poison")
+	require.Contains(t, stdout.String(), "failed poison")
 	require.Contains(t, stdout.String(), "poison: 3 failed attempts")
 
-	why, err := svc.Why(ctx, "poison")
+	got, err := svc.Show(ctx, "poison")
 	require.NoError(t, err)
-	require.False(t, why.Ready, "poisoned task must not be ready after drain blocks it")
+	require.Equal(t, task.StatusFailed, got.Status)
 }
 
 func newRunnerService(t *testing.T) (*app.Service, *store.SQLiteStore, string) {
@@ -504,4 +592,10 @@ func TestRunnerHelperProcess(_ *testing.T) {
 		os.Exit(2)
 	}
 	os.Exit(0)
+}
+
+type failingWriter struct{}
+
+func (failingWriter) Write([]byte) (int, error) {
+	return 0, errors.New("write failed")
 }

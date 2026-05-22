@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/dotcommander/afk/internal/task"
@@ -51,16 +52,67 @@ func findTask(tasks []task.Task, id string) (int, bool) {
 }
 
 func filterByStatus(tasks []task.Task, status string) []task.Task {
+	status = strings.TrimSpace(status)
 	if status == "" {
-		return tasks
+		return filterVisible(tasks)
+	}
+	if status == "all" {
+		return append([]task.Task(nil), tasks...)
+	}
+	parsed, ok := task.ParseStatus(status)
+	if !ok {
+		return nil
 	}
 	out := tasks[:0:0]
 	for _, t := range tasks {
-		if string(t.Status) == status {
+		if task.NormalizeStatus(t.Status) == parsed {
 			out = append(out, t)
 		}
 	}
 	return out
+}
+
+func filterVisible(tasks []task.Task) []task.Task {
+	out := tasks[:0:0]
+	for _, t := range tasks {
+		if task.VisibleStatus(t.Status) {
+			out = append(out, t)
+		}
+	}
+	return out
+}
+
+func validateStatusFilter(status string) error {
+	status = strings.TrimSpace(status)
+	if status == "" || status == "all" {
+		return nil
+	}
+	if _, ok := task.ParseStatus(status); !ok {
+		return task.ErrInvalidStatus
+	}
+	return nil
+}
+
+func taskMatches(t task.Task, query string) bool {
+	fields := []string{
+		t.ID,
+		string(task.NormalizeStatus(t.Status)),
+		t.Body,
+		t.Priority,
+		t.CWD,
+		t.Source,
+		t.Agent,
+		t.GroupID,
+		t.ResourceKey,
+		t.Error,
+		strings.Join(t.Tags, " "),
+	}
+	for _, field := range fields {
+		if strings.Contains(strings.ToLower(field), query) {
+			return true
+		}
+	}
+	return false
 }
 
 func formatTime(now time.Time) string {

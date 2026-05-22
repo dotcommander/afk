@@ -3,7 +3,6 @@ package main
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -18,15 +17,15 @@ var version = "dev" // set via -ldflags "-X main.version=..." at release time
 
 func main() {
 	err := run()
+	os.Exit(exitCode(err))
+}
+
+func exitCode(err error) int {
 	if err == nil {
-		return
+		return 0
 	}
 	fmt.Fprintln(os.Stderr, "afk:", err)
-	var ee *commands.ExitError
-	if errors.As(err, &ee) {
-		os.Exit(ee.Code)
-	}
-	os.Exit(1)
+	return 1
 }
 
 func run() error {

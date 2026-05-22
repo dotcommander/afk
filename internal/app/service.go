@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/dotcommander/afk/internal/store"
@@ -36,20 +37,6 @@ type ExplainData struct {
 	Attempts []task.Attempt `json:"attempts"`
 }
 
-// NotReadyReason explains why a task is not ready to be claimed.
-type NotReadyReason struct {
-	TaskID string `json:"task_id"`
-	Kind   string `json:"kind"`
-	Detail string `json:"detail"`
-}
-
-// ReadinessData contains a task and its computed readiness reasons.
-type ReadinessData struct {
-	Task    task.Task        `json:"task"`
-	Ready   bool             `json:"ready"`
-	Reasons []NotReadyReason `json:"not_ready_reasons,omitempty"`
-}
-
 // NewService constructs a Service.
 func NewService(store Store, now func() time.Time, opts ...Option) *Service {
 	s := &Service{store: store, now: now}
@@ -59,12 +46,12 @@ func NewService(store Store, now func() time.Time, opts ...Option) *Service {
 	return s
 }
 
-// Add appends a new pending task and returns its id.
+// Add appends a new todo task and returns its id.
 func (s *Service) Add(ctx context.Context, body string) (string, error) {
 	return s.AddWithOptions(ctx, task.AddOptions{Body: body})
 }
 
-// AddWithOptions appends a new pending task with metadata and returns its id.
+// AddWithOptions appends a new todo task with metadata and returns its id.
 func (s *Service) AddWithOptions(ctx context.Context, opts task.AddOptions) (string, error) {
 	if err := task.ValidateAddOptions(opts); err != nil {
 		// Persist rejection so discovery work is not lost. Swallow sidecar
@@ -138,13 +125,38 @@ func (s *Service) addValidated(ctx context.Context, opts task.AddOptions) (strin
 	return "", fmt.Errorf("add task: %w", store.ErrDuplicateTask)
 }
 
-// List returns tasks filtered by status, or all tasks if statusFilter is empty.
+// List returns tasks filtered by status, or visible tasks if statusFilter is empty.
 func (s *Service) List(ctx context.Context, statusFilter string) ([]task.Task, error) {
+	if err := validateStatusFilter(statusFilter); err != nil {
+		return nil, err
+	}
 	tasks, err := s.store.List(ctx)
 	if err != nil {
 		return nil, err
 	}
 	return filterByStatus(tasks, statusFilter), nil
+}
+
+// Find returns visible tasks matching query across common task metadata fields.
+func (s *Service) Find(ctx context.Context, query, statusFilter string) ([]task.Task, error) {
+	if err := validateStatusFilter(statusFilter); err != nil {
+		return nil, err
+	}
+	tasks, err := s.List(ctx, statusFilter)
+	if err != nil {
+		return nil, err
+	}
+	query = strings.ToLower(strings.TrimSpace(query))
+	if query == "" {
+		return tasks, nil
+	}
+	var out []task.Task
+	for _, t := range tasks {
+		if taskMatches(t, query) {
+			out = append(out, t)
+		}
+	}
+	return out, nil
 }
 
 // RecentPaths returns up to recentPathLimit distinct non-empty task working
@@ -165,9 +177,15 @@ func (s *Service) Show(ctx context.Context, id string) (task.Task, error) {
 	}
 	idx, ok := findTask(tasks, id)
 	if !ok {
-		return task.Task{}, fmt.Errorf("show %s: %w", id, ErrNotFound)
+		return task.Task{}, fmt.Errorf("task %s: %w", id, ErrNotFound)
 	}
-	return tasks[idx], nil
+	t := tasks[idx]
+	deps, err := s.store.Dependencies(ctx, id)
+	if err != nil {
+		return task.Task{}, err
+	}
+	t.Dependencies = deps
+	return t, nil
 }
 
 // Count returns per-status tallies.
@@ -184,16 +202,16 @@ func (s *Service) Count(ctx context.Context) (map[task.Status]int, error) {
 }
 
 // StatusSnapshot is a single queue snapshot: per-status tallies plus the
-// pending and working task lists. It collapses the count + ls pending +
-// ls working stitch into one read.
+// todo and doing task lists. It collapses the count + tasks todo +
+// tasks doing stitch into one read.
 type StatusSnapshot struct {
-	Counts  map[task.Status]int `json:"counts"`
-	Pending []task.Task         `json:"pending"`
-	Working []task.Task         `json:"working"`
+	Counts map[task.Status]int `json:"counts"`
+	Todo   []task.Task         `json:"todo"`
+	Doing  []task.Task         `json:"doing"`
 }
 
 // Status returns a single queue snapshot in one store read: per-status tallies
-// plus the pending and working task lists.
+// plus the todo and doing task lists.
 func (s *Service) Status(ctx context.Context) (StatusSnapshot, error) {
 	tasks, err := s.store.List(ctx)
 	if err != nil {
@@ -201,18 +219,19 @@ func (s *Service) Status(ctx context.Context) (StatusSnapshot, error) {
 	}
 	snapshot := StatusSnapshot{Counts: make(map[task.Status]int)}
 	for _, t := range tasks {
-		snapshot.Counts[t.Status]++
-		switch t.Status {
+		status := task.NormalizeStatus(t.Status)
+		snapshot.Counts[status]++
+		switch status {
 		case task.StatusPending:
-			snapshot.Pending = append(snapshot.Pending, t)
+			snapshot.Todo = append(snapshot.Todo, t)
 		case task.StatusWorking:
-			snapshot.Working = append(snapshot.Working, t)
+			snapshot.Doing = append(snapshot.Doing, t)
 		}
 	}
 	return snapshot, nil
 }
 
-// Next returns the first pending task without mutation.
+// Next returns the first ready task without mutation.
 func (s *Service) Next(ctx context.Context) (*task.Task, error) {
 	tasks, err := s.store.Ready(ctx)
 	if err != nil {
@@ -225,31 +244,9 @@ func (s *Service) Next(ctx context.Context) (*task.Task, error) {
 	return &next, nil
 }
 
-// Edit replaces a task body.
-func (s *Service) Edit(ctx context.Context, id, body string) error {
-	current, err := s.Show(ctx, id)
-	if err != nil {
-		return err
-	}
-	opts := task.AddOptionsFromTask(current)
-	opts.Body = body
-	if err := task.ValidateAddOptions(opts); err != nil {
-		return err
-	}
-	return s.store.Update(ctx, id, task.EventEdited, "", func(t *task.Task) bool {
-		t.Body = body
-		return true
-	})
-}
-
 // AddDependency records that taskID is blocked by dependsOnID.
 func (s *Service) AddDependency(ctx context.Context, taskID, dependsOnID string) error {
 	return s.store.AddDependency(ctx, taskID, dependsOnID)
-}
-
-// RemoveDependency removes a blocked-by edge.
-func (s *Service) RemoveDependency(ctx context.Context, taskID, dependsOnID string) error {
-	return s.store.RemoveDependency(ctx, taskID, dependsOnID)
 }
 
 // Dependencies returns the tasks that taskID is blocked by.
@@ -257,43 +254,9 @@ func (s *Service) Dependencies(ctx context.Context, taskID string) ([]task.Depen
 	return s.store.Dependencies(ctx, taskID)
 }
 
-// Block records a manual scheduling block.
-func (s *Service) Block(ctx context.Context, taskID, reason string) error {
-	return s.store.Block(ctx, taskID, reason)
-}
-
-// Unblock removes a manual scheduling block.
-func (s *Service) Unblock(ctx context.Context, taskID string) error {
-	return s.store.Unblock(ctx, taskID)
-}
-
-// Ready returns pending tasks with no unfinished dependencies in scheduler order.
+// Ready returns todo tasks with no unfinished dependencies in scheduler order.
 func (s *Service) Ready(ctx context.Context) ([]task.Task, error) {
 	return s.store.Ready(ctx)
-}
-
-// Why returns computed readiness information for one task.
-// store.Ready is the authority for the Ready boolean; notReadyReasons provides the human-readable explanation layer.
-func (s *Service) Why(ctx context.Context, id string) (ReadinessData, error) {
-	tasks, err := s.store.List(ctx)
-	if err != nil {
-		return ReadinessData{}, err
-	}
-	idx, ok := findTask(tasks, id)
-	if !ok {
-		return ReadinessData{}, fmt.Errorf("show %s: %w", id, ErrNotFound)
-	}
-	t := tasks[idx]
-	reasons, err := s.notReadyReasons(ctx, id, tasksByID(tasks))
-	if err != nil {
-		return ReadinessData{}, err
-	}
-	ready, err := s.store.Ready(ctx)
-	if err != nil {
-		return ReadinessData{}, err
-	}
-	_, isReady := findTask(ready, id)
-	return ReadinessData{Task: t, Ready: isReady, Reasons: reasons}, nil
 }
 
 // Explain returns task state and lifecycle history.

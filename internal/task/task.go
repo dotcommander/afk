@@ -11,37 +11,34 @@ type Status string
 
 // Status values for Task.Status.
 const (
-	StatusPending Status = "pending"
-	StatusWorking Status = "working"
+	StatusPending Status = "todo"
+	StatusWorking Status = "doing"
 	StatusDone    Status = "done"
 	StatusFailed  Status = "failed"
+	StatusDeleted Status = "deleted"
 )
-
-// SpecTagPrefix is the tag prefix that marks a task as belonging to an
-// imported spec batch (tag form: "spec:<slug>"). Shared by package app's
-// import dedupe and package task's planner-import validation.
-const SpecTagPrefix = "spec:"
 
 // ErrInvalidStatus reports an unknown task status.
 var ErrInvalidStatus = errors.New("invalid task status")
 
 // Task is the persisted task schema, also used for JSON CLI output.
 type Task struct {
-	ID           string   `json:"id"`
-	Created      string   `json:"created"`
-	Status       Status   `json:"status"`
-	Body         string   `json:"body"`
-	Priority     string   `json:"priority,omitzero"`
-	Tags         []string `json:"tags,omitempty"`
-	CWD          string   `json:"cwd,omitzero"`
-	Source       string   `json:"source,omitzero"`
-	Agent        string   `json:"agent,omitzero"`
-	GroupID      string   `json:"group_id,omitzero"`
-	ResourceKey  string   `json:"resource_key,omitzero"`
-	Started      string   `json:"started,omitzero"`
-	LeaseExpires string   `json:"lease_expires,omitzero"`
-	Finished     string   `json:"finished,omitzero"`
-	Error        string   `json:"error,omitzero"`
+	ID           string       `json:"id"`
+	Created      string       `json:"created"`
+	Status       Status       `json:"status"`
+	Body         string       `json:"body"`
+	Priority     string       `json:"priority,omitzero"`
+	Tags         []string     `json:"tags,omitempty"`
+	CWD          string       `json:"cwd,omitzero"`
+	Source       string       `json:"source,omitzero"`
+	Agent        string       `json:"agent,omitzero"`
+	GroupID      string       `json:"group_id,omitzero"`
+	ResourceKey  string       `json:"resource_key,omitzero"`
+	Started      string       `json:"started,omitzero"`
+	LeaseExpires string       `json:"lease_expires,omitzero"`
+	Finished     string       `json:"finished,omitzero"`
+	Error        string       `json:"error,omitzero"`
+	Dependencies []Dependency `json:"dependencies,omitempty"`
 }
 
 // AddOptions carries metadata for a new task.
@@ -76,22 +73,16 @@ type EventType string
 
 // Event type values recorded in durable task history.
 const (
-	EventAdded             EventType = "added"
-	EventClaimed           EventType = "claimed"
-	EventDone              EventType = "done"
-	EventFailed            EventType = "failed"
-	EventReset             EventType = "reset"
-	EventEdited            EventType = "edited"
-	EventRemoved           EventType = "removed"
-	EventPruned            EventType = "pruned"
-	EventRetried           EventType = "retried"
-	EventRequeued          EventType = "requeued"
-	EventHeartbeat         EventType = "heartbeat"
-	EventBlocked           EventType = "blocked"
-	EventUnblocked         EventType = "unblocked"
-	EventPromoted          EventType = "promoted"
-	EventDependencyAdded   EventType = "dependency_added"
-	EventDependencyRemoved EventType = "dependency_removed"
+	EventAdded           EventType = "added"
+	EventClaimed         EventType = "claimed"
+	EventDone            EventType = "done"
+	EventFailed          EventType = "failed"
+	EventDeleted         EventType = "deleted"
+	EventRemoved         EventType = "removed"
+	EventPruned          EventType = "pruned"
+	EventRequeued        EventType = "requeued"
+	EventHeartbeat       EventType = "heartbeat"
+	EventDependencyAdded EventType = "dependency_added"
 )
 
 // Event records a task lifecycle transition.
@@ -122,18 +113,48 @@ type Dependency struct {
 	Created     string `json:"created"`
 }
 
-// Block records a manual scheduling block for a task.
-type Block struct {
-	TaskID    string `json:"task_id"`
-	Reason    string `json:"reason"`
-	Created   string `json:"created"`
-	CreatedBy string `json:"created_by,omitzero"`
-}
-
 // ValidStatus reports whether s is a known status.
 func ValidStatus(s Status) bool {
-	switch s {
-	case StatusPending, StatusWorking, StatusDone, StatusFailed:
+	_, ok := ParseStatus(string(s))
+	return ok
+}
+
+// ParseStatus returns the canonical status for user or persisted input.
+func ParseStatus(s string) (Status, bool) {
+	switch Status(s) {
+	case StatusPending, "pending":
+		return StatusPending, true
+	case StatusWorking, "working":
+		return StatusWorking, true
+	case StatusDone:
+		return StatusDone, true
+	case StatusFailed:
+		return StatusFailed, true
+	case StatusDeleted:
+		return StatusDeleted, true
+	default:
+		return "", false
+	}
+}
+
+// NormalizeStatus returns the canonical status, or s unchanged if unknown.
+func NormalizeStatus(s Status) Status {
+	normalized, ok := ParseStatus(string(s))
+	if ok {
+		return normalized
+	}
+	return s
+}
+
+// VisibleStatus reports whether s should appear in default task views.
+func VisibleStatus(s Status) bool {
+	return NormalizeStatus(s) != StatusDeleted
+}
+
+// ActiveStatus reports whether s represents unfinished work.
+func ActiveStatus(s Status) bool {
+	switch NormalizeStatus(s) {
+	case StatusPending, StatusWorking:
 		return true
 	default:
 		return false
@@ -142,7 +163,7 @@ func ValidStatus(s Status) bool {
 
 // OrderedStatuses returns the canonical display order.
 func OrderedStatuses() []Status {
-	return []Status{StatusPending, StatusWorking, StatusDone, StatusFailed}
+	return []Status{StatusPending, StatusWorking, StatusDone, StatusFailed, StatusDeleted}
 }
 
 // MarkWorking claims the task for work and records the start timestamp.
@@ -181,7 +202,45 @@ func (t *Task) MarkFailed(now time.Time, reason string) bool {
 	return true
 }
 
-// Reset returns the task to pending and clears lifecycle/error fields.
+// MarkDeleted marks the task deleted without physically removing history.
+func (t *Task) MarkDeleted(now time.Time, reason string) bool {
+	if t.Status == StatusDeleted {
+		return false
+	}
+	t.Status = StatusDeleted
+	t.Finished = formatTime(now)
+	t.Error = reason
+	return true
+}
+
+// SetStatus applies a generic lifecycle transition.
+func (t *Task) SetStatus(status Status, now time.Time, message string) bool {
+	status = NormalizeStatus(status)
+	switch status {
+	case StatusPending:
+		if t.Status == StatusPending {
+			return false
+		}
+		t.Reset()
+		return true
+	case StatusWorking:
+		if t.Status == StatusWorking {
+			return false
+		}
+		t.MarkWorking(now)
+		return true
+	case StatusDone:
+		return t.MarkDone(now)
+	case StatusFailed:
+		return t.MarkFailed(now, message)
+	case StatusDeleted:
+		return t.MarkDeleted(now, message)
+	default:
+		return false
+	}
+}
+
+// Reset returns the task to todo and clears lifecycle/error fields.
 func (t *Task) Reset() {
 	t.Status = StatusPending
 	t.Started = ""

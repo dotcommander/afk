@@ -127,8 +127,8 @@ func Task(exe string, t task.Task, events []task.Event, attempts []task.Attempt)
 		OmittedAttempts: omA,
 		Events:          evs,
 		Attempts:        atts,
-		DoneCmd:         joinCmd(exe, "done "+t.ID),
-		FailCmd:         joinCmd(exe, "fail "+t.ID+` "<one-line reason>"`),
+		DoneCmd:         joinCmd(exe, "set "+t.ID+" done"),
+		FailCmd:         joinCmd(exe, "set "+t.ID+` failed "<one-line reason>"`),
 	}
 
 	var b strings.Builder
@@ -148,14 +148,14 @@ func Loop(opts LoopOptions) string {
 
 	v := loopView{
 		SQLitePath:     sqlitePath,
-		PopCmd:         joinCmd(exe, "pop"),
+		PopCmd:         joinCmd(exe, "take"),
 		StatusCmd:      joinCmd(exe, "status"),
-		LsPendingCmd:   joinCmd(exe, "ls --status pending --json"),
-		LsWorkingCmd:   joinCmd(exe, "ls --status working --json"),
-		DoneCmd:        joinCmd(exe, "done <id>"),
-		FailCmd:        joinCmd(exe, `fail <id> "<one-line reason>"`),
-		ExplainCmd:     joinCmd(exe, "explain <id>"),
-		RecoverFailCmd: joinCmd(exe, `fail <id> "orphaned working claim"`),
+		LsPendingCmd:   joinCmd(exe, "tasks --status todo --json"),
+		LsWorkingCmd:   joinCmd(exe, "tasks --status doing --json"),
+		DoneCmd:        joinCmd(exe, "set <id> done"),
+		FailCmd:        joinCmd(exe, `set <id> failed "<one-line reason>"`),
+		ExplainCmd:     joinCmd(exe, "task <id>"),
+		RecoverFailCmd: joinCmd(exe, `set <id> failed "orphaned doing claim"`),
 		RecoverAddCmd:  joinCmd(exe, `add "replacement task body, if still needed"`),
 	}
 

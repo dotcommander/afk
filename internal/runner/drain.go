@@ -64,8 +64,8 @@ func Drain(ctx context.Context, service *app.Service, opts Options) error {
 	return nil
 }
 
-// blockPoisonTasks blocks every ready task that has failed at least
-// drainPoisonThreshold times, returning the count blocked. A poisoned task is
+// blockPoisonTasks fails every ready task that has failed at least
+// drainPoisonThreshold times, returning the count failed. A poisoned task is
 // reported to w so the operator sees why it was skipped.
 func blockPoisonTasks(ctx context.Context, service *app.Service, w io.Writer) (int, error) {
 	ready, err := service.Ready(ctx)
@@ -82,10 +82,10 @@ func blockPoisonTasks(ctx context.Context, service *app.Service, w io.Writer) (i
 			continue
 		}
 		reason := fmt.Sprintf("poison: %d failed attempts", fails)
-		if err := service.Block(ctx, t.ID, reason); err != nil {
+		if err := service.Fail(ctx, t.ID, reason); err != nil {
 			return blocked, err
 		}
-		if _, err := fmt.Fprintf(w, "blocked %s (%s)\n", t.ID, reason); err != nil {
+		if _, err := fmt.Fprintf(w, "failed %s (%s)\n", t.ID, reason); err != nil {
 			return blocked, fmt.Errorf("drain: write: %w", err)
 		}
 		blocked++

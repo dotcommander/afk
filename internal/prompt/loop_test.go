@@ -16,9 +16,14 @@ func TestLoopOutput_ExeIsBareName(t *testing.T) {
 
 	out := prompt.Loop(prompt.LoopOptions{ExecutablePath: "afk"})
 
-	require.Contains(t, out, "afk pop")
+	require.Contains(t, out, "afk take")
 	require.NotContains(t, out, "/Users/")
 	require.NotContains(t, out, "/home/")
+	require.Contains(t, out, "Loop Tick - Process One Ready Task")
+	require.Contains(t, out, "claims the first ready task")
+	require.Contains(t, out, "No ready tasks.")
+	require.NotContains(t, out, "first todo task")
+	require.NotContains(t, out, "No todo tasks.")
 	// Every bash block command must start with the bare name, not a slash-prefixed path.
 	for _, line := range strings.Split(out, "\n") {
 		if strings.HasPrefix(line, "```") || line == "" {
@@ -38,10 +43,10 @@ func TestLoopIncludesCurrentQueueInstructions(t *testing.T) {
 		SQLitePath:     "/tmp/tasks.sqlite",
 	})
 
-	require.Contains(t, out, "/tmp/afk pop")
-	require.Contains(t, out, "afk pop")
-	require.Contains(t, out, "afk done <id>")
-	require.Contains(t, out, "afk fail <id>")
+	require.Contains(t, out, "/tmp/afk take")
+	require.Contains(t, out, "afk take")
+	require.Contains(t, out, "afk set <id> done")
+	require.Contains(t, out, "afk set <id> failed")
 	require.Contains(t, out, "/tmp/tasks.sqlite")
 	require.Contains(t, out, "record `id`, `body`, and any metadata")
 	require.Contains(t, out, "If the task has `cwd`, treat it as the likely working directory")
@@ -56,7 +61,7 @@ func TestLoopFallsBackToAfkExecutable(t *testing.T) {
 
 	out := prompt.Loop(prompt.LoopOptions{})
 
-	require.True(t, strings.Contains(out, "```bash\nafk pop\n```"))
+	require.True(t, strings.Contains(out, "```bash\nafk take\n```"))
 	require.Contains(t, out, "SQLite-backed")
 }
 
@@ -98,8 +103,8 @@ func TestTaskPromptIncludesContextHistoryAndFinalization(t *testing.T) {
 	require.Contains(t, out, "AFK Task 123")
 	require.Contains(t, out, "fix the thing")
 	require.Contains(t, out, "/tmp/repo")
-	require.Contains(t, out, "/tmp/afk done 123")
-	require.Contains(t, out, "/tmp/afk fail 123")
+	require.Contains(t, out, "/tmp/afk set 123 done")
+	require.Contains(t, out, "/tmp/afk set 123 failed")
 	require.Contains(t, out, "attempt #1")
 
 	// Regression: body must be wrapped in XML delimiters (prompt-injection hardening).

@@ -71,20 +71,26 @@ func writeListTable(w io.Writer, tasks []task.Task, omitted int) error {
 	return tw.Flush()
 }
 
-// WriteShow renders a single task.
-func WriteShow(w io.Writer, t task.Task, asJSON bool) error {
-	if asJSON {
-		return WriteTaskJSONLine(w, t, "show")
-	}
+func writeTaskDetail(w io.Writer, t task.Task) error {
 	if _, err := fmt.Fprintf(w, "ID: %s\nStatus: %s\nCreated: %s\nBody: %s\n", t.ID, t.Status, t.Created, truncate(t.Body, maxDetailBodyRunes)); err != nil {
-		return fmt.Errorf("show: write: %w", err)
+		return fmt.Errorf("task detail: write: %w", err)
 	}
 	for _, field := range showFields(t) {
 		if field.value == "" {
 			continue
 		}
 		if _, err := fmt.Fprintf(w, "%s: %s\n", field.name, field.value); err != nil {
-			return fmt.Errorf("show: write: %w", err)
+			return fmt.Errorf("task detail: write: %w", err)
+		}
+	}
+	if len(t.Dependencies) > 0 {
+		if _, err := fmt.Fprintln(w, "Dependencies:"); err != nil {
+			return fmt.Errorf("task detail: write: %w", err)
+		}
+		for _, dep := range t.Dependencies {
+			if _, err := fmt.Fprintf(w, "  %s\n", dep.DependsOnID); err != nil {
+				return fmt.Errorf("task detail: write: %w", err)
+			}
 		}
 	}
 	return nil
@@ -108,22 +114,6 @@ func showFields(t task.Task) []showField {
 		{name: "Finished", value: t.Finished},
 		{name: "Error", value: truncate(t.Error, maxMessageRunes)},
 	}
-}
-
-// WriteDependencies renders blocked-by dependencies.
-func WriteDependencies(w io.Writer, deps []task.Dependency, asJSON bool) error {
-	if asJSON {
-		return WriteJSONLine(w, deps, "dependencies")
-	}
-	if len(deps) == 0 {
-		return nil
-	}
-	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(tw, "TASK\tBLOCKED_BY\tCREATED") //nolint:errcheck // tabwriter buffers; errors surface at Flush
-	for _, dep := range deps {
-		fmt.Fprintf(tw, "%s\t%s\t%s\n", dep.TaskID, dep.DependsOnID, dep.Created) //nolint:errcheck // tabwriter buffers; errors surface at Flush
-	}
-	return tw.Flush()
 }
 
 // WriteTaskJSONLine renders one task as bounded JSON.

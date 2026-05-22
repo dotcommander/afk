@@ -6,113 +6,35 @@ afk <command> --help
 afk --version
 ```
 
-Every `afk` subcommand. Group by intent; follow the per-topic doc when you need detail.
-
-## task lifecycle
+The public command surface is intentionally small.
 
 | Command | Behavior |
 |---|---|
-| `afk add <body...>` | Append a new pending task and print its id. |
-| `afk add --dry-run <body...>` | Validate a task body and metadata without adding it. |
-| `afk import < file.json` | Bulk-insert tasks from a JSON document on stdin. |
-| `afk import --dry-run < file.json` | Validate and resolve a bulk import without adding tasks. |
-| `afk show <id>` | Show one task. Add `--json` for machine output. |
-| `afk ls` | List tasks. Filter with `--status pending\|working\|done\|failed`. Add `--json`. |
-| `afk status` | Print per-status tallies, plus pending and working task lists. |
-| `afk edit <id> <new-body>` | Replace a task body. |
-| `afk rm <id>` | Remove one task. |
-| `afk prune` | Remove `done` and `failed` tasks. Override with `--status <list>`. |
+| `afk add <body...>` | Append a new `todo` task and print its id. |
+| `afk add --dry-run [--json] <body...>` | Validate task shape and metadata without mutating the queue. |
+| `afk tasks [--status STATUS] [--json]` | List tasks. Default hides `deleted`; use `--status deleted` or `--status all` when needed. |
+| `afk task <id> [--json]` | Show one task with metadata, dependencies, events, and attempts. |
+| `afk status [--summary] [--json]` | Print queue counts; without `--summary`, also includes `todo` and `doing` task lists. |
+| `afk find <query> [--status STATUS] [--json]` | Search id, body, status, cwd, source, tags, resource, agent, group, and error text. |
+| `afk take [--dry-run] [--limit N] [--lease DURATION] [--worker ID] [--json]` | Preview or atomically claim the first ready task. |
+| `afk set <id> <status> [note...]` | Move a task to `todo`, `doing`, `done`, `failed`, or `deleted`. |
+| `afk prompt [--task ID] [--discover] [--output PATH]` | Emit LLM-agent instruction prompts. |
+| `afk serve [--addr HOST:PORT]` | Start the local web UI and API. |
 
-## scheduling
+## replacement map
 
-| Command | Behavior |
+| Old behavior | New command |
 |---|---|
-| `afk ready [--limit N]` | List pending tasks ready to run. `--limit 1` prints just the first ready task. Add `--json`. |
-| `afk why <id>` | Explain a task's readiness gate state. Add `--json`. |
-| `afk deps add <id> --blocked-by <other-id>` | Add a dependency. |
-| `afk deps rm <id> --blocked-by <other-id>` | Remove a dependency. |
-| `afk deps ls <id>` | List dependencies. Add `--json`. |
-| `afk block <id> <reason>` | Manually block a pending task. |
-| `afk unblock <id>` | Remove a manual block. |
-| `afk promote <id>` | Promote a pending task ahead of peers with the same effective priority. |
+| `afk ls` | `afk tasks` |
+| `afk explain <id>` / `afk show <id>` | `afk task <id>` |
+| `afk pop` | `afk take` |
+| `afk ready` / `afk run --dry-run` | `afk take --dry-run` |
+| `afk done <id>` | `afk set <id> done` |
+| `afk fail <id> <reason>` | `afk set <id> failed <reason>` |
+| `afk prune` / `afk rm` | `afk set <id> deleted` |
+| `afk run` | External loop: `afk take`, execute the task, then `afk set`. |
 
-See [scheduling.md](scheduling.md).
+## statuses
 
-## worker actions
-
-| Command | Behavior |
-|---|---|
-| `afk pop` | Claim the first ready task and print it as JSON. Flags: `--lease DURATION`, `--worker ID`. |
-| `afk run --exec TEMPLATE` | Claim ready tasks and run a shell command per claim. See [runner.md](runner.md). |
-| `afk heartbeat <id> --worker ID` | Extend a worker-owned lease. Flag: `--lease DURATION`. |
-| `afk done <id>` | Mark a task done. |
-| `afk fail <id> <reason>` | Mark a task failed with a reason. |
-| `afk retry <id>` | Reset a failed task to pending while preserving attempt history. |
-| `afk reset <id>` | Return a task to pending and clear started, finished, lease, error. |
-| `afk requeue-stale` | Reset stale working tasks to pending. Flag: `--older-than DURATION`. |
-
-See [workers.md](workers.md).
-
-## inspection
-
-| Command | Behavior |
-|---|---|
-| `afk explain <id>` | Show task metadata, events, and attempts. Add `--json`. |
-| `afk doctor` | Check queue health, queue path, and binary install. |
-
-## prompts
-
-| Command | Behavior |
-|---|---|
-| `afk prompt` | Emit the loop instructions for Claude Code as Markdown. |
-| `afk prompt --task <id>` | Emit a focused prompt for one queued task. |
-| `afk prompt --discover` | Emit task-discovery workflow Markdown. |
-| `afk prompt --output PATH` | Write the prompt to a file instead of stdout. |
-
-## global flags
-
-| Flag | Behavior |
-|---|---|
-| `--queue PATH` | Override the queue database path for this invocation. |
-| `--version` (`-v`) | Print the binary version. |
-| `--help` (`-h`) | Print help for the command. |
-
-## metadata flags (`afk add`)
-
-| Flag | Behavior |
-|---|---|
-| `--tag VALUE` | Repeatable tag. Supplying any tag disables the inferred repo tag. |
-| `--priority VALUE` | Scheduler priority: `urgent`, `high`, `normal`, or `low`. Unknown values are rejected. |
-| `--cwd PATH` | Working-directory context. Defaults to the current directory. |
-| `--no-cwd` | Do not record a working directory or infer repo context. |
-| `--source VALUE` | Origin. Defaults to `cli`; examples: `roadmap.md`, `todo-scan`. |
-| `--agent VALUE` | Preferred worker profile metadata. |
-| `--group VALUE` | Grouping key for related tasks. |
-| `--resource VALUE` | Resource key for lock arbitration. Defaults to `repo:<git-root>` inside a git repo; use `none` to disable. |
-| `--blocked-by ID\|none` | Task dependency. |
-| `--after ID` | Alias for `--blocked-by`. |
-| `--dry-run` | Validate without mutating the queue. |
-
-See [tasks.md](tasks.md).
-
-## import JSON
-
-`afk import` accepts:
-
-```json
-{"tasks":[
-  {
-    "slug":"phase-1-example",
-    "body":"Evidence: ... Scope: ... Success: ... Verify: ... Reject-if: ...",
-    "cwd":"/abs/repo",
-    "source":"bulk-afk-planner",
-    "tags":["spec:example","phase:1"],
-    "resource_key":"repo:/abs/repo",
-    "blocked_by":["phase-0-prereq"]
-  }
-]}
-```
-
-Use `blocked_by` with task slugs inside the same document. `import --dry-run`
-checks generated-task validation, duplicate `spec:` tags, dependency resolution,
-and dependency cycles without mutating the queue.
+Canonical statuses are `todo`, `doing`, `done`, `failed`, and `deleted`.
+Old stored values `pending` and `working` are migrated to `todo` and `doing`.

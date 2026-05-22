@@ -24,15 +24,17 @@ Mine concrete AFK-ready candidate tasks from the material the user wants reviewe
   data folder: inspect schemas, samples, checksums, import/export scripts, stale generated outputs, and validation commands
   mixed workspace: split candidates by subdirectory or artifact group and keep each task scoped to one purpose
 
-  Minimum Level 2 evidence for each repo/web target:
-  - inspect local guidance plus manifest files
-  - gather target-selection signals before choosing files: recent churn, complex or large files, test coverage, imports/callers, and current marker or command pain
-  - inspect at least one command, route, feature map, or package script surface
-  - inspect at least three core source files tied to primary behavior, unless fewer exist
-  - inspect at least one contract surface such as README command docs, tests, fixtures, schemas, config examples, screenshots, or sample data
-  - run the narrowest declared deterministic check from the manifest or docs, such as npm run check, bun run check, go test ./..., php artisan test, pytest, or a documented parser/import validation
+  Level 2 evidence is an escalation ladder, not a fixed checklist. Climb only as far as selecting and proving a candidate requires:
+  - cheap signals first: git status --porcelain=v2, manifest and local-guidance files, and the todo/doing queue
+  - then target-selection signals: recent churn, complex or large files, test coverage, imports/callers, and current marker or command pain
+  - then inspect 1-2 relevant source surfaces: a command, route, feature map, or package script, plus the core source files tied to the primary behavior
+  - then inspect at least one contract surface such as README command docs, tests, fixtures, schemas, config examples, screenshots, or sample data
+  - run the narrowest declared deterministic check tied to the candidate: a package-scoped test (go test ./internal/<pkg>/...), a scoped npm/bun script, a documented parser/import validation, or the nearest scoped command. A repo-wide check such as go test ./... is a broad failure-locator for batch mining (see the monolith pass) — after it surfaces a cluster, scope the resulting task to one package or subsystem, not the whole run.
+  - reach for broad probes (git diff, rg TODO|FIXME, git log, repo-wide test suites) only when needed to select a target or prove a lead
   - record an explicit skip reason only when the check has a concrete blocker such as missing dependency, credentials, network, cost, sandbox restriction, or no matching command
   - record rejected leads with reasons, including why TODO/backlog hits were not promoted
+
+  Treat this as an evidence budget proportional to the target's surface area, not a mandatory fixed run against every target: a small single-purpose target needs only the cheap rungs plus one source surface and one scoped check; a large or mixed target climbs further.
 
   No Shallow Batch Passes:
   For batch discovery, coverage is not completion. Do not treat "every directory has an artifact" or "the batch audit script has no structural errors" as proof that discovery was done.
@@ -48,6 +50,18 @@ Mine concrete AFK-ready candidate tasks from the material the user wants reviewe
   5. only write "no strong candidate" after recording the command run, result, inspected files, and rejected leads
 
   Do not mass-produce same-shaped "no candidate" artifacts. Repeated generic no-candidate conclusions across many directories are a failure signal, not a successful batch.
+
+  Monolith / frankenstein repo pass:
+  This pass engages for broad repo mining, many unrelated command surfaces, "find all" or "mine this repo" requests, batch discovery, or when no strong candidate appears on the fast path. It is not the default for ordinary single-path discovery.
+  If a repo has many unrelated command surfaces, mixed runtimes, a very large internal/ tree, many docs/audit/workspace notes, generated or archived code, or several independent failing packages, do not stop at the first failing command. First build a subsystem map and choose review slices from current evidence.
+
+  Before selecting candidates in a monolith, record:
+  - rough topology: command count, largest packages/directories, web/API/server surfaces, scheduler/background jobs, data/storage boundaries, and generated/archive areas to ignore
+  - declared contracts: local guidance, README command promises, just/make/package scripts, docs/audit checklists, config examples, migrations, schemas, and test suites
+  - entropy signals: stale compatibility layers, legacy/current dual paths, hidden env toggles, fallback paths that contradict local rules, context.Background in live execution code, unbounded IO, global state, and duplicated setup/wiring
+  - failure clustering: run the broad declared check when acceptable, then group failures by subsystem instead of emitting one "make tests pass" task
+
+  A monolith candidate should target one subsystem boundary or one failing contract, not the whole repo. Prefer slices such as "chat bootstrap panics on missing prompt config", "TLDR composer tests expect old prompt sections", "docs archive tests reference renamed files", or "provider factory error contract drift". Reject broad "clean up the monolith", "simplify architecture", and "make go test ./... green" tasks unless they are split into independent, verified subsystem tasks.
 
   For repo/web directories, a candidate may come directly from a current failing declared check when:
   - the failing command is declared by the project
@@ -69,10 +83,13 @@ Mine concrete AFK-ready candidate tasks from the material the user wants reviewe
 
 3. Check the queue for duplicates before suggesting candidates.
 
-  afk count
-  afk ready
-  afk ls --status failed --json
-  afk ls --status working --json
+  Duplicate-check against todo and doing tasks early — before broad evidence collection — so effort is not spent re-discovering an already-queued task.
+
+  afk status
+  afk take --dry-run --limit 0 --json
+  afk tasks --status todo --json
+  afk tasks --status doing --json
+  afk tasks --status failed --json
 
 4. Convert evidence into queueable mini-specs.
 
@@ -84,7 +101,7 @@ Mine concrete AFK-ready candidate tasks from the material the user wants reviewe
   - Evidence:, Scope:, Success:, Verify with, and Reject-if:
   - exact verification command or deterministic local check
   - clear value, low churn risk, and no broad cleanup/refactor wording
-  - no duplicate pending or working task for the same behavior
+  - no duplicate todo or doing task for the same behavior
 
 5. Rank by impact and reject before enqueueing.
 
@@ -93,7 +110,7 @@ Mine concrete AFK-ready candidate tasks from the material the user wants reviewe
   Churn changes are style-only, cosmetic polish, generic cleanup, speculative abstraction, pure test/docs padding, or "nice to have" work without current proof.
   Reject churn even when it is easy.
 
-  Rank 3-7 strong candidates using this priority order:
+  Rank the strong candidates you actually found using this priority order. For an ordinary single target this is typically 1-3; the 3-7 range applies only to broad or batch mining. Never pad to hit a number.
   1. core behavior or correctness: real bugs, broken workflows, bad state handling, auth/session/cache/data issues, race or stale-state hazards
   2. high-impact product or operator value: missing workflow pieces, broken UX paths, deployment/runtime blockers, local-dev blockers, config/env traps
   3. safety or hardening: unsafe IO, unbounded reads, auth validation gaps, bad error handling, data loss risks
@@ -102,22 +119,32 @@ Mine concrete AFK-ready candidate tasks from the material the user wants reviewe
   6. tests/docs only as enablers for higher-impact work or broken command/docs-source contradictions
   7. pure test gaps or docs polish last; do not present them as primary discoveries when stronger codebase tasks exist
   Show rejected stale, broad, duplicate, risky, unverified, or churn leads.
-  Use blocked_by when candidates must run in order.
+  When candidates must run in order, enqueue the prerequisite first and pass its created id with --blocked-by to the dependent afk add command.
 
   If every lead is low-impact or uncorroborated, say "no strong candidate" and explain what was inspected. Do not pad the output with easy TODO cleanup, docs polish, dependency drift, or generic tests.
+
+  Early-stop: once you have 1-3 strong, non-duplicate candidates that meet every section-4 acceptance criterion (current evidence, atomic scope, exact verification command, value not churn), stop probing — unless the user explicitly asked for broad mining, batch coverage, or a full repo review. The early-stop bar is the section-4 acceptance criteria, not merely "the dry-run passed" — dry-run only proves task-body shape. Do not keep probing to satisfy a breadth checklist after a strong candidate is proven. This does not relax the anti-shallow guardrails: a pass with no acceptance-criteria-meeting candidate is not finished.
+
   If a declared local gate fails, first ask whether a small fix can make the gate pass without product choices or broad refactoring. Broken declared checks are often better AFK candidates than TODO markers because they have exact verification.
   If a TODO or product promise points at a missing behavior but the destination/provider/architecture is absent, reject or mark provisional rather than forcing an ambiguous task. Prefer the narrower failing check when one exists.
 
 6. Validate task bodies with dry-run.
 
-Candidate bodies should start with [discovery:<kind>:<topic>] and include Evidence:, Scope:, Success:, Verify with, and Reject-if:.
+Candidate bodies should start with [discovery:<kind>:<topic>] and include Evidence:, Scope:, Success:, Verify with, and Reject-if:. Instantiate this template exactly:
+
+<task-body-template>
+[discovery:<kind>:<topic>] <one observable change>. Evidence: <file, command, URL, artifact, or record>. Scope: <exact package, directory, document, dataset, feature, or behavior>. Success: <observable done state>. Verify with <exact command or deterministic local check>. Reject-if: <condition that invalidates the task>. Constraints: keep changes scoped; do not refactor unrelated code.
+</task-body-template>
+
 Use a stable kind such as repo, docs, kb, web, media, data, or workspace. The kind is a free-form routing label; those values are conventions, not a closed validator list.
 Use concrete file, command, URL, artifact, or record references in Evidence:/Scope:.
 Use a resource key that matches the target kind, such as repo:<root>, docs:<root>, kb:<root>, web:<app>, media:<collection>, data:<dataset>, or workspace:<name>.
 
 Validate before enqueueing:
-  afk add --dry-run --source task-discovery --tag discovery --resource "<kind>:<target>" \
-    "[discovery:<kind>:<topic>] <one observable change>. Evidence: <file, command, URL, artifact, or record>. Scope: <exact package, directory, document, dataset, feature, or behavior>. Success: <observable done state>. Verify with <exact command or deterministic local check>. Reject-if: <condition that invalidates the task>. Constraints: keep changes scoped; do not refactor unrelated code."
+<dry-run-command>
+afk add --dry-run --source task-discovery --tag discovery --resource "<kind>:<target>" \
+  "[discovery:<kind>:<topic>] <one observable change>. Evidence: <file, command, URL, artifact, or record>. Scope: <exact package, directory, document, dataset, feature, or behavior>. Success: <observable done state>. Verify with <exact command or deterministic local check>. Reject-if: <condition that invalidates the task>. Constraints: keep changes scoped; do not refactor unrelated code."
+</dry-run-command>
 
 Dry-run validation proves that a task body is admissible. It does not prove that discovery was deep, complete, or valuable.
 
@@ -143,4 +170,4 @@ When comparing a focused pass with an earlier breadth pass, preserve the earlier
 
 Ask exactly one question such as: add all, add 1 3, or no. Queue only the confirmed candidates that pass dry-run validation.
 
-Queue inspection commands such as afk count, afk ready, and afk ls may initialize the configured queue if it does not exist yet.
+Queue inspection commands such as afk status, afk take --dry-run --limit 0 --json, and afk tasks may initialize the configured queue if it does not exist yet.

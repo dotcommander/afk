@@ -149,23 +149,6 @@ func TestValidateAddOptionsRejectsChurnPhrasesForGeneratedTasks(t *testing.T) {
 	}
 }
 
-func TestValidateImportTaskUsesGeneratedCandidateRules(t *testing.T) {
-	t.Parallel()
-
-	err := task.ValidateImportTask(task.ImportTask{
-		Body:   "[discovery:repo:file] Evidence: /tmp/repo/file.go:1. Scope: /tmp/repo/file.go. Fix /tmp/repo/file.go. Success: focused issue is fixed. Verify with go test ./... Reject-if: evidence no longer matches",
-		Source: "task-discovery",
-	})
-	require.NoError(t, err)
-
-	err = task.ValidateImportTask(task.ImportTask{
-		Body:   "[discovery:repo:file] Evidence: file.go:1. Scope: file.go. Fix file.go. Success: focused issue is fixed. Verify with go test ./... Reject-if: evidence no longer matches",
-		Source: "task-discovery",
-	})
-	require.Error(t, err)
-	require.True(t, errors.Is(err, task.ErrInvalidTask), "got %v", err)
-}
-
 func TestValidateAddOptionsGeneratedCandidateTags(t *testing.T) {
 	t.Parallel()
 
@@ -396,4 +379,12 @@ func TestValidateAddOptionsAllShortCircuitsOnInvalidBody(t *testing.T) {
 
 	var joined interface{ Unwrap() []error }
 	require.False(t, errors.As(err, &joined))
+}
+
+func TestChurnPhraseErrorMatchesInvalidTask(t *testing.T) {
+	t.Parallel()
+
+	err := &task.ChurnPhraseError{Phrase: "clean up"}
+	require.True(t, errors.Is(err, task.ErrInvalidTask))
+	require.False(t, errors.Is(err, task.ErrInvalidPriority))
 }

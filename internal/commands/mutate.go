@@ -1,83 +1,25 @@
 package commands
 
 import (
+	"fmt"
 	"strings"
 
 	"github.com/spf13/cobra"
+
+	"github.com/dotcommander/afk/internal/task"
 )
 
-func newEditCmd(d *Deps) *cobra.Command {
+func newSetCmd(d *Deps) *cobra.Command {
 	return &cobra.Command{
-		Use:   "edit <id> <body...>",
-		Short: "Replace the body of a task",
+		Use:   "set <id> <status> [note...]",
+		Short: "Set task status",
 		Args:  cobra.MinimumNArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return d.Service.Edit(cmd.Context(), args[0], strings.Join(args[1:], " "))
-		},
-	}
-}
-
-func newDoneCmd(d *Deps) *cobra.Command {
-	return &cobra.Command{
-		Use:   "done <id> [note...]",
-		Short: "Mark a task as done",
-		Args:  cobra.MinimumNArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return d.Service.Done(cmd.Context(), args[0], strings.Join(args[1:], " "))
-		},
-	}
-}
-
-func newFailCmd(d *Deps) *cobra.Command {
-	return &cobra.Command{
-		Use:   "fail <id> <reason...>",
-		Short: "Mark a task as failed with a reason",
-		Args:  cobra.MinimumNArgs(2),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return d.Service.Fail(cmd.Context(), args[0], strings.Join(args[1:], " "))
-		},
-	}
-}
-
-func newResetCmd(d *Deps) *cobra.Command {
-	return &cobra.Command{
-		Use:   "reset <id>",
-		Short: "Return a task to pending",
-		Args:  cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return d.Service.Reset(cmd.Context(), args[0])
-		},
-	}
-}
-
-func newPromoteCmd(d *Deps) *cobra.Command {
-	return &cobra.Command{
-		Use:     "promote <id>",
-		Aliases: []string{"top"},
-		Short:   "Promote a pending task to the top of its priority group",
-		Args:    cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			if cmd.CalledAs() == "top" {
-				if err := warnDeprecated(d.Stderr, "afk top", "afk promote"); err != nil {
-					return err
-				}
+			status, ok := task.ParseStatus(args[1])
+			if !ok {
+				return fmt.Errorf("%w: %q", task.ErrInvalidStatus, args[1])
 			}
-			if err := d.Service.Promote(cmd.Context(), args[0]); err != nil {
-				return err
-			}
-			_, err := d.Stdout.Write([]byte(args[0] + "\n"))
-			return err
-		},
-	}
-}
-
-func newRmCmd(d *Deps) *cobra.Command {
-	return &cobra.Command{
-		Use:   "rm <id>",
-		Short: "Remove a task from the queue",
-		Args:  cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return d.Service.Remove(cmd.Context(), args[0])
+			return d.Service.SetStatus(cmd.Context(), args[0], status, strings.Join(args[2:], " "))
 		},
 	}
 }

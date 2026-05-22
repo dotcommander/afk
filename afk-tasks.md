@@ -8,7 +8,7 @@ Target: `/Users/vampire/go/src/afk`
 
 - Local guidance and manifests inspected: `CLAUDE.md`, `README.md`, `go.mod`, and `justfile`.
 - Recent churn and current worktree state show a broad uncommitted AFK edit set touching discovery guidance, command tests, queue operations, runner behavior, server actions, and SQLite storage.
-- Current queue already has one pending AFK repo task for `repo:/Users/vampire/go/src/afk` about extracting import-validation helpers.
+- Current queue already has one todo AFK repo task for `repo:/Users/vampire/go/src/afk` about extracting import-validation helpers.
 - An initial `go test ./...` run reported a discover-stub expectation mismatch, but a current rerun of `go test ./...` passes all packages, so that stale/transient output was not promoted.
 
 ## Primary Surfaces
@@ -35,11 +35,11 @@ Target: `/Users/vampire/go/src/afk`
 - `git log --name-only --pretty=format: -n 30 | sort | uniq -c | sort -rn | head -20`
 - `rg -n "TODO|FIXME|HACK|XXX|OPTIMIZE" --glob '!vendor/**' --glob '!node_modules/**'`
 - `go test ./...` initially failed in `internal/commands`; rerun passed all packages.
-- Queue duplicate probes from `/Users/vampire/go/src`: `afk count`, `afk ready`, `afk ls --status failed --json`, and `afk ls --status working --json`
+- Queue duplicate probes from `/Users/vampire/go/src`: `afk status`, `afk take --dry-run --json`, `afk tasks --status failed --json`, and `afk tasks --status doing --json`
 
 ## Rejected Leads
 
-- Import-validation helper extraction: rejected here as an accepted duplicate already pending in AFK queue id `1779394084` for `repo:/Users/vampire/go/src/afk`.
+- Import-validation helper extraction: rejected here as an accepted duplicate already todo in AFK queue id `1779394084` for `repo:/Users/vampire/go/src/afk`.
 - Initial discover-stub test mismatch: rejected because the current rerun of `go test ./...` passes all packages.
 - TODO/discovery marker text in docs and stub: rejected as standalone leads because no current failing command remains after rerun.
 

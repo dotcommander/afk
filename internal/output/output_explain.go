@@ -7,7 +7,7 @@ import (
 	"github.com/dotcommander/afk/internal/task"
 )
 
-// This file renders `afk explain` output — a task plus its durable lifecycle
+// This file renders `afk task` output — a task plus its durable lifecycle
 // history (events and attempts) — in both JSON and text form. Shared bounding
 // and limiting helpers live in output.go.
 
@@ -40,7 +40,7 @@ func writeExplainJSON(w io.Writer, t task.Task, events []task.Event, attempts []
 }
 
 func writeExplainText(w io.Writer, t task.Task, events []task.Event, attempts []task.Attempt, omittedEvents, omittedAttempts int) error {
-	if err := WriteShow(w, t, false); err != nil {
+	if err := writeTaskDetail(w, t); err != nil {
 		return err
 	}
 	if err := writeExplainEvents(w, events, omittedEvents); err != nil {

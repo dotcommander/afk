@@ -1,218 +1,42 @@
 # tasks
 
-```sh
-afk add --tag repo:afk --priority high "review scheduler indexes"
-afk show 1
-afk edit 1 "review scheduler indexes and dependency cycle handling"
-afk rm 1
-```
-
-## add a task
+Add a task:
 
 ```sh
 afk add "fix the failing queue test"
+afk add --dry-run --json "validate this task shape"
 ```
 
-`afk add` appends a new task, sets its status to `pending`, and prints the new task id. The body may span multiple words; quote it to prevent shell splitting.
-
-For normal repo work, the plain command carries the useful metadata by default:
-
-- `cwd` is the current directory.
-- `source` is `cli`.
-- inside a git repository, `resource` is `repo:<git-root>` so workers do not concurrently claim work against the same repo.
-- inside a git repository, a `repo:<directory-name>` tag is added when no tags are supplied.
-
-### capture a task for later
-
-Use `afk add` when you are busy but have a concrete task in mind:
+Useful metadata:
 
 ```sh
-cd /Users/you/code/my-project
-afk add "Fix the settings save bug. Success: settings persist after refresh. Verify with go test ./..."
+afk add --tag repo:afk --priority high --source roadmap.md "review scheduler indexes"
+afk add --cwd /path/to/repo --resource repo:/path/to/repo "run the local smoke test"
+afk add --blocked-by 123 "update docs after task 123 lands"
 ```
 
-The command prints the task id and leaves the task in `pending`:
-
-```text
-42
-```
-
-Because the command ran from the project root, a later worker can recover the
-working directory and the inferred repo resource lock from the task metadata.
-Check the captured task:
+List and search:
 
 ```sh
-afk show 42
-afk ready --limit 1
+afk tasks
+afk tasks --status todo --json
+afk tasks --status deleted
+afk find scheduler --json
 ```
 
-If you are adding the task from another directory, use `--cwd` so the worker
-still starts from the right project:
+Inspect one task:
 
 ```sh
-afk add --cwd /Users/you/code/my-project \
-  "Fix the settings save bug. Success: settings persist after refresh. Verify with go test ./..."
+afk task 123
+afk task 123 --json
 ```
 
-For urgent work, add priority at capture time:
+Set status:
 
 ```sh
-afk add --cwd /Users/you/code/my-project --priority high \
-  "Fix the production config regression. Success: config loads locally. Verify with go test ./..."
+afk set 123 done "implemented and tested"
+afk set 123 failed "missing credentials"
+afk set 123 deleted "superseded by a narrower task"
 ```
 
-Validate a generated task without mutating the queue:
-
-```sh
-afk add --dry-run --source task-discovery --tag discovery --cwd /path/to/repo \
-  "[discovery:repo:topic] Evidence: /path/to/repo/file.go:1. Scope: /path/to/repo/file.go. Fix one focused issue. Success: focused issue is fixed. Verify with go test ./... Reject-if: evidence no longer matches"
-```
-
-`--dry-run` applies the same validation as `afk add` but does not create a task.
-Use it before enqueueing generated discovery candidates.
-
-## import a generated batch
-
-Use `afk import` for planned or generated batches, especially when tasks have
-dependencies, phases, or shared resources. Validate first:
-
-```sh
-afk import --dry-run < /abs/repo/.work/afk-specs/my-spec/afk-import.json
-afk import < /abs/repo/.work/afk-specs/my-spec/afk-import.json
-```
-
-The JSON document contains a `tasks` array. Each task may include:
-
-```json
-{
-  "slug": "phase-1-example",
-  "body": "Implement one focused change.\n\nEvidence:\n- /abs/repo/file.go proves the issue.\n\nScope:\n- /abs/repo/file.go\n\nSuccess:\n- The focused change is implemented.\n\nVerify:\n- cd /abs/repo && go test ./...\n\nReject-if:\n- /abs/repo/file.go no longer owns this behavior.",
-  "cwd": "/abs/repo",
-  "source": "bulk-afk-planner",
-  "tags": ["spec:my-spec", "phase:1"],
-  "resource_key": "repo:/abs/repo",
-  "blocked_by": ["phase-0-prereq"]
-}
-```
-
-`blocked_by` references slugs in the same import document. On real import AFK
-resolves those slugs to created task ids. `import --dry-run` performs the same
-validation and dependency resolution but leaves the queue unchanged.
-
-Attach metadata at creation time:
-
-```sh
-afk add \
-  --tag repo:afk \
-  --priority high \
-  --source roadmap.md \
-  --cwd /Users/you/code/afk \
-  --agent claude \
-  --group release-1 \
-  "review scheduler indexes"
-```
-
-## metadata flags
-
-| Flag | Behavior |
-|---|---|
-| `--tag VALUE` | Repeatable tag. Use for namespaced labels like `repo:afk`. Supplying any tag disables the inferred repo tag. |
-| `--priority VALUE` | Scheduler priority. Recognized values are `urgent`, `high`, `normal`, and `low`; unknown values are rejected. |
-| `--source VALUE` | Origin of the task — defaults to `cli`; examples: `roadmap.md`, `todo-scan`, `go-test`. |
-| `--cwd PATH` | Working-directory context. Defaults to your current directory. |
-| `--no-cwd` | Skip the cwd record for a context-free task. |
-| `--agent VALUE` | Preferred worker profile metadata. |
-| `--group VALUE` | Grouping key for related tasks. |
-| `--resource VALUE` | Resource lock target. Defaults to `repo:<git-root>` inside a git repo; use `--resource none` to disable. |
-| `--blocked-by ID\|none` | Task dependency (see [scheduling.md](scheduling.md)). |
-| `--after ID` | Alias for `--blocked-by`. |
-| `--dry-run` | Validate the task body and metadata without adding a task. |
-
-Explicit metadata flags override inferred defaults. Pass `--no-cwd` when the task should not carry working-directory or repo-derived context.
-
-Priority applies only among tasks that are already ready. It does not bypass
-dependencies, manual blocks, resource locks, or non-pending status. `afk ls`
-keeps insertion order for history/inspection; scheduler commands such as
-`ready`, `pop`, and `run --dry-run` use priority order.
-
-Promote an existing pending task ahead of peers with the same effective
-priority:
-
-```sh
-afk promote 42
-```
-
-`afk promote` does not change the task's priority metadata. Use it when one pending
-task should be handled before other tasks with the same priority rank.
-
-## inspect tasks
-
-```sh
-afk ls
-afk ls --status pending
-afk ls --status working --json
-afk show 1
-afk show 1 --json
-```
-
-`afk ls` lists every task. Filter by status with `--status pending|working|done|failed`. Append `--json` for machine-readable output.
-
-`afk show` returns one task with its metadata, dependencies, and current scheduler state.
-
-For full history including events and per-attempt records:
-
-```sh
-afk explain 1
-afk explain 1 --json
-```
-
-`afk explain` is the durable ledger. It is the right command when a task failed and you want to know why.
-
-## tally the queue
-
-```sh
-afk count
-```
-
-Output:
-
-```
-pending: 3
-working: 1
-done: 12
-failed: 0
-```
-
-## edit a task
-
-```sh
-afk edit 1 "review scheduler indexes and dependency cycle handling"
-```
-
-`afk edit` replaces the task body. It does not change metadata or status.
-
-## remove tasks
-
-Remove one task:
-
-```sh
-afk rm 1
-```
-
-Prune terminal tasks in bulk:
-
-```sh
-afk prune                       # default: removes done and failed
-afk prune --status done
-afk prune --status done,failed
-```
-
-`afk prune` only touches `done` and `failed` tasks unless you pass an explicit `--status` list.
-
-## reset a task
-
-```sh
-afk reset 1
-```
-
-`reset` returns the task to `pending` and clears the `started`, `finished`, `lease`, and `error` fields. Use it when a task should run fresh without preserving the prior attempt. To return a failed task to `pending` while keeping attempt history, use `afk retry` instead.
+Deleted tasks are hidden from default listings but remain available through `afk tasks --status deleted` and `afk task <id>`.

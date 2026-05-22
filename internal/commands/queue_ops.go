@@ -2,7 +2,6 @@ package commands
 
 import (
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -11,55 +10,32 @@ import (
 	"github.com/dotcommander/afk/internal/task"
 )
 
-func newPruneCmd(d *Deps) *cobra.Command {
-	var statusCSV string
-	var tag string
-
-	cmd := &cobra.Command{
-		Use:   "prune",
-		Short: "Remove tasks by status",
-		RunE: func(cmd *cobra.Command, _ []string) error {
-			if tag != "" && cmd.Flags().Changed("status") {
-				return fmt.Errorf("prune: --tag and --status are mutually exclusive")
-			}
-			if tag != "" {
-				n, err := d.Service.PruneByTag(cmd.Context(), tag)
-				if err != nil {
-					return err
-				}
-				_, err = fmt.Fprintf(d.Stdout, "pruned %d tasks (tag=%s)\n", n, tag)
-				return err
-			}
-			statuses, err := parseStatusCSV(statusCSV)
-			if err != nil {
-				return err
-			}
-			n, err := d.Service.Prune(cmd.Context(), statuses)
-			if err != nil {
-				return err
-			}
-			_, err = fmt.Fprintf(d.Stdout, "pruned %d tasks (status=%s)\n", n, statusCSV)
-			return err
-		},
-	}
-	cmd.Flags().StringVar(&statusCSV, "status", "done,failed", "comma-separated statuses to prune")
-	cmd.Flags().StringVar(&tag, "tag", "", "delete all tasks with this tag")
-	return cmd
-}
-
-func newPopCmd(d *Deps) *cobra.Command {
+func newTakeCmd(d *Deps) *cobra.Command {
 	var lease string
 	var workerID string
+	var dryRun bool
+	var limit int
+	var asJSON bool
 
 	cmd := &cobra.Command{
-		Use:   "pop",
-		Short: "Claim the first pending task (sets status to working)",
+		Use:   "take",
+		Short: "Claim the first ready task",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			leaseDuration, err := parseOptionalDuration("lease", lease)
 			if err != nil {
 				return err
 			}
-			claimed, err := d.Service.PopWithLeaseForWorker(cmd.Context(), leaseDuration, workerID, "")
+			if dryRun {
+				ready, err := d.Service.Ready(cmd.Context())
+				if err != nil {
+					return err
+				}
+				if limit >= 0 && len(ready) > limit {
+					ready = ready[:limit]
+				}
+				return output.WriteList(d.Stdout, ready, asJSON)
+			}
+			claimed, err := d.Service.Take(cmd.Context(), leaseDuration, workerID, "")
 			if err != nil {
 				return err
 			}
@@ -77,18 +53,10 @@ func newPopCmd(d *Deps) *cobra.Command {
 	}
 	cmd.Flags().StringVar(&lease, "lease", "", "lease duration for the claim (for example 30m)")
 	cmd.Flags().StringVar(&workerID, "worker", "", "worker id for the claim")
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "preview ready tasks without claiming")
+	cmd.Flags().IntVar(&limit, "limit", 20, "maximum ready tasks to print with --dry-run")
+	cmd.Flags().BoolVar(&asJSON, "json", true, "emit JSONL output")
 	return cmd
-}
-
-func newRetryCmd(d *Deps) *cobra.Command {
-	return &cobra.Command{
-		Use:   "retry <id>",
-		Short: "Reset a failed task to pending",
-		Args:  cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return d.Service.Retry(cmd.Context(), args[0])
-		},
-	}
 }
 
 func newRequeueStaleCmd(d *Deps) *cobra.Command {
@@ -96,10 +64,10 @@ func newRequeueStaleCmd(d *Deps) *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:    "requeue-stale",
-		Short:  "Reset stale working tasks to pending",
+		Short:  "Reset stale doing tasks to todo",
 		Hidden: true,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			if err := warnDeprecated(d.Stderr, "afk requeue-stale", "afk explain <id> followed by afk reset <id>"); err != nil {
+			if err := warnDeprecated(d.Stderr, "afk requeue-stale", "afk task <id>, afk set <id> failed <reason>, then afk add <replacement task>"); err != nil {
 				return err
 			}
 			dur, err := time.ParseDuration(olderThan)
@@ -118,23 +86,8 @@ func newRequeueStaleCmd(d *Deps) *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&olderThan, "older-than", "1h", "requeue working tasks older than this duration when no lease is set")
+	cmd.Flags().StringVar(&olderThan, "older-than", "1h", "requeue doing tasks older than this duration when no lease is set")
 	return cmd
-}
-
-func parseStatusCSV(value string) ([]task.Status, error) {
-	var statuses []task.Status
-	for _, status := range strings.Split(value, ",") {
-		status = strings.TrimSpace(status)
-		if status != "" {
-			parsed := task.Status(status)
-			if !task.ValidStatus(parsed) {
-				return nil, fmt.Errorf("%w: %q", task.ErrInvalidStatus, status)
-			}
-			statuses = append(statuses, parsed)
-		}
-	}
-	return statuses, nil
 }
 
 func parseOptionalDuration(name, value string) (time.Duration, error) {
@@ -158,7 +111,7 @@ func newHeartbeatCmd(d *Deps) *cobra.Command {
 		Hidden: true,
 		Args:   cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if err := warnDeprecated(d.Stderr, "afk heartbeat", "afk pop --lease <duration> with a long enough lease"); err != nil {
+			if err := warnDeprecated(d.Stderr, "afk heartbeat", "afk take --lease <duration> with a long enough lease"); err != nil {
 				return err
 			}
 			leaseDuration, err := parseOptionalDuration("lease", lease)

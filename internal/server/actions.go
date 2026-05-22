@@ -1,13 +1,14 @@
 package server
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"path/filepath"
+	"strconv"
+	"time"
 
 	"github.com/dotcommander/afk/internal/app"
 	"github.com/dotcommander/afk/internal/task"
@@ -20,10 +21,8 @@ type actionInput struct {
 	Error    string   `json:"error"`
 	Reason   string   `json:"reason"`
 	Statuses []string `json:"statuses"`
+	Status   string   `json:"status"`
 }
-
-// defaultPruneStatuses matches the afk prune CLI default (--status "done,failed").
-var defaultPruneStatuses = []task.Status{task.StatusDone, task.StatusFailed}
 
 // decodeInput reads and decodes an optional JSON body.
 // EOF (empty body) produces the zero actionInput without error.
@@ -36,50 +35,10 @@ func decodeInput(r *http.Request) (actionInput, error) {
 	return in, nil
 }
 
-// actionFn is the type stored in the dispatch table.
-type actionFn func(ctx context.Context, id string, in actionInput) error
-
-// handleAction serves POST /api/tasks/{id}/{action}.
-// It looks up the action in a data-driven dispatch table, calls the matching
-// service mutator, then re-fetches and returns the updated task as JSON.
-func (s *Server) handleAction(w http.ResponseWriter, r *http.Request) {
+// handleSetTask serves PATCH /api/tasks/{id} with {"status":"done","note":"..."}.
+func (s *Server) handleSetTask(w http.ResponseWriter, r *http.Request) {
 	id, ok := resolveID(w, r)
 	if !ok {
-		return
-	}
-	action := r.PathValue("action")
-
-	// Dispatch table: action name → service mutator call.
-	// Asymmetries (which field each action reads from actionInput) are explicit
-	// here as data rather than scattered across per-action handlers.
-	dispatch := map[string]actionFn{
-		"done": func(ctx context.Context, id string, in actionInput) error {
-			return s.svc.Done(ctx, id, in.Note)
-		},
-		"fail": func(ctx context.Context, id string, in actionInput) error {
-			msg := in.Error
-			if msg == "" {
-				msg = in.Reason
-			}
-			return s.svc.Fail(ctx, id, msg)
-		},
-		"retry": func(ctx context.Context, id string, _ actionInput) error {
-			return s.svc.Retry(ctx, id)
-		},
-		"reset": func(ctx context.Context, id string, _ actionInput) error {
-			return s.svc.Reset(ctx, id)
-		},
-		"unblock": func(ctx context.Context, id string, _ actionInput) error {
-			return s.svc.Unblock(ctx, id)
-		},
-		"promote": func(ctx context.Context, id string, _ actionInput) error {
-			return s.svc.Promote(ctx, id)
-		},
-	}
-
-	fn, known := dispatch[action]
-	if !known {
-		writeErr(w, http.StatusBadRequest, fmt.Errorf("unknown action %q; valid: done, fail, retry, reset, unblock, promote", action))
 		return
 	}
 
@@ -88,8 +47,20 @@ func (s *Server) handleAction(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, err)
 		return
 	}
+	status, ok := task.ParseStatus(in.Status)
+	if !ok {
+		writeErr(w, http.StatusBadRequest, fmt.Errorf("%w: %q", task.ErrInvalidStatus, in.Status))
+		return
+	}
+	message := in.Note
+	if message == "" {
+		message = in.Error
+	}
+	if message == "" {
+		message = in.Reason
+	}
 
-	if err := fn(r.Context(), id, in); err != nil {
+	if err := s.svc.SetStatus(r.Context(), id, status, message); err != nil {
 		writeResult(w, nil, err)
 		return
 	}
@@ -104,7 +75,7 @@ type createInput struct {
 	CWD  string `json:"cwd"`
 }
 
-// handleCreate serves POST /api/tasks — enqueues a new pending task via the
+// handleCreate serves POST /api/tasks — enqueues a new todo task via the
 // same validated path as `afk add`. Invalid task content → 400.
 func (s *Server) handleCreate(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(nil, r.Body, 64*1024)
@@ -150,30 +121,41 @@ func defaultTags(defaults app.AddDefaults) []string {
 
 // handlePrune serves POST /api/prune.
 // Accepts an optional JSON body with "statuses"; defaults to done+failed.
-func (s *Server) handlePrune(w http.ResponseWriter, r *http.Request) {
-	in, err := decodeInput(r)
+// handleTake serves POST /api/take. Pass ?dry_run=true to preview ready tasks.
+func (s *Server) handleTake(w http.ResponseWriter, r *http.Request) {
+	dryRun, err := strconv.ParseBool(defaultString(r.URL.Query().Get("dry_run"), "false"))
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, fmt.Errorf("parse dry_run: %w", err))
+		return
+	}
+	if dryRun {
+		tasks, err := s.svc.Ready(r.Context())
+		writeResult(w, tasks, err)
+		return
+	}
+	lease, err := parseLease(r.URL.Query().Get("lease"))
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, err)
 		return
 	}
+	task, err := s.svc.Take(r.Context(), lease, r.URL.Query().Get("worker"), "")
+	writeResult(w, task, err)
+}
 
-	statuses := defaultPruneStatuses
-	if len(in.Statuses) > 0 {
-		statuses = make([]task.Status, len(in.Statuses))
-		for i, s := range in.Statuses {
-			status := task.Status(s)
-			if !task.ValidStatus(status) {
-				writeErr(w, http.StatusBadRequest, fmt.Errorf("%w: %q", task.ErrInvalidStatus, s))
-				return
-			}
-			statuses[i] = status
-		}
+func parseLease(raw string) (time.Duration, error) {
+	if raw == "" {
+		return 0, nil
 	}
-
-	n, err := s.svc.Prune(r.Context(), statuses)
+	lease, err := time.ParseDuration(raw)
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, err)
-		return
+		return 0, fmt.Errorf("parse lease: %w", err)
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "pruned": n})
+	return lease, nil
+}
+
+func defaultString(value, fallback string) string {
+	if value == "" {
+		return fallback
+	}
+	return value
 }

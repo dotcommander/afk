@@ -2,8 +2,8 @@
 
 ```sh
 afk prompt --discover
-afk ready
-afk explain <id>
+afk take --dry-run --limit 0 --json
+afk task <id>
 rg -n "TODO|FIXME|HACK|XXX|OPTIMIZE" .
 ```
 
@@ -95,8 +95,7 @@ an idea.
 3. Check the queue for duplicates.
 4. Convert evidence into queueable mini-specs.
 5. Rank strong candidates by impact and reject weak leads.
-6. Validate one-off task bodies with `afk add --dry-run`, or generated batches
-   with `afk import --dry-run`.
+6. Validate generated task bodies with `afk add --dry-run`.
 7. Ask one enqueue confirmation.
 
 Choose and report review depth before candidate generation:
@@ -156,13 +155,13 @@ git status --porcelain=v2
 git diff --stat HEAD
 rg -n "TODO|FIXME|HACK|XXX|OPTIMIZE" --glob '!vendor/**' --glob '!node_modules/**'
 afk status
-afk ready
-afk ls --status failed --json
-afk ls --status working --json
+afk take --dry-run --limit 0 --json
+afk tasks --status failed --json
+afk tasks --status doing --json
 ```
 
 Run queue checks before suggesting candidates so discovery does not duplicate
-pending or working tasks. Queue inspection may initialize the configured queue;
+todo or doing tasks. Queue inspection may initialize the configured queue;
 `afk prompt --discover` itself does not.
 
 For Level 2 repo or web discovery, gather this minimum evidence before accepting
@@ -212,8 +211,8 @@ Useful task sources by target kind:
   command, duplicate rows, broken import scripts, or checksum/index drift.
 - `workspace`: mixed folders where each candidate can be scoped to one
   subdirectory and one purpose.
-- Queue history: failed AFK tasks whose `afk explain <id>` shows an actionable
-  cause; long-pending or manually blocked tasks with clear dependency state.
+- Queue history: failed AFK tasks whose `afk task <id>` shows an actionable
+  cause; long-todo or manually blocked tasks with clear dependency state.
 - Work notes under `.work/`, specs, and architecture docs that already name
   concrete files or checks.
 
@@ -301,8 +300,8 @@ exists.
 
 Before suggesting or enqueueing a task:
 
-1. Search pending and working tasks for the same file, behavior, or stable tag.
-2. Search recent failed tasks with `afk explain <id>` if the candidate resembles
+1. Search todo and doing tasks for the same file, behavior, or stable tag.
+2. Search recent failed tasks with `afk task <id>` if the candidate resembles
    a retry.
 3. Drop duplicate work unless the new task has a narrower scope and clearer
    verification.
@@ -353,8 +352,8 @@ Use `--blocked-by` when discovery finds an ordered chain. Use the same
 `--resource <kind>:/abs/path` for tasks that would edit the same local path so
 parallel workers do not collide.
 
-When discovery produces a phased or dependent batch, prefer an import document
-instead of looping `afk add`:
+When discovery produces a phased or dependent batch, keep a batch document for
+review, then add tasks through `afk add` in dependency order:
 
 ```json
 {"tasks":[
@@ -369,12 +368,12 @@ instead of looping `afk add`:
 ]}
 ```
 
-Validate with `afk import --dry-run < afk-import.json`. Generated import tasks
-with `spec:` tags must include `Evidence:`, `Scope:`, `Success:`, `Verify:`,
-and `Reject-if:` sections, and must carry an absolute `cwd` or absolute paths in
-the body.
+Validate each task with `afk add --dry-run` before enqueueing it. Generated
+discovery tasks must include `Evidence:`, `Scope:`, `Success:`, `Verify:`, and
+`Reject-if:` sections, and must carry an absolute `cwd` or absolute paths in the
+body.
 
-Dry-run validation proves that a task body or import document is admissible. It
+Dry-run validation proves that a task body is admissible. It
 does not prove that discovery was deep, complete, or valuable. Likewise, a batch
 artifact audit can prove artifact shape without proving that the underlying
 directory was carefully evaluated.
@@ -389,7 +388,7 @@ Verification examples:
   generated index before and after.
 - `media`: run a filename, sidecar, duplicate, subtitle, playlist, or catalog
   validation command.
-- `data`: run schema validation, row counts, checksum checks, import dry-runs,
+- `data`: run schema validation, row counts, checksum checks, parser/importer dry-runs,
   or generated-output diffs.
 
 ## output format
@@ -440,7 +439,6 @@ artifact as the baseline and report what changed:
   worktree
 
 After confirmation, run `afk prompt` first, capture pre/post `afk status`,
-validate selected one-off bodies with `afk add --dry-run` or selected batches
-with `afk import --dry-run`, add/import only the approved high-confidence tasks
-that validate, and report the created ids. If the user declines, leave the queue
-unchanged.
+validate selected bodies with `afk add --dry-run`, add only the approved
+high-confidence tasks that validate, and report the created ids. If the user
+declines, leave the queue unchanged.

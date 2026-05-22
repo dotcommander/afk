@@ -26,7 +26,7 @@ func scanTask(row taskScanner) (task.Task, error) {
 	); err != nil {
 		return task.Task{}, fmt.Errorf("store: scan task: %w", err)
 	}
-	t.Status = task.Status(status)
+	t.Status = task.NormalizeStatus(task.Status(status))
 	t.Tags = decodeTags(tags)
 	return t, nil
 }
@@ -76,14 +76,6 @@ func nextOrdinal(ctx context.Context, tx *sql.Tx) (int, error) {
 	var ordinal int
 	if err := tx.QueryRowContext(ctx, `SELECT COALESCE(MAX(ordinal), 0) + 1 FROM tasks`).Scan(&ordinal); err != nil {
 		return 0, fmt.Errorf("store: next ordinal: %w", err)
-	}
-	return ordinal, nil
-}
-
-func minOrdinal(ctx context.Context, tx *sql.Tx) (int, error) {
-	var ordinal int
-	if err := tx.QueryRowContext(ctx, `SELECT COALESCE(MIN(ordinal), 1) FROM tasks`).Scan(&ordinal); err != nil {
-		return 0, fmt.Errorf("store: min ordinal: %w", err)
 	}
 	return ordinal, nil
 }
@@ -139,13 +131,6 @@ WHERE id = (
 	LIMIT 1
 )`, at, string(t.Status), message, t.ID); err != nil {
 			return fmt.Errorf("store: finish attempt %s: %w", t.ID, err)
-		}
-	case task.EventReset:
-		if _, err := tx.ExecContext(ctx, `
-UPDATE task_attempts
-SET finished = ?, status = ?, error = ?
-WHERE task_id = ? AND finished = ''`, at, string(task.StatusPending), "", t.ID); err != nil {
-			return fmt.Errorf("store: reset attempt %s: %w", t.ID, err)
 		}
 	}
 	return nil

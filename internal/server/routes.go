@@ -12,10 +12,8 @@ func (s *Server) handler() http.Handler {
 	mux.HandleFunc("GET /api/status", s.handleStatus)
 	mux.HandleFunc("GET /api/tasks", s.handleTasks)
 	mux.HandleFunc("GET /api/tasks/{id}", s.handleTask)
-	mux.HandleFunc("GET /api/tasks/{id}/why", s.handleWhy)
-	mux.HandleFunc("GET /api/ready", s.handleReady)
-	mux.HandleFunc("POST /api/tasks/{id}/{action}", s.handleAction)
-	mux.HandleFunc("POST /api/prune", s.handlePrune)
+	mux.HandleFunc("PATCH /api/tasks/{id}", s.handleSetTask)
+	mux.HandleFunc("POST /api/take", s.handleTake)
 	mux.HandleFunc("POST /api/tasks", s.handleCreate)
 	mux.HandleFunc("GET /api/paths", s.handlePaths)
 	return s.csrfGuard(mux)
@@ -23,7 +21,7 @@ func (s *Server) handler() http.Handler {
 
 func (s *Server) csrfGuard(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodPost && r.Header.Get(csrfHeader) != s.csrfToken {
+		if (r.Method == http.MethodPost || r.Method == http.MethodPatch) && r.Header.Get(csrfHeader) != s.csrfToken {
 			writeErr(w, http.StatusForbidden, errInvalidCSRF)
 			return
 		}
