@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.4.1 (2026-05-22)
+
+### Features
+
+- Add `afk retry <id> --reason ...` as focused sugar for reopening failed tasks into a fresh attempt.
+
+### Other
+
+- Include retry guidance in AFK prompts and add a troubleshooting FAQ for queue workers.
+
 ## v0.4.0 (2026-05-22)
 
 ### Features
