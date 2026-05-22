@@ -93,6 +93,32 @@ func TestTakeDryRunLimitZeroReturnsAllReadyTasks(t *testing.T) {
 	require.Contains(t, ready, secondID)
 }
 
+func TestTakeExplainsNoReadyTasksBlockedByResourceLock(t *testing.T) {
+	t.Parallel()
+
+	queuePath := filepath.Join(t.TempDir(), "tasks.sqlite")
+	stdout, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	d := testDepsWithWriters(stdout, stderr)
+
+	run := func(args ...string) error {
+		t.Helper()
+		stdout.Reset()
+		stderr.Reset()
+		root := NewRoot(d, "test")
+		root.SetArgs(append([]string{"--queue", queuePath}, args...))
+		return root.Execute()
+	}
+
+	require.NoError(t, run("add", "--no-cwd", "--resource", "repo:one", "first ready task"))
+	require.NoError(t, run("take", "--worker", "worker-1", "--lease", "30m"))
+	require.NoError(t, run("add", "--no-cwd", "--resource", "repo:one", "resource locked task"))
+
+	require.NoError(t, run("take"))
+	require.Empty(t, stdout.String())
+	require.Contains(t, stderr.String(), "No ready tasks")
+	require.Contains(t, stderr.String(), "1 todo task(s) blocked by active resource locks")
+}
+
 func TestStatusSummaryJSON(t *testing.T) {
 	t.Parallel()
 

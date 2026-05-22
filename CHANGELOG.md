@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.3.6 (2026-05-22)
+
+### Fixes
+
+- Explain why `afk take` returned no claim when todo tasks are blocked by active resource locks.
+
 ## v0.3.5 (2026-05-22)
 
 ### Fixes

@@ -40,7 +40,7 @@ func newTakeCmd(d *Deps) *cobra.Command {
 				return err
 			}
 			if claimed == nil {
-				return nil
+				return writeNoReadyExplanation(cmd, d)
 			}
 			if err := task.ValidateAddOptions(task.AddOptionsFromTask(*claimed)); err != nil {
 				if failErr := d.Service.Fail(cmd.Context(), claimed.ID, err.Error()); failErr != nil {
@@ -57,6 +57,42 @@ func newTakeCmd(d *Deps) *cobra.Command {
 	cmd.Flags().IntVar(&limit, "limit", 20, "maximum ready tasks to print with --dry-run")
 	cmd.Flags().BoolVar(&asJSON, "json", true, "emit JSONL output")
 	return cmd
+}
+
+func writeNoReadyExplanation(cmd *cobra.Command, d *Deps) error {
+	todo, err := d.Service.List(cmd.Context(), string(task.StatusPending))
+	if err != nil {
+		return err
+	}
+	if len(todo) == 0 {
+		_, err = fmt.Fprintln(d.Stderr, "No ready tasks: queue has no todo tasks.")
+		return err
+	}
+
+	doing, err := d.Service.List(cmd.Context(), string(task.StatusWorking))
+	if err != nil {
+		return err
+	}
+	activeResources := make(map[string]struct{}, len(doing))
+	for _, t := range doing {
+		if t.ResourceKey != "" {
+			activeResources[t.ResourceKey] = struct{}{}
+		}
+	}
+
+	resourceBlocked := 0
+	for _, t := range todo {
+		if _, ok := activeResources[t.ResourceKey]; t.ResourceKey != "" && ok {
+			resourceBlocked++
+		}
+	}
+
+	if resourceBlocked > 0 {
+		_, err = fmt.Fprintf(d.Stderr, "No ready tasks: %d todo task(s) blocked by active resource locks; %d todo task(s) total.\n", resourceBlocked, len(todo))
+		return err
+	}
+	_, err = fmt.Fprintf(d.Stderr, "No ready tasks: %d todo task(s) blocked by dependencies.\n", len(todo))
+	return err
 }
 
 func newRequeueStaleCmd(d *Deps) *cobra.Command {

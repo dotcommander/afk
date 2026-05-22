@@ -39,6 +39,11 @@ Use `--limit 0` to print all currently ready tasks:
 afk take --dry-run --limit 0 --json
 ```
 
+When no task can be claimed, `afk take` keeps stdout empty so worker loops can
+test for an empty claim. It writes a short explanation to stderr, including
+active resource-lock blockers when they are the reason visible `todo` work is
+not ready.
+
 ## replacement map
 
 | Old behavior | New command |

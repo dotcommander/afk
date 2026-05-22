@@ -30,7 +30,8 @@ afk take --lease 30m --worker codex:1
 A blocked task remains `todo`; it simply will not be returned by `take` until its dependencies and resource locks clear.
 When every visible `todo` task has the same non-empty resource key as an active
 `doing` task, `afk take` returns no task even though `afk status` still shows
-todo work.
+todo work. In that case stdout remains empty for worker-loop compatibility, and
+stderr explains the active resource-lock blocker.
 
 To replace a bad dependency shape, add a corrected task and mark the old one failed or deleted:
 
