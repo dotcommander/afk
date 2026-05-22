@@ -22,6 +22,7 @@ func TestTransitions(t *testing.T) {
 	require.True(t, tk.MarkDone(now))
 	require.Equal(t, task.StatusDone, tk.Status)
 	require.Equal(t, wantUTC, tk.Finished)
+	require.Empty(t, tk.Error)
 	require.False(t, tk.MarkDone(now))
 
 	tk.Reset()
@@ -131,8 +132,12 @@ func TestSetStatusAndLeaseHelpers(t *testing.T) {
 	require.Empty(t, tk.Error)
 	require.False(t, tk.SetStatus(task.StatusPending, now, "still todo"))
 	require.True(t, tk.SetStatus(task.StatusDone, now, "done"))
+	require.Empty(t, tk.Error)
 	require.True(t, tk.SetStatus(task.StatusFailed, now, "boom"))
 	require.Equal(t, "boom", tk.Error)
+	require.True(t, tk.SetStatus(task.StatusWorking, now, "retry"))
+	require.Empty(t, tk.Error)
+	require.Empty(t, tk.Finished)
 	require.False(t, tk.SetStatus("not-real", now, ""))
 }
 

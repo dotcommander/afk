@@ -68,11 +68,8 @@ func TestSQLiteStoreMutationEdgeCases(t *testing.T) {
 	require.Len(t, events, 1)
 	require.Equal(t, task.EventAdded, events[0].Type)
 
-	require.NoError(t, s.Update(ctx, "noop", task.EventClaimed, "", func(tk *task.Task) bool {
-		tk.MarkWorking(time.Now())
-		return true
-	}))
-	require.ErrorIs(t, s.Heartbeat(ctx, "noop", "worker", time.Now(), time.Now().Add(time.Minute)), store.ErrInvalidState)
+	require.NoError(t, s.Add(ctx, task.Task{ID: "working-without-attempt", Status: task.StatusWorking, Body: "working"}))
+	require.ErrorIs(t, s.Heartbeat(ctx, "working-without-attempt", "worker", time.Now(), time.Now().Add(time.Minute)), store.ErrInvalidState)
 }
 
 func TestSQLiteStoreNewSQLiteReportsInvalidParentPath(t *testing.T) {
@@ -713,6 +710,61 @@ func TestSQLiteStoreIdempotentDoneDoesNotRecordDuplicateEvent(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, events, 3)
 	require.Equal(t, task.EventDone, events[2].Type)
+}
+
+func TestSQLiteStoreSetDoingOpensRetryAttempt(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	s := newStore(t)
+	now := time.Date(2025, 1, 2, 3, 4, 5, 0, time.UTC)
+
+	require.NoError(t, s.Add(ctx, task.Task{ID: "task", Created: "2025-01-02T03:00:00Z", Status: task.StatusPending, Body: "body"}))
+	_, err := s.ClaimNext(ctx, now, time.Time{})
+	require.NoError(t, err)
+	require.NoError(t, s.Update(ctx, "task", task.EventFailed, "boom", func(tk *task.Task) bool {
+		return tk.MarkFailed(now.Add(time.Minute), "boom")
+	}))
+	require.NoError(t, s.Update(ctx, "task", task.EventClaimed, "retrying", func(tk *task.Task) bool {
+		tk.MarkWorking(now.Add(2 * time.Minute))
+		return true
+	}))
+	require.NoError(t, s.Update(ctx, "task", task.EventDone, "", func(tk *task.Task) bool {
+		return tk.MarkDone(now.Add(3 * time.Minute))
+	}))
+
+	tasks, err := s.List(ctx)
+	require.NoError(t, err)
+	require.Equal(t, task.StatusDone, tasks[0].Status)
+	require.Empty(t, tasks[0].Error)
+
+	attempts, err := s.Attempts(ctx, "task")
+	require.NoError(t, err)
+	require.Len(t, attempts, 2)
+	require.Equal(t, task.StatusFailed, attempts[0].Status)
+	require.Equal(t, "boom", attempts[0].Error)
+	require.Equal(t, task.StatusDone, attempts[1].Status)
+	require.Empty(t, attempts[1].Error)
+	require.Equal(t, "2025-01-02T03:06:05Z", attempts[1].Started)
+	require.Equal(t, "2025-01-02T03:07:05Z", attempts[1].Finished)
+}
+
+func TestSQLiteStoreTerminalSetSynthesizesAttempt(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	s := newStore(t)
+	now := time.Date(2025, 1, 2, 3, 4, 5, 0, time.UTC)
+
+	require.NoError(t, s.Add(ctx, task.Task{ID: "task", Created: "2025-01-02T03:00:00Z", Status: task.StatusPending, Body: "body"}))
+	require.NoError(t, s.Update(ctx, "task", task.EventDone, "", func(tk *task.Task) bool {
+		return tk.MarkDone(now)
+	}))
+
+	attempts, err := s.Attempts(ctx, "task")
+	require.NoError(t, err)
+	require.Len(t, attempts, 1)
+	require.Equal(t, task.StatusDone, attempts[0].Status)
+	require.Equal(t, "2025-01-02T03:04:05Z", attempts[0].Started)
+	require.Equal(t, "2025-01-02T03:04:05Z", attempts[0].Finished)
 }
 
 func TestSQLiteStoreRequeueStale(t *testing.T) {

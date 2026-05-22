@@ -120,8 +120,14 @@ VALUES (?, ?, ?, ?)`, taskID, string(event), at, message); err != nil {
 
 func updateAttemptForEvent(ctx context.Context, tx *sql.Tx, t task.Task, event task.EventType, at, message string) error {
 	switch event {
-	case task.EventDone, task.EventFailed:
+	case task.EventClaimed:
 		if _, err := tx.ExecContext(ctx, `
+INSERT INTO task_attempts (task_id, started, status, error, worker_id, agent)
+VALUES (?, ?, ?, ?, ?, ?)`, t.ID, at, string(task.StatusWorking), "", "", ""); err != nil {
+			return fmt.Errorf("store: insert attempt %s: %w", t.ID, err)
+		}
+	case task.EventDone, task.EventFailed:
+		res, err := tx.ExecContext(ctx, `
 UPDATE task_attempts
 SET finished = ?, status = ?, error = ?
 WHERE id = (
@@ -129,8 +135,20 @@ WHERE id = (
 	WHERE task_id = ? AND finished = ''
 	ORDER BY id DESC
 	LIMIT 1
-)`, at, string(t.Status), message, t.ID); err != nil {
+)`, at, string(t.Status), message, t.ID)
+		if err != nil {
 			return fmt.Errorf("store: finish attempt %s: %w", t.ID, err)
+		}
+		n, err := res.RowsAffected()
+		if err != nil {
+			return fmt.Errorf("store: finish attempt rows %s: %w", t.ID, err)
+		}
+		if n == 0 {
+			if _, err := tx.ExecContext(ctx, `
+INSERT INTO task_attempts (task_id, started, finished, status, error, worker_id, agent)
+VALUES (?, ?, ?, ?, ?, ?, ?)`, t.ID, at, at, string(t.Status), message, "", ""); err != nil {
+				return fmt.Errorf("store: synthesize attempt %s: %w", t.ID, err)
+			}
 		}
 	}
 	return nil

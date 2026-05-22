@@ -87,6 +87,7 @@ Rules:
 - Use `set <id> done` only when the requested work was completed or no-op completed.
 - Use `set <id> failed` when blocked, unsafe, cancelled, impossible, or verification fails.
 - The failure reason must be one line.
+- To retry one specific failed task in a later run, inspect it first, then use `set <id> doing "retrying: <reason>"` to open a new attempt before doing work.
 - If finalization itself fails, report the claimed `id`, intended status, and one-line reason.
 
 ## Stop

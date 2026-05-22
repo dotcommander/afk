@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -55,15 +56,15 @@ func TestCommandsLifecycleThroughRoot(t *testing.T) {
 	require.Contains(t, takeOut, `"lease_expires"`)
 	require.Contains(t, run("task", id), "worker=worker-1")
 
-	run("set", id, "done")
+	require.Equal(t, "set "+id+" done\n", run("set", id, "done"))
 	require.Contains(t, run("status"), "done: 1")
 	require.NotContains(t, run("tasks", "--status", "todo"), id)
 
 	failedID := strings.TrimSpace(run("add", "--no-cwd", "fail-me"))
-	run("set", failedID, "failed", "oops")
+	require.JSONEq(t, `{"id":"`+failedID+`","status":"failed","note":"oops"}`, run("set", failedID, "failed", "oops", "--json"))
 	require.Contains(t, run("task", failedID), "Error: oops")
 
-	run("set", failedID, "deleted", "cleanup")
+	require.Equal(t, "set "+failedID+" deleted\n", run("set", failedID, "deleted", "cleanup"))
 	require.NotContains(t, run("tasks"), failedID)
 	require.Contains(t, run("tasks", "--status", "deleted"), failedID)
 }
@@ -117,6 +118,135 @@ func TestTakeExplainsNoReadyTasksBlockedByResourceLock(t *testing.T) {
 	require.Empty(t, stdout.String())
 	require.Contains(t, stderr.String(), "No ready tasks")
 	require.Contains(t, stderr.String(), "1 todo task(s) blocked by active resource locks")
+}
+
+func TestTakeSummaryJSON(t *testing.T) {
+	t.Parallel()
+
+	queuePath := filepath.Join(t.TempDir(), "tasks.sqlite")
+	stdout, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	d := testDepsWithWriters(stdout, stderr)
+
+	run := func(args ...string) string {
+		t.Helper()
+		stdout.Reset()
+		stderr.Reset()
+		root := NewRoot(d, "test")
+		root.SetArgs(append([]string{"--queue", queuePath}, args...))
+		require.NoError(t, root.Execute(), "stderr: %s", stderr.String())
+		return stdout.String()
+	}
+
+	firstID := strings.TrimSpace(run("add", "--no-cwd", "first task"))
+	secondID := strings.TrimSpace(run("add", "--no-cwd", "second task"))
+	doneID := strings.TrimSpace(run("add", "--no-cwd", "done task"))
+	run("set", doneID, "done")
+
+	var doc map[string]any
+	require.NoError(t, json.Unmarshal([]byte(strings.TrimSpace(run("take", "--summary", "--lease", "30m"))), &doc))
+	claimed, ok := doc["task"].(map[string]any)
+	require.True(t, ok, "take --summary must include task object")
+	require.Contains(t, []string{firstID, secondID}, claimed["id"])
+	require.Equal(t, "doing", claimed["status"])
+	require.NotEmpty(t, claimed["lease_expires"])
+
+	queue, ok := doc["queue"].(map[string]any)
+	require.True(t, ok, "take --summary must include queue object")
+	require.Equal(t, float64(1), queue["todo"])
+	require.Equal(t, float64(1), queue["doing"])
+	require.Equal(t, float64(1), queue["done"])
+	require.Equal(t, float64(0), queue["failed"])
+	require.Equal(t, float64(0), queue["deleted"])
+	require.Equal(t, float64(3), queue["total"])
+	require.Equal(t, float64(1), queue["ready_remaining"])
+}
+
+func TestSetDoingCreatesRetryAttempt(t *testing.T) {
+	t.Parallel()
+
+	queuePath := filepath.Join(t.TempDir(), "tasks.sqlite")
+	stdout, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	d := testDepsWithWriters(stdout, stderr)
+
+	run := func(args ...string) string {
+		t.Helper()
+		stdout.Reset()
+		stderr.Reset()
+		root := NewRoot(d, "test")
+		root.SetArgs(append([]string{"--queue", queuePath}, args...))
+		require.NoError(t, root.Execute(), "stderr: %s", stderr.String())
+		return stdout.String()
+	}
+
+	id := strings.TrimSpace(run("add", "--no-cwd", "retry task"))
+	run("take")
+	run("set", id, "failed", "blocked")
+	run("set", id, "doing", "retrying")
+	run("set", id, "done")
+
+	var doc map[string]any
+	require.NoError(t, json.Unmarshal([]byte(strings.TrimSpace(run("task", id, "--json"))), &doc))
+	taskDoc := doc["task"].(map[string]any)
+	require.Equal(t, "done", taskDoc["status"])
+	require.NotContains(t, taskDoc, "error")
+	attempts := doc["attempts"].([]any)
+	require.Len(t, attempts, 2)
+	require.Contains(t, fmt.Sprint(attempts[0]), "failed")
+	require.Contains(t, fmt.Sprint(attempts[1]), "done")
+}
+
+func TestSnapshotCommandJSONAndOutputFile(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	queuePath := filepath.Join(dir, "tasks.sqlite")
+	stdout, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	d := testDepsWithWriters(stdout, stderr)
+
+	run := func(args ...string) string {
+		t.Helper()
+		stdout.Reset()
+		stderr.Reset()
+		root := NewRoot(d, "test")
+		root.SetArgs(append([]string{"--queue", queuePath}, args...))
+		require.NoError(t, root.Execute(), "stderr: %s", stderr.String())
+		return stdout.String()
+	}
+
+	firstID := strings.TrimSpace(run("add", "--no-cwd", "first task"))
+	secondID := strings.TrimSpace(run("add", "--no-cwd", "second task"))
+	run("take", "--worker", "worker-1")
+
+	var doc map[string]any
+	require.NoError(t, json.Unmarshal([]byte(strings.TrimSpace(run("snapshot", "--label", "after", "--task", firstID))), &doc))
+	require.Equal(t, "after", doc["label"])
+	require.Equal(t, "2025-01-02T03:04:05Z", doc["created"])
+
+	counts, ok := doc["counts"].(map[string]any)
+	require.True(t, ok, "snapshot must include counts")
+	require.Equal(t, float64(1), counts["todo"])
+	require.Equal(t, float64(1), counts["doing"])
+	require.Equal(t, float64(2), counts["total"])
+	require.Equal(t, float64(1), counts["ready"])
+
+	tasks, ok := doc["tasks"].(map[string]any)
+	require.True(t, ok, "snapshot must include task lists")
+	ready, ok := tasks["ready"].([]any)
+	require.True(t, ok, "snapshot must include ready list")
+	require.Len(t, ready, 1)
+	require.Contains(t, fmt.Sprint(ready[0]), secondID)
+
+	detail, ok := doc["task"].(map[string]any)
+	require.True(t, ok, "snapshot --task must include task detail")
+	taskDoc, ok := detail["task"].(map[string]any)
+	require.True(t, ok, "snapshot task detail must include task")
+	require.Equal(t, firstID, taskDoc["id"])
+
+	outPath := filepath.Join(dir, "snapshot.json")
+	require.Empty(t, run("snapshot", "--output", outPath))
+	outBytes, err := os.ReadFile(outPath)
+	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal(outBytes, &doc))
 }
 
 func TestStatusSummaryJSON(t *testing.T) {
@@ -395,6 +525,7 @@ func TestCommandRunEPropagatesServiceErrors(t *testing.T) {
 		{name: "set", cmd: newSetCmd(d), args: []string{"id", "done"}},
 		{name: "take dry-run", cmd: newTakeCmd(d), args: []string{"--dry-run"}},
 		{name: "take claim", cmd: newTakeCmd(d)},
+		{name: "snapshot", cmd: newSnapshotCmd(d)},
 		{name: "requeue", cmd: newRequeueStaleCmd(d), args: []string{"--older-than", "1s"}},
 		{name: "heartbeat", cmd: newHeartbeatCmd(d), args: []string{"id", "--worker", "worker"}},
 	} {

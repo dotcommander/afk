@@ -170,6 +170,9 @@ func OrderedStatuses() []Status {
 func (t *Task) MarkWorking(now time.Time) {
 	t.Status = StatusWorking
 	t.Started = formatTime(now)
+	t.LeaseExpires = ""
+	t.Finished = ""
+	t.Error = ""
 }
 
 // SetLease records when a working claim expires. Zero time clears the lease.
@@ -188,6 +191,8 @@ func (t *Task) MarkDone(now time.Time) bool {
 	}
 	t.Status = StatusDone
 	t.Finished = formatTime(now)
+	t.LeaseExpires = ""
+	t.Error = ""
 	return true
 }
 
@@ -198,6 +203,7 @@ func (t *Task) MarkFailed(now time.Time, reason string) bool {
 	}
 	t.Status = StatusFailed
 	t.Finished = formatTime(now)
+	t.LeaseExpires = ""
 	t.Error = reason
 	return true
 }
@@ -209,6 +215,7 @@ func (t *Task) MarkDeleted(now time.Time, reason string) bool {
 	}
 	t.Status = StatusDeleted
 	t.Finished = formatTime(now)
+	t.LeaseExpires = ""
 	t.Error = reason
 	return true
 }

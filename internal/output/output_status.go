@@ -56,6 +56,21 @@ type statusDoc struct {
 	Tasks   statusTasksJSON `json:"tasks"`
 }
 
+type takeSummaryQueue struct {
+	Todo           int `json:"todo"`
+	Doing          int `json:"doing"`
+	Done           int `json:"done"`
+	Failed         int `json:"failed"`
+	Deleted        int `json:"deleted"`
+	Total          int `json:"total"`
+	ReadyRemaining int `json:"ready_remaining"`
+}
+
+type takeSummaryDoc struct {
+	Task  boundedTask      `json:"task"`
+	Queue takeSummaryQueue `json:"queue"`
+}
+
 // WriteStatus renders a queue snapshot: per-status tallies plus the todo and
 // doing task lists.
 func WriteStatus(w io.Writer, tally map[task.Status]int, todo, doing []task.Task, asJSON bool) error {
@@ -63,6 +78,26 @@ func WriteStatus(w io.Writer, tally map[task.Status]int, todo, doing []task.Task
 		return writeStatusJSON(w, tally, todo, doing)
 	}
 	return writeStatusText(w, tally, todo, doing)
+}
+
+// WriteTakeSummary renders a claimed task with queue counts after the claim.
+func WriteTakeSummary(w io.Writer, claimed task.Task, tally map[task.Status]int, readyRemaining int) error {
+	total := 0
+	for _, n := range tally {
+		total += n
+	}
+	return WriteJSONLine(w, takeSummaryDoc{
+		Task: boundTask(claimed, maxDetailBodyRunes),
+		Queue: takeSummaryQueue{
+			Todo:           tally[task.StatusPending],
+			Doing:          tally[task.StatusWorking],
+			Done:           tally[task.StatusDone],
+			Failed:         tally[task.StatusFailed],
+			Deleted:        tally[task.StatusDeleted],
+			Total:          total,
+			ReadyRemaining: readyRemaining,
+		},
+	}, "take summary")
 }
 
 func statusListJSON(tasks []task.Task) []boundedTask {

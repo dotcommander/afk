@@ -23,6 +23,20 @@ afk set 1 done
 afk set 1 failed "missing credentials"
 ```
 
+Retry one specific failed task by opening a new attempt directly:
+
+```sh
+afk task 1 --json
+afk set 1 doing "retrying after fixing the blocker"
+# do the work
+afk set 1 done
+```
+
+The `doing` transition clears stale task-level errors and records a fresh
+attempt. Terminal `done` and `failed` transitions close the open attempt; if a
+manual terminal transition has no open attempt, AFK records a synthetic terminal
+attempt so history stays auditable.
+
 Recover abandoned claims by inspecting first, then closing the stale attempt:
 
 ```sh

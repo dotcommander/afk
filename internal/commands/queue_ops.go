@@ -16,6 +16,7 @@ func newTakeCmd(d *Deps) *cobra.Command {
 	var dryRun bool
 	var limit int
 	var asJSON bool
+	var summary bool
 
 	cmd := &cobra.Command{
 		Use:   "take",
@@ -48,6 +49,9 @@ func newTakeCmd(d *Deps) *cobra.Command {
 				}
 				return fmt.Errorf("pop %s: %w", claimed.ID, err)
 			}
+			if summary {
+				return writeTakeSummary(cmd, d, *claimed)
+			}
 			return output.WriteTaskJSONLine(d.Stdout, *claimed, "pop")
 		},
 	}
@@ -56,7 +60,20 @@ func newTakeCmd(d *Deps) *cobra.Command {
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "preview ready tasks without claiming")
 	cmd.Flags().IntVar(&limit, "limit", 20, "maximum ready tasks to print with --dry-run")
 	cmd.Flags().BoolVar(&asJSON, "json", true, "emit JSONL output")
+	cmd.Flags().BoolVar(&summary, "summary", false, "include queue counts with the claimed task")
 	return cmd
+}
+
+func writeTakeSummary(cmd *cobra.Command, d *Deps, claimed task.Task) error {
+	snapshot, err := d.Service.Status(cmd.Context())
+	if err != nil {
+		return err
+	}
+	ready, err := d.Service.Ready(cmd.Context())
+	if err != nil {
+		return err
+	}
+	return output.WriteTakeSummary(d.Stdout, claimed, snapshot.Counts, len(ready))
 }
 
 func writeNoReadyExplanation(cmd *cobra.Command, d *Deps) error {
