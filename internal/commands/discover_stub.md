@@ -1,6 +1,6 @@
-afk prompt --discover is a workflow stub.
+afk prompt --discover --full is the full task-discovery policy. It prints guidance only; it does not mutate the queue.
 
-Mine concrete AFK-ready candidate tasks from the material the user wants reviewed. This command only prints guidance and does not open or create the queue.
+Mine concrete AFK-ready candidate tasks from the material the user wants reviewed.
 
 1. Classify the target and choose review depth.
 

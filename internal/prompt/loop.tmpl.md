@@ -2,6 +2,15 @@
 
 Process exactly one queued task, then stop.
 
+Optional preview before claiming:
+
+```bash
+{{.StatusCmd}}
+{{.PreviewCmd}}
+```
+
+Claim only when you will execute and finalize one task in this tick:
+
 ```bash
 {{.PopCmd}}
 ```
@@ -18,6 +27,9 @@ Useful inspection commands:
 
 ```bash
 {{.StatusCmd}}
+```
+```bash
+{{.PreviewCmd}}
 ```
 ```bash
 {{.LsPendingCmd}}

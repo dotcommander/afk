@@ -2,6 +2,7 @@
 
 ```sh
 afk prompt --discover
+afk prompt --discover --full
 afk take --dry-run --limit 0 --json --full
 afk task <id>
 rg -n "TODO|FIXME|HACK|XXX|OPTIMIZE" .
@@ -12,7 +13,8 @@ the next useful task without inventing vague work. Use task discovery as a
 numbered review workflow: classify the target, inspect evidence
 that matches what the material actually contains, convert candidates into mini-specs,
 validate the task bodies, then ask one confirmation question before enqueueing.
-`afk prompt --discover` prints this workflow stub without opening or creating the queue.
+`afk prompt --discover` prints the concise discovery contract without opening or creating the queue.
+`afk prompt --discover --full` prints the full policy for broad, batch, or ambiguous discovery.
 
 ## find high-impact project work
 
@@ -23,8 +25,8 @@ high-impact candidates from a project:
 afk prompt --discover
 ```
 
-The command is read-only. It prints a workflow for a coding agent or human
-reviewer. A serious repo or web review should use Level 2
+The command is read-only. By default it prints a concise workflow for a coding agent or human
+reviewer; add `--full` for the long policy document. A serious repo or web review should use Level 2
 feature/command review, which means:
 
 - classify the target from actual files, not just the directory name
@@ -41,21 +43,21 @@ feature/command review, which means:
 If the review finds candidates, validate each task body before enqueueing:
 
 ```sh
-afk add --dry-run --cwd /Users/you/code/my-project \
+afk add --dry-run --cwd /path/to/project/code/my-project \
   --source task-discovery \
   --tag discovery \
-  --resource repo:/Users/you/code/my-project \
-  "[discovery:repo:settings-save] Fix the settings save bug. Evidence: /Users/you/code/my-project/internal/settings/store.go:42. Scope: /Users/you/code/my-project/internal/settings. Success: settings persist after refresh. Verify with go test ./... Reject-if: settings persistence moved out of this package."
+  --resource repo:/path/to/project/code/my-project \
+  "[discovery:repo:settings-save] Fix the settings save bug. Evidence: /path/to/project/code/my-project/internal/settings/store.go:42. Scope: /Users/you/code/my-project/internal/settings. Success: settings persist after refresh. Verify with go test ./... Reject-if: settings persistence moved out of this package."
 ```
 
 After validation, enqueue only the accepted candidates:
 
 ```sh
-afk add --cwd /Users/you/code/my-project \
+afk add --cwd /path/to/project/code/my-project \
   --source task-discovery \
   --tag discovery \
-  --resource repo:/Users/you/code/my-project \
-  "[discovery:repo:settings-save] Fix the settings save bug. Evidence: /Users/you/code/my-project/internal/settings/store.go:42. Scope: /Users/you/code/my-project/internal/settings. Success: settings persist after refresh. Verify with go test ./... Reject-if: settings persistence moved out of this package."
+  --resource repo:/path/to/project/code/my-project \
+  "[discovery:repo:settings-save] Fix the settings save bug. Evidence: /path/to/project/code/my-project/internal/settings/store.go:42. Scope: /Users/you/code/my-project/internal/settings. Success: settings persist after refresh. Verify with go test ./... Reject-if: settings persistence moved out of this package."
 ```
 
 ## discovery contract
