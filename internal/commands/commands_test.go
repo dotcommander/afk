@@ -520,7 +520,8 @@ func TestCommandVariantsAndErrorPaths(t *testing.T) {
 	require.Empty(t, stdout.String())
 	body, err := os.ReadFile(outPath)
 	require.NoError(t, err)
-	require.Contains(t, string(body), "No Shallow Batch Passes")
+	require.Contains(t, string(body), "task-discovery contract")
+	require.Contains(t, string(body), "## Happy path")
 
 	err = run("tasks", "--status", "bogus")
 	require.ErrorIs(t, err, task.ErrInvalidStatus)

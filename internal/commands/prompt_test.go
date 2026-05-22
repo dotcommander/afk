@@ -84,6 +84,35 @@ func TestPromptCommandDiscoverWritesStdoutWithoutCreatingQueue(t *testing.T) {
 
 	require.NoError(t, root.Execute())
 	out := stdout.String()
+	require.Contains(t, out, "task-discovery contract")
+	require.Contains(t, out, "## Happy path")
+	require.Contains(t, out, "afk status --summary")
+	require.Contains(t, out, "afk take --dry-run --limit 0 --json --full")
+	require.Contains(t, out, "targets inspected")
+	require.Contains(t, out, "dry-run validation result")
+	require.Contains(t, out, "<task-body-template>")
+	require.Contains(t, out, "afk prompt --discover --full")
+	require.NotContains(t, out, "No Shallow Batch Passes")
+	require.NotContains(t, out, "afk import")
+	require.NotContains(t, out, "afk ready")
+	require.NotContains(t, out, "afk pop")
+	require.NotContains(t, out, "afk ls")
+	require.NoFileExists(t, queuePath)
+}
+
+func TestPromptCommandDiscoverFullWritesPolicy(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	queuePath := filepath.Join(dir, "tasks.sqlite")
+	var stdout bytes.Buffer
+	d := testDeps(&stdout)
+	root := NewRoot(d, "test")
+	root.SetArgs([]string{"--queue", queuePath, "prompt", "--discover", "--full"})
+
+	require.NoError(t, root.Execute())
+	out := stdout.String()
+	require.Contains(t, out, "full task-discovery policy")
 	require.Contains(t, out, "No Shallow Batch Passes")
 	require.Contains(t, out, "Monolith / frankenstein repo pass")
 	require.Contains(t, out, "package.json: prefer check, then test, then build")
@@ -132,6 +161,23 @@ func TestPromptCommandDiscoverConflictsWithTask(t *testing.T) {
 	err := root.Execute()
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "--task and --discover are mutually exclusive")
+	require.Empty(t, stdout.String())
+	require.NoFileExists(t, queuePath)
+}
+
+func TestPromptCommandFullRequiresDiscover(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	queuePath := filepath.Join(dir, "tasks.sqlite")
+	var stdout bytes.Buffer
+	d := testDeps(&stdout)
+	root := NewRoot(d, "test")
+	root.SetArgs([]string{"--queue", queuePath, "prompt", "--full"})
+
+	err := root.Execute()
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "--full requires --discover")
 	require.Empty(t, stdout.String())
 	require.NoFileExists(t, queuePath)
 }

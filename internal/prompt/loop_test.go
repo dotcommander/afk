@@ -62,7 +62,8 @@ func TestLoopFallsBackToAfkExecutable(t *testing.T) {
 
 	out := prompt.Loop(prompt.LoopOptions{})
 
-	require.True(t, strings.Contains(out, "```bash\nafk take\n```"))
+	require.True(t, strings.Contains(out, "```bash\nafk take --worker <name> --lease 60m --summary\n```"))
+	require.Contains(t, out, "afk take --dry-run --summary --full --envelope --limit 5")
 	require.Contains(t, out, "SQLite-backed")
 }
 
