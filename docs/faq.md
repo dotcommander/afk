@@ -2,21 +2,22 @@
 
 ```sh
 afk status --summary
+afk status --blocked
 afk take --dry-run --limit 5 --json --full
 afk tasks --status doing --json
 afk tasks --status failed --json
 ```
 
-Run those four commands first when the queue looks surprising. They answer the
-usual questions: how much work exists, what can be claimed, what is currently
-holding resources, and what failed recently.
+Run those commands first when the queue looks surprising. They answer the usual
+questions: how much work exists, which dependencies are blocking todo work, what
+can be claimed, what is currently holding resources, and what failed recently.
 
 ## Quick diagnosis
 
 | Symptom | First commands | Likely cause |
 |---|---|---|
-| `afk take` prints no task | `afk take --dry-run --limit 0 --json --full` and `afk tasks --status doing --json` | No ready work, unfinished dependencies, or active resource locks. |
-| `afk status` shows `todo`, but workers claim nothing | `afk task <id>` for todo tasks and `afk tasks --status doing --json` | `todo` is not the same as ready. Dependencies or resource locks can block it. |
+| `afk take` prints no task | `afk take --dry-run --limit 0 --json --full`, `afk status --blocked`, and `afk tasks --status doing --json` | No ready work, unfinished dependencies, or active resource locks. |
+| `afk status` shows `todo`, but workers claim nothing | `afk status --blocked` and `afk tasks --status doing --json` | `todo` is not the same as ready. Dependencies or resource locks can block it. |
 | A failed task still looks failed after retry | `afk task <id> --json` | Retry must start with `afk retry <id> --reason "..."`; direct `done` is allowed but may not match the intended retry story. |
 | Deleted work disappeared from lists | `afk tasks --status deleted` | Default task lists hide `deleted`. History is still available. |
 | You need a before/after queue comparison | `afk snapshot --label before --output before.json` | Use snapshots instead of manually reconstructing old queue state. |
@@ -130,11 +131,11 @@ Give the worker everything needed to execute without conversation context:
 
 ```sh
 afk add \
-  --cwd /Users/you/code/project \
+  --cwd /path/to/project/code/project \
   --source task-discovery \
   --tag discovery \
-  --resource repo:/Users/you/code/project \
-  "Fix settings persistence. Evidence: /Users/you/code/project/internal/settings/store.go:42 drops the save error. Scope: internal/settings only. Success: settings survive refresh. Verify with go test ./internal/settings. Reject-if: settings persistence moved out of this package."
+  --resource repo:/path/to/project/code/project \
+  "Fix settings persistence. Evidence: /path/to/project/code/project/internal/settings/store.go:42 drops the save error. Scope: internal/settings only. Success: settings survive refresh. Verify with go test ./internal/settings. Reject-if: settings persistence moved out of this package."
 ```
 
 A strong task body includes:
@@ -187,7 +188,7 @@ Search before adding:
 
 ```sh
 afk find "settings persistence" --json
-afk find "repo:/Users/you/code/project" --json
+afk find "repo:/path/to/project/code/project" --json
 afk tasks --status todo --json
 afk tasks --status doing --json
 ```
@@ -228,9 +229,18 @@ Inspect the task and active work:
 
 ```sh
 afk task "$id"
+afk status --blocked
 afk tasks --status doing --json
 afk take --dry-run --limit 0 --json --full
 ```
+
+Read those commands this way:
+
+- `afk status --blocked` shows `todo` tasks blocked by unfinished dependencies.
+- `afk tasks --status doing --json` shows active resource locks and claim
+  timestamps.
+- `afk take --dry-run --limit 0 --json --full` shows the exact ready set a
+  worker can claim.
 
 ### How do I preview all ready tasks?
 
@@ -301,8 +311,8 @@ This prevents two workers from editing the same repo or other shared resource at
 the same time.
 
 ```sh
-afk add --resource repo:/Users/you/code/project "task one"
-afk add --resource repo:/Users/you/code/project "task two"
+afk add --resource repo:/path/to/project/code/project "task one"
+afk add --resource repo:/path/to/project/code/project "task two"
 ```
 
 After one task is claimed, the other stays `todo` but not ready until the active
@@ -636,6 +646,19 @@ afk status --summary --json
 ```
 
 Without `--summary`, `afk status` also includes todo and doing task lists.
+Doing tasks include derived claim diagnostics. Text output appends claim age
+and stale reason when available; JSON output adds a `claim` object:
+
+```json
+{
+  "age_seconds": 1860,
+  "stale": true,
+  "reason": "lease_expired"
+}
+```
+
+`stale` and `reason` are omitted when the claim is still fresh. Add `--blocked`
+when you need to see which unfinished dependencies are blocking todo tasks.
 
 ### How do I list everything, including deleted tasks?
 

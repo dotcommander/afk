@@ -14,7 +14,7 @@ The public command surface is intentionally small.
 | `afk add --dry-run [--json] <body...>` | Validate task shape and metadata without mutating the queue. |
 | `afk tasks [--status STATUS] [--json]` | List tasks. Default hides `deleted`; use `--status deleted` or `--status all` when needed. |
 | `afk task <id> [--json]` | Show one task with metadata, dependencies, events, and attempts. |
-| `afk status [--summary] [--json]` | Print queue counts; without `--summary`, also includes `todo` and `doing` task lists. |
+| `afk status [--summary] [--blocked] [--json]` | Print queue counts; without `--summary`, also includes `todo` and `doing` task lists. `--blocked` adds dependency blocker details. |
 | `afk find <query> [--status STATUS] [--json]` | Search id, body, status, cwd, source, tags, resource, agent, group, and error text. |
 | `afk take [--dry-run] [--limit N] [--lease DURATION] [--worker ID] [--json] [--summary] [--full] [--envelope]` | Preview or atomically claim the first ready task. |
 | `afk set <id> <status> [note...] [--note TEXT] [--note-file PATH|-] [--json] [--summary]` | Move a task to `todo`, `doing`, `done`, `failed`, or `deleted`. |
@@ -48,6 +48,75 @@ counts:
 ```sh
 afk take --dry-run --summary --limit 5
 ```
+
+## status diagnostics
+
+Use `afk status` when you need queue context, not just counts:
+
+```sh
+afk status
+afk status --json
+afk status --blocked
+```
+
+Without `--summary`, status output includes active `todo` and `doing` lists.
+For `doing` tasks, AFK derives claim diagnostics from persisted timestamps
+without changing the queue.
+
+In text output, doing rows include fields such as:
+
+```text
+age=31m0s stale=lease_expired
+```
+
+In JSON output, doing tasks include a `claim` object when the task has a valid
+`started` timestamp:
+
+```json
+{
+  "id": "1779597305",
+  "status": "doing",
+  "claim": {
+    "age_seconds": 1860,
+    "stale": true,
+    "reason": "lease_expired"
+  }
+}
+```
+
+`stale` and `reason` are present only when the claim is stale. AFK marks a
+claim stale when:
+
+- `lease_expires` is in the past: `reason=lease_expired`
+- no lease is set and the task has been `doing` for more than one hour:
+  `reason=unleased_age`
+
+Stale diagnostics are read-only. They do not requeue or fail the task. Use
+`afk task <id>`, then decide whether to finish, fail, delete, or replace the
+work.
+
+`--blocked` explains `todo` tasks held back by unfinished dependencies:
+
+```sh
+afk status --blocked --json
+```
+
+Example blocked output shape:
+
+```json
+{
+  "blocked": [
+    {
+      "task": {"id": "1779597309", "status": "todo"},
+      "blockers": [{"id": "1779597305", "status": "todo"}]
+    }
+  ]
+}
+```
+
+`--blocked` reports dependency blockers only. Resource-lock blockers are visible
+through the active `doing` list and through the stderr explanation from
+`afk take` when no task is ready.
 
 Use `--limit 0` to print all currently ready tasks:
 
@@ -107,12 +176,17 @@ so direct manual finalization remains auditable.
 
 Use `afk snapshot` before and after task work when the verification asks for a
 queue-state comparison. Snapshots are read-only JSON and include queue counts,
-ready tasks, todo tasks, and doing tasks:
+ready tasks, todo tasks, and doing tasks. Doing task entries include the same
+derived claim diagnostics as `afk status --json`.
 
 ```sh
 afk snapshot --label before --output before.json
 afk snapshot --label after --task "$id" --output after.json
 ```
+
+`--task <id>` adds that task's full record, lifecycle events, and attempts to
+the snapshot. Use it for final evidence when a task was claimed, retried,
+failed, or manually completed.
 
 ## replacement map
 
