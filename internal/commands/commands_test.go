@@ -437,6 +437,88 @@ func TestStatusSummaryJSON(t *testing.T) {
 	require.Equal(t, float64(0), doc["deleted"])
 }
 
+func TestStatusShowsClaimDiagnostics(t *testing.T) {
+	t.Parallel()
+
+	queuePath := filepath.Join(t.TempDir(), "tasks.sqlite")
+	stdout, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	now := time.Date(2025, 1, 2, 3, 4, 5, 0, time.UTC)
+	d := testDepsWithWriters(stdout, stderr)
+	d.Now = func() time.Time { return now }
+
+	run := func(args ...string) string {
+		t.Helper()
+		stdout.Reset()
+		stderr.Reset()
+		root := NewRoot(d, "test")
+		root.SetArgs(append([]string{"--queue", queuePath}, args...))
+		require.NoError(t, root.Execute(), "stderr: %s", stderr.String())
+		return stdout.String()
+	}
+
+	id := strings.TrimSpace(run("add", "--no-cwd", "leased task"))
+	require.Contains(t, run("take", "--lease", "30m"), id)
+	now = now.Add(31 * time.Minute)
+
+	var doc map[string]any
+	require.NoError(t, json.Unmarshal([]byte(strings.TrimSpace(run("status", "--json"))), &doc))
+	tasks := doc["tasks"].(map[string]any)
+	doing := tasks["doing"].([]any)
+	require.Len(t, doing, 1)
+	doingTask := doing[0].(map[string]any)
+	claim := doingTask["claim"].(map[string]any)
+	require.Equal(t, float64(31*60), claim["age_seconds"])
+	require.Equal(t, true, claim["stale"])
+	require.Equal(t, "lease_expired", claim["reason"])
+
+	text := run("status")
+	require.Contains(t, text, "age=31m0s")
+	require.Contains(t, text, "stale=lease_expired")
+}
+
+func TestStatusBlockedExplainsDependencyBlockers(t *testing.T) {
+	t.Parallel()
+
+	queuePath := filepath.Join(t.TempDir(), "tasks.sqlite")
+	stdout, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	d := testDepsWithWriters(stdout, stderr)
+
+	run := func(args ...string) string {
+		t.Helper()
+		stdout.Reset()
+		stderr.Reset()
+		root := NewRoot(d, "test")
+		root.SetArgs(append([]string{"--queue", queuePath}, args...))
+		require.NoError(t, root.Execute(), "stderr: %s", stderr.String())
+		return stdout.String()
+	}
+
+	prereqID := strings.TrimSpace(run("add", "--no-cwd", "prereq task"))
+	blockedID := strings.TrimSpace(run("add", "--no-cwd", "--blocked-by", prereqID, "blocked task"))
+
+	var doc map[string]any
+	require.NoError(t, json.Unmarshal([]byte(strings.TrimSpace(run("status", "--blocked", "--json"))), &doc))
+	blocked := doc["blocked"].([]any)
+	require.Len(t, blocked, 1)
+	blockedRow := blocked[0].(map[string]any)
+	taskDoc := blockedRow["task"].(map[string]any)
+	require.Equal(t, blockedID, taskDoc["id"])
+	blockers := blockedRow["blockers"].([]any)
+	require.Len(t, blockers, 1)
+	blocker := blockers[0].(map[string]any)
+	require.Equal(t, prereqID, blocker["id"])
+	require.Equal(t, "todo", blocker["status"])
+
+	text := run("status", "--blocked")
+	require.Contains(t, text, "Blocked:")
+	require.Contains(t, text, blockedID)
+	require.Contains(t, text, prereqID+"(todo)")
+
+	run("set", prereqID, "done")
+	require.NoError(t, json.Unmarshal([]byte(strings.TrimSpace(run("status", "--blocked", "--json"))), &doc))
+	require.Empty(t, doc["blocked"])
+}
+
 func TestOldCommandsAreNotPublic(t *testing.T) {
 	t.Parallel()
 

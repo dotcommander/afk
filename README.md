@@ -7,11 +7,16 @@ id=$(afk add "fix the failing queue test")
 afk tasks
 afk task "$id"
 afk take --dry-run --limit 5 --json --full
+afk status --blocked
 afk take --lease 30m --worker codex:1 --summary
 afk set "$id" done --note "verified" --summary
 ```
 
-Tasks move through `todo`, `doing`, `done`, `failed`, and `deleted`. Scheduler state such as dependencies, leases, and resource locks is stored separately.
+Tasks move through `todo`, `doing`, `done`, `failed`, and `deleted`.
+Readiness is narrower than `todo`: a task is claimable only when all
+dependencies are done and no active `doing` task holds its resource key.
+`afk status --blocked` explains dependency blockers; `doing` task status output
+also shows claim age and stale lease diagnostics.
 
 ## core commands
 
@@ -20,7 +25,7 @@ Tasks move through `todo`, `doing`, `done`, `failed`, and `deleted`. Scheduler s
 | `afk add <body...>` | Add a task. Use `--dry-run --json` to validate without writing. |
 | `afk tasks [--status STATUS] [--json]` | List tasks. Deleted tasks are hidden unless requested. |
 | `afk task <id> [--json]` | Show one full task with events and attempts. |
-| `afk status [--summary] [--json]` | Get queue counts, plus active task lists by default. |
+| `afk status [--summary] [--blocked] [--json]` | Get queue counts, plus active task lists by default. `--blocked` explains dependency-blocked todo tasks. |
 | `afk find <query> [--json]` | Search task text and metadata for duplicate checks. |
 | `afk take [--dry-run] [--lease DURATION] [--worker ID] [--summary] [--full] [--envelope]` | Preview or claim ready work. |
 | `afk set <id> <status> [note...] [--note TEXT] [--note-file PATH|-] [--json] [--summary]` | Set `todo`, `doing`, `done`, `failed`, or `deleted`. |
@@ -28,6 +33,14 @@ Tasks move through `todo`, `doing`, `done`, `failed`, and `deleted`. Scheduler s
 | `afk snapshot [--label LABEL] [--task ID] [--output PATH]` | Export read-only JSON evidence for before/after comparisons. |
 | `afk prompt [--task ID]` | Generate LLM-agent instructions. |
 | `afk serve` | Run the web visibility layer. |
+
+Useful triage sequence when workers claim nothing:
+
+```sh
+afk status --blocked
+afk tasks --status doing --json
+afk take --dry-run --limit 0 --json --full
+```
 
 ## removed command replacements
 

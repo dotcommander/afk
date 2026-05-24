@@ -6,6 +6,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/dotcommander/afk/internal/output"
 	"github.com/dotcommander/afk/internal/task"
@@ -203,26 +204,32 @@ func TestWriteStatusTextAndJSONUseTodoDoing(t *testing.T) {
 		Created: "2025-01-02T03:04:06Z",
 		Status:  task.StatusWorking,
 		Body:    "doing body",
+		Started: "2025-01-02T03:04:06Z",
 	}}
+	now := time.Date(2025, 1, 2, 3, 5, 6, 0, time.UTC)
 
 	var text bytes.Buffer
-	require.NoError(t, output.WriteStatus(&text, tally, todo, doing, false))
+	require.NoError(t, output.WriteStatus(&text, tally, todo, doing, nil, false, now))
 	require.Contains(t, text.String(), "todo: 1")
 	require.Contains(t, text.String(), "doing: 1")
 	require.Contains(t, text.String(), "Todo:")
 	require.Contains(t, text.String(), "Doing:")
 	require.Contains(t, text.String(), "todo-1")
 	require.Contains(t, text.String(), "doing-1")
+	require.Contains(t, text.String(), "age=1m0s")
 
 	var jsonOut bytes.Buffer
-	require.NoError(t, output.WriteStatus(&jsonOut, tally, todo, doing, true))
+	require.NoError(t, output.WriteStatus(&jsonOut, tally, todo, doing, nil, true, now))
 	var got struct {
 		Todo  int `json:"todo"`
 		Doing int `json:"doing"`
 		Done  int `json:"done"`
 		Tasks struct {
 			Todo  []task.Task `json:"todo"`
-			Doing []task.Task `json:"doing"`
+			Doing []struct {
+				task.Task
+				Claim *task.ClaimDiagnostics `json:"claim"`
+			} `json:"doing"`
 		} `json:"tasks"`
 	}
 	require.NoError(t, json.Unmarshal([]byte(strings.TrimSpace(jsonOut.String())), &got))
@@ -233,6 +240,7 @@ func TestWriteStatusTextAndJSONUseTodoDoing(t *testing.T) {
 	require.Equal(t, "todo-1", got.Tasks.Todo[0].ID)
 	require.Len(t, got.Tasks.Doing, 1)
 	require.Equal(t, "doing-1", got.Tasks.Doing[0].ID)
+	require.Equal(t, int64(60), got.Tasks.Doing[0].Claim.AgeSeconds)
 	require.NotContains(t, jsonOut.String(), `"pending"`)
 	require.NotContains(t, jsonOut.String(), `"working"`)
 }
@@ -310,8 +318,8 @@ func TestWriteOutputPropagatesWriterErrors(t *testing.T) {
 		{name: "list table", err: output.WriteList(w, []task.Task{tk}, false)},
 		{name: "list json", err: output.WriteList(w, []task.Task{tk}, true)},
 		{name: "count text", err: output.WriteCount(w, map[task.Status]int{})},
-		{name: "status text", err: output.WriteStatus(w, map[task.Status]int{}, nil, nil, false)},
-		{name: "status json", err: output.WriteStatus(w, map[task.Status]int{}, nil, nil, true)},
+		{name: "status text", err: output.WriteStatus(w, map[task.Status]int{}, nil, nil, nil, false, time.Now())},
+		{name: "status json", err: output.WriteStatus(w, map[task.Status]int{}, nil, nil, nil, true, time.Now())},
 		{name: "task json", err: output.WriteTaskJSONLine(w, tk, "task")},
 		{name: "explain text", err: output.WriteExplain(w, tk, []task.Event{event}, []task.Attempt{attempt}, false)},
 		{name: "explain json", err: output.WriteExplain(w, tk, []task.Event{event}, []task.Attempt{attempt}, true)},

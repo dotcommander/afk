@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/dotcommander/afk/internal/task"
 	"github.com/stretchr/testify/require"
@@ -13,11 +14,11 @@ func TestWriteStatusSectionEmptyAndWriterError(t *testing.T) {
 	t.Parallel()
 
 	var out bytes.Buffer
-	require.NoError(t, writeStatusSection(&out, "Todo:", nil))
+	require.NoError(t, writeStatusSection(&out, "Todo:", nil, time.Now(), false))
 	require.Contains(t, out.String(), "Todo:")
 	require.Contains(t, out.String(), "none")
 
-	err := writeStatusSection(errWriterInternal{}, "Todo:", nil)
+	err := writeStatusSection(errWriterInternal{}, "Todo:", nil, time.Now(), false)
 	require.Error(t, err)
 	require.True(t, errors.Is(err, errInternalWrite))
 }
@@ -26,7 +27,7 @@ func TestWriteStatusTextWriterErrorAfterCounts(t *testing.T) {
 	t.Parallel()
 
 	w := &countingErrWriter{failAfter: 20}
-	err := writeStatusText(w, map[task.Status]int{}, nil, nil)
+	err := writeStatusText(w, map[task.Status]int{}, nil, nil, nil, time.Now())
 	require.Error(t, err)
 	require.True(t, errors.Is(err, errInternalWrite))
 }
