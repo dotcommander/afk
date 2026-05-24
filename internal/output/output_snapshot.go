@@ -2,6 +2,7 @@ package output
 
 import (
 	"io"
+	"time"
 
 	"github.com/dotcommander/afk/internal/task"
 )
@@ -46,7 +47,7 @@ type snapshotDoc struct {
 }
 
 // WriteSnapshot renders a read-only queue evidence snapshot.
-func WriteSnapshot(w io.Writer, label, created string, tally map[task.Status]int, ready, todo, doing []task.Task, detail *SnapshotTaskDetail) error {
+func WriteSnapshot(w io.Writer, label, created string, tally map[task.Status]int, ready, todo, doing []task.Task, detail *SnapshotTaskDetail, now time.Time) error {
 	total := 0
 	for _, n := range tally {
 		total += n
@@ -66,7 +67,7 @@ func WriteSnapshot(w io.Writer, label, created string, tally map[task.Status]int
 		Tasks: snapshotTasks{
 			Ready: statusListJSON(ready),
 			Todo:  statusListJSON(todo),
-			Doing: statusListJSON(doing),
+			Doing: statusDoingListJSON(doing, now),
 		},
 	}
 	if detail != nil {

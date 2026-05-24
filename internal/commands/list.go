@@ -6,6 +6,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/dotcommander/afk/internal/output"
+	"github.com/dotcommander/afk/internal/task"
 )
 
 func newTasksCmd(d *Deps) *cobra.Command {
@@ -66,6 +67,7 @@ func newJSONByIDCmd(use, short, jsonUsage string, run func(context.Context, stri
 func newStatusCmd(d *Deps) *cobra.Command {
 	var asJSON bool
 	var summary bool
+	var includeBlocked bool
 
 	cmd := &cobra.Command{
 		Use:   "status",
@@ -81,11 +83,22 @@ func newStatusCmd(d *Deps) *cobra.Command {
 				}
 				return output.WriteCount(d.Stdout, snapshot.Counts)
 			}
-			return output.WriteStatus(d.Stdout, snapshot.Counts, snapshot.Todo, snapshot.Doing, asJSON)
+			var blocked []task.BlockedTask
+			if includeBlocked {
+				blocked, err = d.Service.Blocked(cmd.Context())
+				if err != nil {
+					return err
+				}
+				if blocked == nil {
+					blocked = []task.BlockedTask{}
+				}
+			}
+			return output.WriteStatus(d.Stdout, snapshot.Counts, snapshot.Todo, snapshot.Doing, blocked, asJSON, d.Now())
 		},
 	}
 	cmd.Flags().BoolVar(&asJSON, "json", false, "emit JSON output")
 	cmd.Flags().BoolVar(&summary, "summary", false, "emit counts only")
+	cmd.Flags().BoolVar(&includeBlocked, "blocked", false, "include dependency-blocked todo task details")
 	return cmd
 }
 

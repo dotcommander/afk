@@ -7,6 +7,7 @@ import (
 	"io"
 	"strings"
 	"text/tabwriter"
+	"time"
 
 	"github.com/dotcommander/afk/internal/task"
 )
@@ -24,9 +25,10 @@ const (
 
 type boundedTask struct {
 	task.Task
-	BodyTruncated  bool   `json:"body_truncated,omitzero"`
-	ErrorTruncated bool   `json:"error_truncated,omitzero"`
-	BodyHint       string `json:"body_hint,omitzero"`
+	Claim          *task.ClaimDiagnostics `json:"claim,omitempty"`
+	BodyTruncated  bool                   `json:"body_truncated,omitzero"`
+	ErrorTruncated bool                   `json:"error_truncated,omitzero"`
+	BodyHint       string                 `json:"body_hint,omitzero"`
 }
 
 type listSummary struct {
@@ -199,6 +201,14 @@ func boundTaskWithHint(t task.Task, bodyLimit int, bodyHint string) boundedTask 
 		bodyHint = ""
 	}
 	return boundedTask{Task: t, BodyTruncated: bodyTruncated, ErrorTruncated: errorTruncated, BodyHint: bodyHint}
+}
+
+func boundTaskWithClaim(t task.Task, bodyLimit int, now time.Time, unleasedStaleAfter time.Duration) boundedTask {
+	bounded := boundTask(t, bodyLimit)
+	if diag, ok := task.ClaimDiagnosticsFor(t, now, unleasedStaleAfter); ok {
+		bounded.Claim = diag
+	}
+	return bounded
 }
 
 func boundTasks(tasks []task.Task, bodyLimit int) []boundedTask {
