@@ -59,7 +59,6 @@ internal/commands/          Thin cobra wrappers; Deps{} passed by pointer
   add_options.go            input/option-building helpers for 'afk add'
 internal/output/            Human and JSON/JSONL rendering
 internal/prompt/            Generates Claude Code /loop instruction Markdown
-internal/runner/            Legacy internal runner package; keep only for compatibility/internal tests
 internal/store/             SQLite persistence; Paths, ResolvePaths, NewSQLite; schema DDL inline
   sqlite_schema.go          schema DDL, migration, busy-retry helpers
   sqlite_scan.go            row scan/encode helpers
@@ -88,6 +87,6 @@ SQLite is the only queue backend. A `--queue`/`AFK_QUEUE` path with a non-`.sqli
 ## Conventions
 
 - `cmd/afk/main.go` stays small (~37 lines): delegates to `run(ctx context.Context) error`, lets `defer` fire before `os.Exit`. Don't grow it.
-- `internal/commands/*` are thin cobra wrappers; business logic belongs in `internal/app/`. Do not add new public behavior through the legacy `internal/runner/` package.
+- `internal/commands/*` are thin cobra wrappers; business logic belongs in `internal/app/`.
 - Domain types in `internal/task/` have no I/O — keep it that way.
 - Linting matches workspace defaults (`.golangci.yml` v2, `default: none` with explicit enables). Test files are exempt from `dupl`, `goconst`, `funlen`, `gocognit`, `gosec`.
