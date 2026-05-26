@@ -98,20 +98,11 @@ func retryNote(reason string) string {
 }
 
 type setResult struct {
-	ID     string       `json:"id"`
-	Status task.Status  `json:"status"`
-	Title  string       `json:"title,omitzero"`
-	Note   string       `json:"note,omitzero"`
-	Queue  *queueResult `json:"queue,omitempty"`
-}
-
-type queueResult struct {
-	Todo    int `json:"todo"`
-	Doing   int `json:"doing"`
-	Done    int `json:"done"`
-	Failed  int `json:"failed"`
-	Deleted int `json:"deleted"`
-	Total   int `json:"total"`
+	ID     string              `json:"id"`
+	Status task.Status         `json:"status"`
+	Title  string              `json:"title,omitzero"`
+	Note   string              `json:"note,omitzero"`
+	Queue  *output.QueueCounts `json:"queue,omitempty"`
 }
 
 const maxNoteBytes = 64 * 1024
@@ -195,14 +186,7 @@ func taskTitle(body string) string {
 	return title
 }
 
-func queueResultFromCounts(counts map[task.Status]int) *queueResult {
-	q := &queueResult{
-		Todo:    counts[task.StatusTodo],
-		Doing:   counts[task.StatusDoing],
-		Done:    counts[task.StatusDone],
-		Failed:  counts[task.StatusFailed],
-		Deleted: counts[task.StatusDeleted],
-	}
-	q.Total = q.Todo + q.Doing + q.Done + q.Failed + q.Deleted
-	return q
+func queueResultFromCounts(counts map[task.Status]int) *output.QueueCounts {
+	q := output.NewQueueCounts(counts)
+	return &q
 }

@@ -15,13 +15,8 @@ type SnapshotTaskDetail struct {
 }
 
 type snapshotCounts struct {
-	Todo    int `json:"todo"`
-	Doing   int `json:"doing"`
-	Done    int `json:"done"`
-	Failed  int `json:"failed"`
-	Deleted int `json:"deleted"`
-	Total   int `json:"total"`
-	Ready   int `json:"ready"`
+	QueueCounts
+	Ready int `json:"ready"`
 }
 
 type snapshotTasks struct {
@@ -48,21 +43,12 @@ type snapshotDoc struct {
 
 // WriteSnapshot renders a read-only queue evidence snapshot.
 func WriteSnapshot(w io.Writer, label, created string, tally map[task.Status]int, ready, todo, doing []task.Task, detail *SnapshotTaskDetail, now time.Time) error {
-	total := 0
-	for _, n := range tally {
-		total += n
-	}
 	doc := snapshotDoc{
 		Label:   label,
 		Created: created,
 		Counts: snapshotCounts{
-			Todo:    tally[task.StatusTodo],
-			Doing:   tally[task.StatusDoing],
-			Done:    tally[task.StatusDone],
-			Failed:  tally[task.StatusFailed],
-			Deleted: tally[task.StatusDeleted],
-			Total:   total,
-			Ready:   len(ready),
+			QueueCounts: NewQueueCounts(tally),
+			Ready:       len(ready),
 		},
 		Tasks: snapshotTasks{
 			Ready: statusListJSON(ready),

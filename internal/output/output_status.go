@@ -24,18 +24,19 @@ func WriteCount(w io.Writer, tally map[task.Status]int) error {
 }
 
 // WriteCountJSON renders per-status tallies as a single JSON object on one line.
-// All four canonical status keys are always present (zero if missing) so consumers
-// can rely on a fixed shape.
+// All canonical status keys are always present (zero if missing) so consumers
+// can rely on a fixed shape. The "total" field is omitted from this envelope to
+// preserve the prior wire shape.
 func WriteCountJSON(w io.Writer, tally map[task.Status]int) error {
 	doc := struct {
-		Pending int `json:"todo"`
-		Working int `json:"doing"`
+		Todo    int `json:"todo"`
+		Doing   int `json:"doing"`
 		Done    int `json:"done"`
 		Failed  int `json:"failed"`
 		Deleted int `json:"deleted"`
 	}{
-		Pending: tally[task.StatusTodo],
-		Working: tally[task.StatusDoing],
+		Todo:    tally[task.StatusTodo],
+		Doing:   tally[task.StatusDoing],
 		Done:    tally[task.StatusDone],
 		Failed:  tally[task.StatusFailed],
 		Deleted: tally[task.StatusDeleted],
@@ -53,12 +54,13 @@ type blockedTaskJSON struct {
 	Blockers []task.Blocker `json:"blockers"`
 }
 
-// queueCounts is the canonical per-status tally shared by every JSON envelope
-// in this package. Embed it (anonymous embedding) so JSON inlines the fields
-// at the parent's top level — wire shape stays identical to the previous
-// hand-written field lists. Adding a future status means editing this struct
-// once instead of N parallel definitions.
-type queueCounts struct {
+// QueueCounts is the canonical per-status tally shared by every JSON envelope
+// in this package and by callers in internal/commands. Embed it (anonymous
+// embedding) so JSON inlines the fields at the parent's top level — wire
+// shape stays identical to the previous hand-written field lists. Adding a
+// future status means editing this struct once instead of N parallel
+// definitions.
+type QueueCounts struct {
 	Todo    int `json:"todo"`
 	Doing   int `json:"doing"`
 	Done    int `json:"done"`
@@ -67,12 +69,14 @@ type queueCounts struct {
 	Total   int `json:"total"`
 }
 
-func newQueueCounts(tally map[task.Status]int) queueCounts {
+// NewQueueCounts builds a QueueCounts from a status tally. Total is the sum
+// of every map entry, so callers do not need to maintain it separately.
+func NewQueueCounts(tally map[task.Status]int) QueueCounts {
 	total := 0
 	for _, n := range tally {
 		total += n
 	}
-	return queueCounts{
+	return QueueCounts{
 		Todo:    tally[task.StatusTodo],
 		Doing:   tally[task.StatusDoing],
 		Done:    tally[task.StatusDone],
@@ -83,13 +87,13 @@ func newQueueCounts(tally map[task.Status]int) queueCounts {
 }
 
 type statusDoc struct {
-	queueCounts
+	QueueCounts
 	Tasks   statusTasksJSON    `json:"tasks"`
 	Blocked *[]blockedTaskJSON `json:"blocked,omitempty"`
 }
 
 type takeSummaryQueue struct {
-	queueCounts
+	QueueCounts
 	ReadyRemaining int `json:"ready_remaining"`
 }
 
@@ -132,7 +136,7 @@ func WriteTakePreview(w io.Writer, ready []task.Task, tally map[task.Status]int,
 		Claimed: false,
 		Tasks:   boundTasksWithHint(ready, bodyLimit, bodyHint),
 		Queue: takeSummaryQueue{
-			queueCounts:    newQueueCounts(tally),
+			QueueCounts:    NewQueueCounts(tally),
 			ReadyRemaining: readyCount,
 		},
 	}, "take preview")
@@ -143,7 +147,7 @@ func writeTakeSummaryWithLimit(w io.Writer, claimed task.Task, tally map[task.St
 		Claimed: true,
 		Task:    boundTask(claimed, bodyLimit),
 		Queue: takeSummaryQueue{
-			queueCounts:    newQueueCounts(tally),
+			QueueCounts:    NewQueueCounts(tally),
 			ReadyRemaining: readyRemaining,
 		},
 	}, "take summary")
@@ -179,7 +183,7 @@ func writeStatusJSON(w io.Writer, tally map[task.Status]int, todo, doing []task.
 		blockedDoc = &value
 	}
 	return WriteJSONLine(w, statusDoc{
-		queueCounts: newQueueCounts(tally),
+		QueueCounts: NewQueueCounts(tally),
 		Tasks: statusTasksJSON{
 			Todo:  statusListJSON(todo),
 			Doing: statusDoingListJSON(doing, now),
