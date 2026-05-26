@@ -23,6 +23,29 @@ CASE lower(trim(priority))
 	ELSE 2
 END, ordinal, rowid`
 
+// readyWhereSQL is the single readiness predicate shared by Ready() and
+// ClaimNextForWorker(). Use after `WHERE status = ?` (todo). Two additional
+// `?` placeholders follow, in order: prerequisite-status (done) and
+// active-claim status (doing). Keep parameter order in sync with both callers.
+const readyWhereSQL = `
+AND NOT EXISTS (
+	SELECT 1
+	FROM task_dependencies d
+	LEFT JOIN tasks prereq ON prereq.id = d.depends_on_id
+	WHERE d.task_id = tasks.id
+	AND (prereq.id IS NULL OR prereq.status != ?)
+)
+AND (
+	resource_key = ''
+	OR NOT EXISTS (
+		SELECT 1
+		FROM tasks active
+		WHERE active.status = ?
+		AND active.resource_key = tasks.resource_key
+		AND active.id != tasks.id
+	)
+)`
+
 // SQLiteStore persists tasks in SQLite.
 type SQLiteStore struct {
 	db *sql.DB
@@ -114,25 +137,8 @@ func (s *SQLiteStore) Ready(ctx context.Context) ([]task.Task, error) {
 SELECT id, created, status, body, started, lease_expires, finished, error,
 	priority, tags, cwd, source, agent, group_id, resource_key
 FROM tasks
-WHERE status = ?
-AND NOT EXISTS (
-	SELECT 1
-	FROM task_dependencies d
-	LEFT JOIN tasks prereq ON prereq.id = d.depends_on_id
-	WHERE d.task_id = tasks.id
-	AND (prereq.id IS NULL OR prereq.status != ?)
-)
-AND (
-	resource_key = ''
-	OR NOT EXISTS (
-		SELECT 1
-		FROM tasks active
-		WHERE active.status = ?
-		AND active.resource_key = tasks.resource_key
-		AND active.id != tasks.id
-	)
-)
-ORDER BY `+schedulerOrderSQL, string(task.StatusPending), string(task.StatusDone), string(task.StatusWorking))
+WHERE status = ?`+readyWhereSQL+`
+ORDER BY `+schedulerOrderSQL, string(task.StatusTodo), string(task.StatusDone), string(task.StatusDoing))
 	if err != nil {
 		return nil, fmt.Errorf("store: ready: %w", err)
 	}
@@ -150,6 +156,24 @@ ORDER BY `+schedulerOrderSQL, string(task.StatusPending), string(task.StatusDone
 		return nil, fmt.Errorf("store: ready rows: %w", err)
 	}
 	return tasks, nil
+}
+
+// Get returns a single task by id, using the primary-key index. Callers
+// that need only one task should prefer Get over List+linear-scan.
+func (s *SQLiteStore) Get(ctx context.Context, id string) (task.Task, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return task.Task{}, fmt.Errorf("store: begin get: %w", err)
+	}
+	defer rollback(tx)
+	t, err := getTask(ctx, tx, id)
+	if err != nil {
+		return task.Task{}, err
+	}
+	if err := commit(tx); err != nil {
+		return task.Task{}, err
+	}
+	return t, nil
 }
 
 // Events returns durable lifecycle events for a task.
@@ -221,7 +245,7 @@ AND (
 	(lease_expires != '' AND lease_expires <= ?)
 	OR (lease_expires = '' AND started != '' AND started <= ?)
 )
-ORDER BY ordinal, rowid`, string(task.StatusWorking), nowText, cutoff)
+ORDER BY ordinal, rowid`, string(task.StatusDoing), nowText, cutoff)
 	if err != nil {
 		return nil, fmt.Errorf("store: list stale: %w", err)
 	}
@@ -422,30 +446,13 @@ SET status = ?, started = ?, lease_expires = ?
 WHERE id = (
 	SELECT id
 	FROM tasks
-	WHERE status = ?
-	AND NOT EXISTS (
-		SELECT 1
-		FROM task_dependencies d
-		LEFT JOIN tasks prereq ON prereq.id = d.depends_on_id
-		WHERE d.task_id = tasks.id
-		AND (prereq.id IS NULL OR prereq.status != ?)
-	)
-	AND (
-		resource_key = ''
-		OR NOT EXISTS (
-			SELECT 1
-			FROM tasks active
-			WHERE active.status = ?
-			AND active.resource_key = tasks.resource_key
-			AND active.id != tasks.id
-		)
-	)
+	WHERE status = ?`+readyWhereSQL+`
 	ORDER BY `+schedulerOrderSQL+`
 	LIMIT 1
 )
 RETURNING id, created, status, body, started, lease_expires, finished, error,
 	priority, tags, cwd, source, agent, group_id, resource_key`,
-		string(task.StatusWorking), started, lease, string(task.StatusPending), string(task.StatusDone), string(task.StatusWorking))
+		string(task.StatusDoing), started, lease, string(task.StatusTodo), string(task.StatusDone), string(task.StatusDoing))
 	t, err := scanTask(row)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -458,7 +465,7 @@ RETURNING id, created, status, body, started, lease_expires, finished, error,
 	}
 	if _, err := tx.ExecContext(ctx, `
 INSERT INTO task_attempts (task_id, started, status, error, worker_id, agent)
-VALUES (?, ?, ?, ?, ?, ?)`, t.ID, started, string(task.StatusWorking), "", workerID, agent); err != nil {
+VALUES (?, ?, ?, ?, ?, ?)`, t.ID, started, string(task.StatusDoing), "", workerID, agent); err != nil {
 		return nil, fmt.Errorf("store: insert attempt: %w", err)
 	}
 	if err := commit(tx); err != nil {
@@ -479,7 +486,7 @@ func (s *SQLiteStore) Heartbeat(ctx context.Context, taskID, workerID string, no
 	if err != nil {
 		return err
 	}
-	if t.Status != task.StatusWorking {
+	if t.Status != task.StatusDoing {
 		return ErrInvalidState
 	}
 	var owner string

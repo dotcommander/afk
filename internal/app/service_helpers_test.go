@@ -29,8 +29,8 @@ func TestFilterStatusAndTaskMatches(t *testing.T) {
 	t.Parallel()
 
 	tasks := []task.Task{
-		{ID: "1", Status: task.StatusPending, Body: "alpha", CWD: "/repo/a", Tags: []string{"repo:one"}},
-		{ID: "2", Status: task.StatusWorking, Body: "beta", ResourceKey: "repo:/repo/b"},
+		{ID: "1", Status: task.StatusTodo, Body: "alpha", CWD: "/repo/a", Tags: []string{"repo:one"}},
+		{ID: "2", Status: task.StatusDoing, Body: "beta", ResourceKey: "repo:/repo/b"},
 		{ID: "3", Status: task.StatusDeleted, Body: "deleted", Error: "gone"},
 	}
 
@@ -82,7 +82,10 @@ func TestEventForStatus(t *testing.T) {
 	require.Equal(t, task.EventDone, eventForStatus(task.StatusDone))
 	require.Equal(t, task.EventFailed, eventForStatus(task.StatusFailed))
 	require.Equal(t, task.EventDeleted, eventForStatus(task.StatusDeleted))
-	require.Equal(t, task.EventClaimed, eventForStatus(task.StatusWorking))
-	require.Equal(t, task.EventRequeued, eventForStatus(task.StatusPending))
-	require.Equal(t, task.EventRequeued, eventForStatus(task.Status("unknown")))
+	require.Equal(t, task.EventClaimed, eventForStatus(task.StatusDoing))
+	require.Equal(t, task.EventRequeued, eventForStatus(task.StatusTodo))
+	require.PanicsWithValue(t,
+		"app: eventForStatus called with unknown status unknown — callers must validate via task.ParseStatus first",
+		func() { _ = eventForStatus(task.Status("unknown")) },
+		"unknown status should panic (callers must validate via task.ParseStatus first)")
 }

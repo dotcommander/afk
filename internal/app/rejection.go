@@ -53,7 +53,7 @@ func RecordRejection(sidecarPath string, opts task.AddOptions, reason error, now
 		Tags:        opts.Tags,
 		Source:      opts.Source,
 		CWD:         opts.CWD,
-		Priority:    opts.Priority,
+		Priority:    string(opts.Priority),
 		ResourceKey: opts.ResourceKey,
 		Agent:       opts.Agent,
 		Group:       opts.GroupID,

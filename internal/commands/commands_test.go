@@ -233,6 +233,54 @@ func TestTakeSummaryJSON(t *testing.T) {
 	require.Equal(t, float64(1), queue["ready_remaining"])
 }
 
+func TestTakeUsesCurrentCommandNameInWriteErrors(t *testing.T) {
+	t.Parallel()
+
+	queuePath := filepath.Join(t.TempDir(), "tasks.sqlite")
+	d := testDepsWithWriters(&bytes.Buffer{}, &bytes.Buffer{})
+	stdout := &bytes.Buffer{}
+
+	run := func(args ...string) error {
+		t.Helper()
+		d.Stdout = stdout
+		stdout.Reset()
+		root := NewRoot(d, "test")
+		root.SetArgs(append([]string{"--queue", queuePath}, args...))
+		return root.Execute()
+	}
+
+	require.NoError(t, run("add", "--no-cwd", "take write error task"))
+	d.Stdout = commandFailWriter{}
+	root := NewRoot(d, "test")
+	root.SetArgs([]string{"--queue", queuePath, "take"})
+	err := root.Execute()
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "take: write")
+	require.NotContains(t, err.Error(), "pop")
+}
+
+func TestTakeRejectsInvalidClaimWithCurrentCommandName(t *testing.T) {
+	queuePath := filepath.Join(t.TempDir(), "tasks.sqlite")
+	stdout, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	d := testDepsWithWriters(stdout, stderr)
+
+	run := func(args ...string) error {
+		t.Helper()
+		stdout.Reset()
+		stderr.Reset()
+		root := NewRoot(d, "test")
+		root.SetArgs(append([]string{"--queue", queuePath}, args...))
+		return root.Execute()
+	}
+
+	t.Setenv("AFK_ALLOW_FORCE", "1")
+	require.NoError(t, run("add", "--force", "--no-cwd", "pick my nose"))
+	err := run("take")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "take ")
+	require.NotContains(t, err.Error(), "pop")
+}
+
 func TestSetNoteFlagsAndSummary(t *testing.T) {
 	t.Parallel()
 
@@ -873,6 +921,28 @@ func TestMaintenanceCommands(t *testing.T) {
 	err := run("requeue-stale", "--older-than", "soon")
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "parse older-than")
+
+	err = run("requeue-stale", "--older-than", "0s")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "duration must be positive")
+}
+
+func TestParseOptionalDurationRejectsNonPositiveSuppliedValues(t *testing.T) {
+	t.Parallel()
+
+	dur, err := parseOptionalDuration("lease", "")
+	require.NoError(t, err)
+	require.Zero(t, dur)
+
+	dur, err = parseOptionalDuration("lease", "1m")
+	require.NoError(t, err)
+	require.Equal(t, time.Minute, dur)
+
+	for _, raw := range []string{"0s", "-1s"} {
+		_, err := parseOptionalDuration("lease", raw)
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "duration must be positive")
+	}
 }
 
 func TestTakeRejectsInvalidClaimAndServeValidation(t *testing.T) {
@@ -979,7 +1049,16 @@ func (b *lockedBuffer) String() string {
 	return b.buf.String()
 }
 
-func (s *commandErrorStore) List(context.Context) ([]task.Task, error)  { return nil, s.err }
+func (s *commandErrorStore) List(context.Context) ([]task.Task, error) { return nil, s.err }
+func (s *commandErrorStore) Get(context.Context, string) (task.Task, error) {
+	return task.Task{}, s.err
+}
+func (s *commandErrorStore) Counts(context.Context) (map[task.Status]int, error) {
+	return nil, s.err
+}
+func (s *commandErrorStore) ActiveLists(context.Context) ([]task.Task, []task.Task, error) {
+	return nil, nil, s.err
+}
 func (s *commandErrorStore) Ready(context.Context) ([]task.Task, error) { return nil, s.err }
 func (s *commandErrorStore) Update(context.Context, string, task.EventType, string, func(*task.Task) bool) error {
 	return s.err

@@ -11,8 +11,8 @@ type Status string
 
 // Status values for Task.Status.
 const (
-	StatusPending Status = "todo"
-	StatusWorking Status = "doing"
+	StatusTodo    Status = "todo"
+	StatusDoing   Status = "doing"
 	StatusDone    Status = "done"
 	StatusFailed  Status = "failed"
 	StatusDeleted Status = "deleted"
@@ -27,7 +27,7 @@ type Task struct {
 	Created      string       `json:"created"`
 	Status       Status       `json:"status"`
 	Body         string       `json:"body"`
-	Priority     string       `json:"priority,omitzero"`
+	Priority     Priority     `json:"priority,omitzero"`
 	Tags         []string     `json:"tags,omitempty"`
 	CWD          string       `json:"cwd,omitzero"`
 	Source       string       `json:"source,omitzero"`
@@ -44,7 +44,7 @@ type Task struct {
 // AddOptions carries metadata for a new task.
 type AddOptions struct {
 	Body        string
-	Priority    string
+	Priority    Priority
 	Tags        []string
 	CWD         string
 	Source      string
@@ -122,10 +122,10 @@ func ValidStatus(s Status) bool {
 // ParseStatus returns the canonical status for user or persisted input.
 func ParseStatus(s string) (Status, bool) {
 	switch Status(s) {
-	case StatusPending, "pending":
-		return StatusPending, true
-	case StatusWorking, "working":
-		return StatusWorking, true
+	case StatusTodo, "pending":
+		return StatusTodo, true
+	case StatusDoing, "working":
+		return StatusDoing, true
 	case StatusDone:
 		return StatusDone, true
 	case StatusFailed:
@@ -154,7 +154,7 @@ func VisibleStatus(s Status) bool {
 // ActiveStatus reports whether s represents unfinished work.
 func ActiveStatus(s Status) bool {
 	switch NormalizeStatus(s) {
-	case StatusPending, StatusWorking:
+	case StatusTodo, StatusDoing:
 		return true
 	default:
 		return false
@@ -163,12 +163,12 @@ func ActiveStatus(s Status) bool {
 
 // OrderedStatuses returns the canonical display order.
 func OrderedStatuses() []Status {
-	return []Status{StatusPending, StatusWorking, StatusDone, StatusFailed, StatusDeleted}
+	return []Status{StatusTodo, StatusDoing, StatusDone, StatusFailed, StatusDeleted}
 }
 
 // MarkWorking claims the task for work and records the start timestamp.
 func (t *Task) MarkWorking(now time.Time) {
-	t.Status = StatusWorking
+	t.Status = StatusDoing
 	t.Started = formatTime(now)
 	t.LeaseExpires = ""
 	t.Finished = ""
@@ -224,14 +224,14 @@ func (t *Task) MarkDeleted(now time.Time, reason string) bool {
 func (t *Task) SetStatus(status Status, now time.Time, message string) bool {
 	status = NormalizeStatus(status)
 	switch status {
-	case StatusPending:
-		if t.Status == StatusPending {
+	case StatusTodo:
+		if t.Status == StatusTodo {
 			return false
 		}
 		t.Reset()
 		return true
-	case StatusWorking:
-		if t.Status == StatusWorking {
+	case StatusDoing:
+		if t.Status == StatusDoing {
 			return false
 		}
 		t.MarkWorking(now)
@@ -249,7 +249,7 @@ func (t *Task) SetStatus(status Status, now time.Time, message string) bool {
 
 // Reset returns the task to todo and clears lifecycle/error fields.
 func (t *Task) Reset() {
-	t.Status = StatusPending
+	t.Status = StatusTodo
 	t.Started = ""
 	t.LeaseExpires = ""
 	t.Finished = ""

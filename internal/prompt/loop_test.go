@@ -132,7 +132,7 @@ func TestTaskPromptBoundsBodyAndHistory(t *testing.T) {
 		attempts[i] = task.Attempt{ID: int64(i + 1), Status: task.StatusFailed, Started: "2025-01-02T03:04:05Z", Error: strings.Repeat("a", 1100)}
 	}
 
-	out := prompt.Task("afk", task.Task{ID: "123", Status: task.StatusPending, Body: strings.Repeat("b", 9000)}, events, attempts)
+	out := prompt.Task("afk", task.Task{ID: "123", Status: task.StatusTodo, Body: strings.Repeat("b", 9000)}, events, attempts)
 
 	require.Contains(t, out, "older events omitted by output limit")
 	require.Contains(t, out, "older attempts omitted by output limit")

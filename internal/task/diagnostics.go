@@ -25,7 +25,7 @@ type BlockedTask struct {
 
 // ClaimDiagnosticsFor derives non-mutating claim state for a doing task.
 func ClaimDiagnosticsFor(t Task, now time.Time, unleasedStaleAfter time.Duration) (*ClaimDiagnostics, bool) {
-	if NormalizeStatus(t.Status) != StatusWorking {
+	if NormalizeStatus(t.Status) != StatusDoing {
 		return nil, false
 	}
 	started, ok := parseTime(t.Started)

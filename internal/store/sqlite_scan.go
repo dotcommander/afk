@@ -123,7 +123,7 @@ func updateAttemptForEvent(ctx context.Context, tx *sql.Tx, t task.Task, event t
 	case task.EventClaimed:
 		if _, err := tx.ExecContext(ctx, `
 INSERT INTO task_attempts (task_id, started, status, error, worker_id, agent)
-VALUES (?, ?, ?, ?, ?, ?)`, t.ID, at, string(task.StatusWorking), "", "", ""); err != nil {
+VALUES (?, ?, ?, ?, ?, ?)`, t.ID, at, string(task.StatusDoing), "", "", ""); err != nil {
 			return fmt.Errorf("store: insert attempt %s: %w", t.ID, err)
 		}
 	case task.EventDone, task.EventFailed:

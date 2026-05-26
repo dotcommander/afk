@@ -75,7 +75,7 @@ func Task(exe string, t task.Task, events []task.Event, attempts []task.Attempt)
 
 	var meta []string
 	if t.Priority != "" {
-		meta = append(meta, "Priority: `"+t.Priority+"`")
+		meta = append(meta, "Priority: `"+string(t.Priority)+"`")
 	}
 	if len(t.Tags) > 0 {
 		meta = append(meta, "Tags: `"+strings.Join(t.Tags, ", ")+"`")

@@ -70,13 +70,13 @@ func newRetryCmd(d *Deps) *cobra.Command {
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			note := retryNote(reason)
-			if err := d.Service.SetStatus(cmd.Context(), args[0], task.StatusWorking, note); err != nil {
+			if err := d.Service.SetStatus(cmd.Context(), args[0], task.StatusDoing, note); err != nil {
 				return err
 			}
 			if asJSON {
 				return output.WriteJSONLine(d.Stdout, setResult{
 					ID:     args[0],
-					Status: task.StatusWorking,
+					Status: task.StatusDoing,
 					Note:   note,
 				}, "retry")
 			}
@@ -197,8 +197,8 @@ func taskTitle(body string) string {
 
 func queueResultFromCounts(counts map[task.Status]int) *queueResult {
 	q := &queueResult{
-		Todo:    counts[task.StatusPending],
-		Doing:   counts[task.StatusWorking],
+		Todo:    counts[task.StatusTodo],
+		Doing:   counts[task.StatusDoing],
 		Done:    counts[task.StatusDone],
 		Failed:  counts[task.StatusFailed],
 		Deleted: counts[task.StatusDeleted],

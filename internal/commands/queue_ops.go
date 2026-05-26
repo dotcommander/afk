@@ -77,15 +77,15 @@ body_truncated=true, add --full to inspect complete task bodies.`),
 				if failErr := d.Service.Fail(cmd.Context(), claimed.ID, err.Error()); failErr != nil {
 					return failErr
 				}
-				return fmt.Errorf("pop %s: %w", claimed.ID, err)
+				return fmt.Errorf("take %s: %w", claimed.ID, err)
 			}
 			if summary || envelope {
 				return writeTakeSummary(cmd, d, *claimed, full)
 			}
 			if full {
-				return output.WriteBoundTaskJSONLine(d.Stdout, *claimed, 0, "pop")
+				return output.WriteBoundTaskJSONLine(d.Stdout, *claimed, 0, "take")
 			}
-			return output.WriteTaskJSONLine(d.Stdout, *claimed, "pop")
+			return output.WriteTaskJSONLine(d.Stdout, *claimed, "take")
 		},
 	}
 	cmd.Flags().StringVar(&lease, "lease", "", "lease duration for the claim (for example 30m)")
@@ -115,7 +115,7 @@ func writeTakeSummary(cmd *cobra.Command, d *Deps, claimed task.Task, full bool)
 }
 
 func writeNoReadyExplanation(cmd *cobra.Command, d *Deps) error {
-	todo, err := d.Service.List(cmd.Context(), string(task.StatusPending))
+	todo, err := d.Service.List(cmd.Context(), string(task.StatusTodo))
 	if err != nil {
 		return err
 	}
@@ -124,7 +124,7 @@ func writeNoReadyExplanation(cmd *cobra.Command, d *Deps) error {
 		return err
 	}
 
-	doing, err := d.Service.List(cmd.Context(), string(task.StatusWorking))
+	doing, err := d.Service.List(cmd.Context(), string(task.StatusDoing))
 	if err != nil {
 		return err
 	}
@@ -165,6 +165,9 @@ func newRequeueStaleCmd(d *Deps) *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("parse older-than: %w", err)
 			}
+			if dur <= 0 {
+				return fmt.Errorf("parse older-than: duration must be positive")
+			}
 			tasks, err := d.Service.RequeueStale(cmd.Context(), dur)
 			if err != nil {
 				return err
@@ -188,6 +191,9 @@ func parseOptionalDuration(name, value string) (time.Duration, error) {
 	dur, err := time.ParseDuration(value)
 	if err != nil {
 		return 0, fmt.Errorf("parse %s: %w", name, err)
+	}
+	if dur <= 0 {
+		return 0, fmt.Errorf("parse %s: duration must be positive", name)
 	}
 	return dur, nil
 }

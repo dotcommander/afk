@@ -91,14 +91,11 @@ func ValidateAddOptionsAll(opts AddOptions) error {
 }
 
 // ValidatePriority rejects misspelled priority values instead of letting the
-// scheduler silently treat them as normal priority.
-func ValidatePriority(priority string) error {
-	switch strings.ToLower(strings.TrimSpace(priority)) {
-	case "", "urgent", "high", "normal", "low":
-		return nil
-	default:
-		return fmt.Errorf("%w: %q", ErrInvalidPriority, priority)
-	}
+// scheduler silently treat them as normal priority. Delegates to ParsePriority
+// so the recognized set has a single source of truth.
+func ValidatePriority(priority Priority) error {
+	_, err := ParsePriority(string(priority))
+	return err
 }
 
 // generatedCandidateChecks runs every generated-candidate validation check in

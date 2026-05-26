@@ -54,26 +54,13 @@ func (s *Service) Prune(ctx context.Context, statuses []task.Status) (int, error
 	return s.store.Prune(ctx, statuses)
 }
 
-// Pop atomically claims the next ready task. Prefer Take in new code.
-func (s *Service) Pop(ctx context.Context) (*task.Task, error) {
-	return s.PopWithLease(ctx, 0)
-}
-
-// PopWithLease atomically claims the next ready task, optionally setting a lease.
-// Prefer Take in new code.
-func (s *Service) PopWithLease(ctx context.Context, lease time.Duration) (*task.Task, error) {
-	return s.PopWithLeaseForWorker(ctx, lease, "", "")
-}
-
-// PopWithLeaseForWorker atomically claims the next ready task for workerID.
-func (s *Service) PopWithLeaseForWorker(ctx context.Context, lease time.Duration, workerID, agent string) (*task.Task, error) {
+// Take atomically claims the next ready task for workerID, optionally setting
+// a lease. workerID empty falls back to a default identifier. This is the
+// sole claim entry point — Pop / PopWithLease / PopWithLeaseForWorker were
+// removed; all callers now use Take directly.
+func (s *Service) Take(ctx context.Context, lease time.Duration, workerID, agent string) (*task.Task, error) {
 	now := s.now()
 	return s.store.ClaimNextForWorker(ctx, now, leaseExpires(now, lease), workerOrDefault(workerID), agent)
-}
-
-// Take atomically claims the next ready task for workerID.
-func (s *Service) Take(ctx context.Context, lease time.Duration, workerID, agent string) (*task.Task, error) {
-	return s.PopWithLeaseForWorker(ctx, lease, workerID, agent)
 }
 
 // Heartbeat extends a worker-owned active claim lease.
@@ -87,6 +74,10 @@ func (s *Service) RequeueStale(ctx context.Context, olderThan time.Duration) ([]
 	return s.store.RequeueStale(ctx, olderThan, s.now())
 }
 
+// eventForStatus maps a validated task.Status to its lifecycle event. All
+// callers MUST validate via task.ParseStatus first (SetStatus does at
+// service_lifecycle.go:31). Unknown statuses panic — that signals a Status
+// constant was added without updating this switch, not a runtime input bug.
 func eventForStatus(status task.Status) task.EventType {
 	switch status {
 	case task.StatusDone:
@@ -95,11 +86,11 @@ func eventForStatus(status task.Status) task.EventType {
 		return task.EventFailed
 	case task.StatusDeleted:
 		return task.EventDeleted
-	case task.StatusWorking:
+	case task.StatusDoing:
 		return task.EventClaimed
-	case task.StatusPending:
+	case task.StatusTodo:
 		return task.EventRequeued
 	default:
-		return task.EventRequeued
+		panic("app: eventForStatus called with unknown status " + string(status) + " — callers must validate via task.ParseStatus first")
 	}
 }

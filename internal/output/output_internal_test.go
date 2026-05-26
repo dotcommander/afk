@@ -62,7 +62,7 @@ func TestWriteExplainRowsWithoutOptionalFields(t *testing.T) {
 	require.NotContains(t, out.String(), "message")
 
 	out.Reset()
-	require.NoError(t, writeExplainAttempt(&out, task.Attempt{ID: 7, Status: task.StatusWorking}))
+	require.NoError(t, writeExplainAttempt(&out, task.Attempt{ID: 7, Status: task.StatusDoing}))
 	require.Contains(t, out.String(), "#7")
 	require.Contains(t, out.String(), "doing")
 }

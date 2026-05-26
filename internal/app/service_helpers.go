@@ -32,25 +32,6 @@ func recentPaths(tasks []task.Task, limit int) []string {
 	return out
 }
 
-func uniqueID(tasks []task.Task, base string) string {
-	candidate := base
-	for i := 1; ; i++ {
-		if _, found := findTask(tasks, candidate); !found {
-			return candidate
-		}
-		candidate = fmt.Sprintf("%s-%d", base, i)
-	}
-}
-
-func findTask(tasks []task.Task, id string) (int, bool) {
-	for i := range tasks {
-		if tasks[i].ID == id {
-			return i, true
-		}
-	}
-	return -1, false
-}
-
 func filterByStatus(tasks []task.Task, status string) []task.Task {
 	status = strings.TrimSpace(status)
 	if status == "" {
@@ -98,7 +79,7 @@ func taskMatches(t task.Task, query string) bool {
 		t.ID,
 		string(task.NormalizeStatus(t.Status)),
 		t.Body,
-		t.Priority,
+		string(t.Priority),
 		t.CWD,
 		t.Source,
 		t.Agent,

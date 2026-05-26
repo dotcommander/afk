@@ -28,6 +28,18 @@ func TestDecodeInputEmptyAndTooLarge(t *testing.T) {
 	require.Contains(t, err.Error(), "decode body")
 }
 
+func TestDecodeInputStrictJSON(t *testing.T) {
+	t.Parallel()
+
+	_, err := decodeInput(httptest.NewRequest(http.MethodPatch, "/api/tasks/1", strings.NewReader(`{"status":"done","extra":true}`)))
+	require.Error(t, err)
+	require.Contains(t, err.Error(), `unknown field "extra"`)
+
+	_, err = decodeInput(httptest.NewRequest(http.MethodPatch, "/api/tasks/1", strings.NewReader(`{"status":"done"} {"status":"failed"}`)))
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "exactly one JSON value")
+}
+
 func TestSmallHelpers(t *testing.T) {
 	t.Parallel()
 
@@ -39,6 +51,9 @@ func TestSmallHelpers(t *testing.T) {
 	lease, err = parseLease("2m")
 	require.NoError(t, err)
 	require.Equal(t, 2*time.Minute, lease)
+	_, err = parseLease("-1s")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "duration must be positive")
 	require.Len(t, newCSRFToken(), 43)
 }
 
@@ -115,7 +130,13 @@ type failingStore struct {
 	err error
 }
 
-func (s *failingStore) List(context.Context) ([]task.Task, error)  { return nil, s.err }
+func (s *failingStore) List(context.Context) ([]task.Task, error) { return nil, s.err }
+func (s *failingStore) Counts(context.Context) (map[task.Status]int, error) {
+	return nil, s.err
+}
+func (s *failingStore) ActiveLists(context.Context) ([]task.Task, []task.Task, error) {
+	return nil, nil, s.err
+}
 func (s *failingStore) Ready(context.Context) ([]task.Task, error) { return nil, s.err }
 func (s *failingStore) ClaimNextForWorker(context.Context, time.Time, time.Time, string, string) (*task.Task, error) {
 	return nil, s.err

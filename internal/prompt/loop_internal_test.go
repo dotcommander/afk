@@ -14,7 +14,7 @@ func TestJoinCmdAndTaskDefaults(t *testing.T) {
 	require.Equal(t, "afk", joinCmd("afk", ""))
 	require.Equal(t, "afk take", joinCmd("afk", "take"))
 
-	out := Task("", task.Task{ID: "1", Status: task.StatusPending, Body: "do focused work"}, nil, nil)
+	out := Task("", task.Task{ID: "1", Status: task.StatusTodo, Body: "do focused work"}, nil, nil)
 	require.Contains(t, out, "afk set 1 done")
 	require.Contains(t, out, "afk set 1 failed")
 	require.NotContains(t, out, "History")
@@ -41,7 +41,7 @@ func TestTaskIncludesAllMetadata(t *testing.T) {
 
 	out := Task("afk", task.Task{
 		ID:          "1",
-		Status:      task.StatusPending,
+		Status:      task.StatusTodo,
 		Body:        "body",
 		Priority:    "urgent",
 		Tags:        []string{"repo:afk"},

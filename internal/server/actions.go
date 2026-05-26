@@ -27,12 +27,27 @@ type actionInput struct {
 // decodeInput reads and decodes an optional JSON body.
 // EOF (empty body) produces the zero actionInput without error.
 func decodeInput(r *http.Request) (actionInput, error) {
-	r.Body = http.MaxBytesReader(nil, r.Body, 64*1024)
 	var in actionInput
-	if err := json.NewDecoder(r.Body).Decode(&in); err != nil && !errors.Is(err, io.EOF) {
+	if err := decodeJSONBody(r, &in); err != nil {
 		return actionInput{}, fmt.Errorf("decode body: %w", err)
 	}
 	return in, nil
+}
+
+func decodeJSONBody(r *http.Request, dst any) error {
+	r.Body = http.MaxBytesReader(nil, r.Body, 64*1024)
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(dst); err != nil {
+		if errors.Is(err, io.EOF) {
+			return nil
+		}
+		return err
+	}
+	if err := dec.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		return errors.New("body must contain exactly one JSON value")
+	}
+	return nil
 }
 
 // handleSetTask serves PATCH /api/tasks/{id} with {"status":"done","note":"..."}.
@@ -78,9 +93,8 @@ type createInput struct {
 // handleCreate serves POST /api/tasks — enqueues a new todo task via the
 // same validated path as `afk add`. Invalid task content → 400.
 func (s *Server) handleCreate(w http.ResponseWriter, r *http.Request) {
-	r.Body = http.MaxBytesReader(nil, r.Body, 64*1024)
 	var in createInput
-	if err := json.NewDecoder(r.Body).Decode(&in); err != nil && !errors.Is(err, io.EOF) {
+	if err := decodeJSONBody(r, &in); err != nil {
 		writeErr(w, http.StatusBadRequest, fmt.Errorf("decode body: %w", err))
 		return
 	}
@@ -149,6 +163,9 @@ func parseLease(raw string) (time.Duration, error) {
 	lease, err := time.ParseDuration(raw)
 	if err != nil {
 		return 0, fmt.Errorf("parse lease: %w", err)
+	}
+	if lease <= 0 {
+		return 0, fmt.Errorf("parse lease: duration must be positive")
 	}
 	return lease, nil
 }

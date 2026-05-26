@@ -126,7 +126,7 @@ type showField struct {
 
 func showFields(t task.Task) []showField {
 	return []showField{
-		{name: "Priority", value: t.Priority},
+		{name: "Priority", value: string(t.Priority)},
 		{name: "Tags", value: strings.Join(t.Tags, ", ")},
 		{name: "CWD", value: t.CWD},
 		{name: "Source", value: t.Source},

@@ -2,12 +2,26 @@ package store
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
+
+	"modernc.org/sqlite"
+	sqlite3 "modernc.org/sqlite/lib"
 )
 
 const sqliteBusyRetryDelay = 25 * time.Millisecond
+
+// schemaVersionKey is the metadata row that records the highest migration
+// version applied to this DB. Bump currentSchemaVersion whenever a new
+// migration function is added below.
+const (
+	schemaVersionKey     = "schema_version"
+	currentSchemaVersion = 1
+)
 
 func (s *SQLiteStore) init(ctx context.Context) error {
 	if err := s.execWithBusyRetry(ctx, `
@@ -63,10 +77,56 @@ CREATE INDEX IF NOT EXISTS task_dependencies_depends_on_idx ON task_dependencies
 `); err != nil {
 		return fmt.Errorf("store: create schema: %w", err)
 	}
-	if err := retrySQLiteBusy(ctx, s.migrateTaskMetadata); err != nil {
+	return retrySQLiteBusy(ctx, s.runMigrationsIfNeeded)
+}
+
+// runMigrationsIfNeeded reads the recorded schema_version and runs every
+// historical migration exactly once, then records the new version. Skips all
+// migration UPDATE/ALTER traffic on subsequent opens — important because
+// these statements run on every NewSQLite call on the hot startup path.
+func (s *SQLiteStore) runMigrationsIfNeeded(ctx context.Context) error {
+	version, err := s.readSchemaVersion(ctx)
+	if err != nil {
 		return err
 	}
-	return retrySQLiteBusy(ctx, s.migrateStatusNames)
+	if version >= currentSchemaVersion {
+		return nil
+	}
+	if err := s.migrateTaskMetadata(ctx); err != nil {
+		return err
+	}
+	if err := s.migrateStatusNames(ctx); err != nil {
+		return err
+	}
+	return s.writeSchemaVersion(ctx, currentSchemaVersion)
+}
+
+// readSchemaVersion returns the recorded schema_version. A missing row
+// returns 0, which is the "run every historical migration once" sentinel.
+func (s *SQLiteStore) readSchemaVersion(ctx context.Context) (int, error) {
+	var raw string
+	err := s.db.QueryRowContext(ctx, `SELECT value FROM metadata WHERE key = ?`, schemaVersionKey).Scan(&raw)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, fmt.Errorf("store: read schema version: %w", err)
+	}
+	version, convErr := strconv.Atoi(strings.TrimSpace(raw))
+	if convErr != nil {
+		return 0, fmt.Errorf("store: parse schema version %q: %w", raw, convErr)
+	}
+	return version, nil
+}
+
+func (s *SQLiteStore) writeSchemaVersion(ctx context.Context, version int) error {
+	if _, err := s.db.ExecContext(ctx,
+		`INSERT INTO metadata (key, value) VALUES (?, ?)
+		 ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+		schemaVersionKey, strconv.Itoa(version)); err != nil {
+		return fmt.Errorf("store: write schema version: %w", err)
+	}
+	return nil
 }
 
 func (s *SQLiteStore) execWithBusyRetry(ctx context.Context, query string, args ...any) error {
@@ -148,11 +208,22 @@ func isDuplicateColumn(err error) bool {
 	return strings.Contains(err.Error(), "duplicate column name")
 }
 
+// isSQLiteBusy reports whether err is a SQLite contention error that the
+// retry loop should back off on. Uses errors.As against *sqlite.Error so the
+// check is robust to wrapped errors and message-string locale drift across
+// driver versions.
 func isSQLiteBusy(err error) bool {
 	if err == nil {
 		return false
 	}
-	message := strings.ToLower(err.Error())
-	return strings.Contains(message, "sqlite_busy") ||
-		strings.Contains(message, "database is locked")
+	var se *sqlite.Error
+	if !errors.As(err, &se) {
+		return false
+	}
+	switch se.Code() {
+	case sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED:
+		return true
+	default:
+		return false
+	}
 }

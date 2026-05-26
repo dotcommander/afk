@@ -100,7 +100,7 @@ func TestValidateAddOptionsRejectsInvalidPriority(t *testing.T) {
 			t.Parallel()
 			err := task.ValidateAddOptions(task.AddOptions{
 				Body:     "valid software task",
-				Priority: priority,
+				Priority: task.Priority(priority),
 			})
 			require.NoError(t, err)
 		})

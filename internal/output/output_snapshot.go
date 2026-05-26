@@ -56,8 +56,8 @@ func WriteSnapshot(w io.Writer, label, created string, tally map[task.Status]int
 		Label:   label,
 		Created: created,
 		Counts: snapshotCounts{
-			Todo:    tally[task.StatusPending],
-			Doing:   tally[task.StatusWorking],
+			Todo:    tally[task.StatusTodo],
+			Doing:   tally[task.StatusDoing],
 			Done:    tally[task.StatusDone],
 			Failed:  tally[task.StatusFailed],
 			Deleted: tally[task.StatusDeleted],

@@ -14,9 +14,9 @@ func TestTransitions(t *testing.T) {
 	now := time.Date(2025, 1, 2, 3, 4, 5, 0, time.FixedZone("test", -5*60*60))
 	wantUTC := "2025-01-02T08:04:05Z"
 
-	tk := task.Task{Status: task.StatusPending}
+	tk := task.Task{Status: task.StatusTodo}
 	tk.MarkWorking(now)
-	require.Equal(t, task.StatusWorking, tk.Status)
+	require.Equal(t, task.StatusDoing, tk.Status)
 	require.Equal(t, wantUTC, tk.Started)
 
 	require.True(t, tk.MarkDone(now))
@@ -26,7 +26,7 @@ func TestTransitions(t *testing.T) {
 	require.False(t, tk.MarkDone(now))
 
 	tk.Reset()
-	require.Equal(t, task.StatusPending, tk.Status)
+	require.Equal(t, task.StatusTodo, tk.Status)
 	require.Empty(t, tk.Started)
 	require.Empty(t, tk.Finished)
 	require.Empty(t, tk.Error)
@@ -44,7 +44,7 @@ func TestTaskMetadataJSON(t *testing.T) {
 	tk := task.Task{
 		ID:          "1",
 		Created:     "2025-01-02T03:04:05Z",
-		Status:      task.StatusPending,
+		Status:      task.StatusTodo,
 		Body:        "body",
 		Priority:    "high",
 		Tags:        []string{"repo:afk", "type:test"},
@@ -81,10 +81,10 @@ func TestStatusHelpersNormalizeLegacyValues(t *testing.T) {
 		in   string
 		want task.Status
 	}{
-		{in: "todo", want: task.StatusPending},
-		{in: "pending", want: task.StatusPending},
-		{in: "doing", want: task.StatusWorking},
-		{in: "working", want: task.StatusWorking},
+		{in: "todo", want: task.StatusTodo},
+		{in: "pending", want: task.StatusTodo},
+		{in: "doing", want: task.StatusDoing},
+		{in: "working", want: task.StatusDoing},
 		{in: "done", want: task.StatusDone},
 		{in: "failed", want: task.StatusFailed},
 		{in: "deleted", want: task.StatusDeleted},
@@ -103,10 +103,10 @@ func TestStatusHelpersNormalizeLegacyValues(t *testing.T) {
 	require.False(t, ok)
 	require.Empty(t, unknown)
 	require.Equal(t, task.Status("mystery"), task.NormalizeStatus("mystery"))
-	require.True(t, task.VisibleStatus(task.StatusPending))
+	require.True(t, task.VisibleStatus(task.StatusTodo))
 	require.False(t, task.VisibleStatus(task.StatusDeleted))
-	require.True(t, task.ActiveStatus(task.StatusPending))
-	require.True(t, task.ActiveStatus(task.StatusWorking))
+	require.True(t, task.ActiveStatus(task.StatusTodo))
+	require.True(t, task.ActiveStatus(task.StatusDoing))
 	require.False(t, task.ActiveStatus(task.StatusDone))
 }
 
@@ -114,28 +114,28 @@ func TestSetStatusAndLeaseHelpers(t *testing.T) {
 	t.Parallel()
 	now := time.Date(2025, 1, 2, 3, 4, 5, 0, time.UTC)
 
-	tk := task.Task{Status: task.StatusPending}
+	tk := task.Task{Status: task.StatusTodo}
 	tk.SetLease(now)
 	require.Equal(t, "2025-01-02T03:04:05Z", tk.LeaseExpires)
 	tk.SetLease(time.Time{})
 	require.Empty(t, tk.LeaseExpires)
 
-	require.True(t, tk.SetStatus(task.StatusWorking, now, ""))
-	require.Equal(t, task.StatusWorking, tk.Status)
-	require.False(t, tk.SetStatus(task.StatusWorking, now, ""))
+	require.True(t, tk.SetStatus(task.StatusDoing, now, ""))
+	require.Equal(t, task.StatusDoing, tk.Status)
+	require.False(t, tk.SetStatus(task.StatusDoing, now, ""))
 	require.True(t, tk.SetStatus(task.StatusDeleted, now, "obsolete"))
 	require.Equal(t, task.StatusDeleted, tk.Status)
 	require.Equal(t, "obsolete", tk.Error)
 	require.False(t, tk.SetStatus(task.StatusDeleted, now, "ignored"))
-	require.True(t, tk.SetStatus(task.StatusPending, now, "retry"))
-	require.Equal(t, task.StatusPending, tk.Status)
+	require.True(t, tk.SetStatus(task.StatusTodo, now, "retry"))
+	require.Equal(t, task.StatusTodo, tk.Status)
 	require.Empty(t, tk.Error)
-	require.False(t, tk.SetStatus(task.StatusPending, now, "still todo"))
+	require.False(t, tk.SetStatus(task.StatusTodo, now, "still todo"))
 	require.True(t, tk.SetStatus(task.StatusDone, now, "done"))
 	require.Empty(t, tk.Error)
 	require.True(t, tk.SetStatus(task.StatusFailed, now, "boom"))
 	require.Equal(t, "boom", tk.Error)
-	require.True(t, tk.SetStatus(task.StatusWorking, now, "retry"))
+	require.True(t, tk.SetStatus(task.StatusDoing, now, "retry"))
 	require.Empty(t, tk.Error)
 	require.Empty(t, tk.Finished)
 	require.False(t, tk.SetStatus("not-real", now, ""))

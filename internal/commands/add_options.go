@@ -16,7 +16,7 @@ func buildAddCommandOptions(input addCommandInput) (task.AddOptions, string, err
 	if err != nil {
 		return task.AddOptions{}, "", err
 	}
-	defaults := inferAddDefaults(resolvedCWD)
+	defaults := app.InferAddDefaults(resolvedCWD)
 	tags := input.tags
 	if len(tags) == 0 && defaults.RepoTag != "" {
 		tags = []string{defaults.RepoTag}
@@ -33,7 +33,7 @@ func buildAddCommandOptions(input addCommandInput) (task.AddOptions, string, err
 	}
 	return task.AddOptions{
 		Body:        strings.Join(input.args, " "),
-		Priority:    input.priority,
+		Priority:    task.Priority(input.priority),
 		Tags:        tags,
 		CWD:         resolvedCWD,
 		Source:      source,
@@ -59,10 +59,6 @@ func resolveAddCWD(cwd string, noCWD bool) (string, error) {
 		return "", fmt.Errorf("resolve cwd: %w", err)
 	}
 	return resolvedCWD, nil
-}
-
-func inferAddDefaults(cwd string) app.AddDefaults {
-	return app.InferAddDefaults(cwd)
 }
 
 func normalizeBlockedBy(blockedBy string) string {

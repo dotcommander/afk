@@ -44,7 +44,7 @@ func (s *Service) RetryRejected(ctx context.Context, idx int) (task.Task, error)
 	rec := records[idx]
 	opts := task.AddOptions{
 		Body:        rec.Body,
-		Priority:    rec.Priority,
+		Priority:    task.Priority(rec.Priority),
 		Tags:        rec.Tags,
 		CWD:         rec.CWD,
 		Source:      rec.Source,

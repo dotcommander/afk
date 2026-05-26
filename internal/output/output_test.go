@@ -15,7 +15,7 @@ import (
 
 func TestWriteListTableAndJSONL(t *testing.T) {
 	t.Parallel()
-	tasks := []task.Task{{ID: "1", Created: "2025-01-02T03:04:05Z", Status: task.StatusPending, Body: "hello"}}
+	tasks := []task.Task{{ID: "1", Created: "2025-01-02T03:04:05Z", Status: task.StatusTodo, Body: "hello"}}
 
 	var table bytes.Buffer
 	require.NoError(t, output.WriteList(&table, tasks, false))
@@ -33,7 +33,7 @@ func TestWriteTaskJSONLine(t *testing.T) {
 	t.Parallel()
 
 	var out bytes.Buffer
-	require.NoError(t, output.WriteTaskJSONLine(&out, task.Task{ID: "1", Status: task.StatusPending, Body: "body"}, "claim"))
+	require.NoError(t, output.WriteTaskJSONLine(&out, task.Task{ID: "1", Status: task.StatusTodo, Body: "body"}, "claim"))
 	require.Contains(t, out.String(), `"id":"1"`)
 	require.Contains(t, out.String(), `"status":"todo"`)
 }
@@ -113,7 +113,7 @@ func TestWriteExplainJSONAndOptionalFields(t *testing.T) {
 	tk := task.Task{
 		ID:      "1",
 		Created: "2025-01-02T03:04:05Z",
-		Status:  task.StatusWorking,
+		Status:  task.StatusDoing,
 		Body:    "body",
 		Started: "2025-01-02T03:04:06Z",
 	}
@@ -124,7 +124,7 @@ func TestWriteExplainJSONAndOptionalFields(t *testing.T) {
 		Task task.Task `json:"task"`
 	}
 	require.NoError(t, json.Unmarshal([]byte(strings.TrimSpace(jsonOut.String())), &got))
-	require.Equal(t, task.StatusWorking, got.Task.Status)
+	require.Equal(t, task.StatusDoing, got.Task.Status)
 
 	var text bytes.Buffer
 	require.NoError(t, output.WriteExplain(&text, tk, nil, nil, false))
@@ -137,7 +137,7 @@ func TestWriteListTruncatesLongUnicodeBody(t *testing.T) {
 	tasks := []task.Task{{
 		ID:      "1",
 		Created: "2025-01-02T03:04:05Z",
-		Status:  task.StatusPending,
+		Status:  task.StatusTodo,
 		Body:    strings.Repeat("界", 70),
 	}}
 
@@ -149,8 +149,8 @@ func TestWriteListTruncatesLongUnicodeBody(t *testing.T) {
 func TestWriteCountJSON(t *testing.T) {
 	t.Parallel()
 	tally := map[task.Status]int{
-		task.StatusPending: 2,
-		task.StatusWorking: 1,
+		task.StatusTodo: 2,
+		task.StatusDoing: 1,
 		task.StatusDone:    3,
 		task.StatusFailed:  0,
 	}
@@ -189,20 +189,20 @@ func TestWriteCountJSONEmptyTally(t *testing.T) {
 func TestWriteStatusTextAndJSONUseTodoDoing(t *testing.T) {
 	t.Parallel()
 	tally := map[task.Status]int{
-		task.StatusPending: 1,
-		task.StatusWorking: 1,
+		task.StatusTodo: 1,
+		task.StatusDoing: 1,
 		task.StatusDone:    2,
 	}
 	todo := []task.Task{{
 		ID:      "todo-1",
 		Created: "2025-01-02T03:04:05Z",
-		Status:  task.StatusPending,
+		Status:  task.StatusTodo,
 		Body:    "todo body",
 	}}
 	doing := []task.Task{{
 		ID:      "doing-1",
 		Created: "2025-01-02T03:04:06Z",
-		Status:  task.StatusWorking,
+		Status:  task.StatusDoing,
 		Body:    "doing body",
 		Started: "2025-01-02T03:04:06Z",
 	}}
@@ -253,7 +253,7 @@ func TestWriteListJSONBoundsRowsAndBody(t *testing.T) {
 		tasks[i] = task.Task{
 			ID:      string(rune('a' + i%26)),
 			Created: "2025-01-02T03:04:05Z",
-			Status:  task.StatusPending,
+			Status:  task.StatusTodo,
 			Body:    strings.Repeat("界", 600),
 		}
 	}

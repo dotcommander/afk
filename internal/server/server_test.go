@@ -203,7 +203,7 @@ func TestPATCHTaskUsesNoteAndReasonFallbacks(t *testing.T) {
 		require.NoError(t, showErr)
 		require.Equal(t, task.StatusFailed, got.Status)
 		require.NotEmpty(t, got.Error)
-		require.NoError(t, svc.SetStatus(ctx, id, task.StatusPending, "reset"))
+		require.NoError(t, svc.SetStatus(ctx, id, task.StatusTodo, "reset"))
 	}
 }
 
@@ -281,11 +281,16 @@ func TestMutationHandlersRejectBadInput(t *testing.T) {
 		want   string
 	}{
 		{name: "patch bad json", method: http.MethodPatch, path: "/api/tasks/" + id, body: "{", want: "decode body"},
+		{name: "patch unknown field", method: http.MethodPatch, path: "/api/tasks/" + id, body: `{"status":"done","surprise":true}`, want: `unknown field \"surprise\"`},
+		{name: "patch trailing json", method: http.MethodPatch, path: "/api/tasks/" + id, body: `{"status":"done"} {"status":"failed"}`, want: "exactly one JSON value"},
 		{name: "patch bad status", method: http.MethodPatch, path: "/api/tasks/" + id, body: `{"status":"nope"}`, want: "invalid task status"},
 		{name: "create bad json", method: http.MethodPost, path: "/api/tasks", body: "{", want: "decode body"},
+		{name: "create unknown field", method: http.MethodPost, path: "/api/tasks", body: `{"body":"created","extra":true}`, want: `unknown field \"extra\"`},
+		{name: "create trailing json", method: http.MethodPost, path: "/api/tasks", body: `{"body":"created"} {"body":"second"}`, want: "exactly one JSON value"},
 		{name: "create invalid task", method: http.MethodPost, path: "/api/tasks", body: `{"body":""}`, want: "invalid task"},
 		{name: "take bad dry run", method: http.MethodPost, path: "/api/take?dry_run=maybe", body: "", want: "parse dry_run"},
 		{name: "take bad lease", method: http.MethodPost, path: "/api/take?lease=soon", body: "", want: "parse lease"},
+		{name: "take non-positive lease", method: http.MethodPost, path: "/api/take?lease=0s", body: "", want: "duration must be positive"},
 	} {
 		tt := tt
 		t.Run(tt.name, func(t *testing.T) {

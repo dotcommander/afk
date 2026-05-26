@@ -12,6 +12,9 @@ import (
 // Defined here (where consumed) per Go interface idiom.
 type Store interface {
 	List(ctx context.Context) ([]task.Task, error)
+	Get(ctx context.Context, id string) (task.Task, error)
+	Counts(ctx context.Context) (map[task.Status]int, error)
+	ActiveLists(ctx context.Context) (todo, doing []task.Task, err error)
 	Ready(ctx context.Context) ([]task.Task, error)
 	Add(ctx context.Context, t task.Task) error
 	Update(ctx context.Context, id string, event task.EventType, message string, fn func(*task.Task) bool) error

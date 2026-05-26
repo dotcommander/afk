@@ -34,8 +34,8 @@ func WriteCountJSON(w io.Writer, tally map[task.Status]int) error {
 		Failed  int `json:"failed"`
 		Deleted int `json:"deleted"`
 	}{
-		Pending: tally[task.StatusPending],
-		Working: tally[task.StatusWorking],
+		Pending: tally[task.StatusTodo],
+		Working: tally[task.StatusDoing],
 		Done:    tally[task.StatusDone],
 		Failed:  tally[task.StatusFailed],
 		Deleted: tally[task.StatusDeleted],
@@ -53,24 +53,43 @@ type blockedTaskJSON struct {
 	Blockers []task.Blocker `json:"blockers"`
 }
 
+// queueCounts is the canonical per-status tally shared by every JSON envelope
+// in this package. Embed it (anonymous embedding) so JSON inlines the fields
+// at the parent's top level — wire shape stays identical to the previous
+// hand-written field lists. Adding a future status means editing this struct
+// once instead of N parallel definitions.
+type queueCounts struct {
+	Todo    int `json:"todo"`
+	Doing   int `json:"doing"`
+	Done    int `json:"done"`
+	Failed  int `json:"failed"`
+	Deleted int `json:"deleted"`
+	Total   int `json:"total"`
+}
+
+func newQueueCounts(tally map[task.Status]int) queueCounts {
+	total := 0
+	for _, n := range tally {
+		total += n
+	}
+	return queueCounts{
+		Todo:    tally[task.StatusTodo],
+		Doing:   tally[task.StatusDoing],
+		Done:    tally[task.StatusDone],
+		Failed:  tally[task.StatusFailed],
+		Deleted: tally[task.StatusDeleted],
+		Total:   total,
+	}
+}
+
 type statusDoc struct {
-	Todo    int                `json:"todo"`
-	Doing   int                `json:"doing"`
-	Done    int                `json:"done"`
-	Failed  int                `json:"failed"`
-	Deleted int                `json:"deleted"`
-	Total   int                `json:"total"`
+	queueCounts
 	Tasks   statusTasksJSON    `json:"tasks"`
 	Blocked *[]blockedTaskJSON `json:"blocked,omitempty"`
 }
 
 type takeSummaryQueue struct {
-	Todo           int `json:"todo"`
-	Doing          int `json:"doing"`
-	Done           int `json:"done"`
-	Failed         int `json:"failed"`
-	Deleted        int `json:"deleted"`
-	Total          int `json:"total"`
+	queueCounts
 	ReadyRemaining int `json:"ready_remaining"`
 }
 
@@ -109,40 +128,22 @@ func WriteTakeSummaryFull(w io.Writer, claimed task.Task, tally map[task.Status]
 
 // WriteTakePreview renders a dry-run envelope for ready tasks.
 func WriteTakePreview(w io.Writer, ready []task.Task, tally map[task.Status]int, readyCount int, bodyLimit int, bodyHint string) error {
-	total := 0
-	for _, n := range tally {
-		total += n
-	}
 	return WriteJSONLine(w, takePreviewDoc{
 		Claimed: false,
 		Tasks:   boundTasksWithHint(ready, bodyLimit, bodyHint),
 		Queue: takeSummaryQueue{
-			Todo:           tally[task.StatusPending],
-			Doing:          tally[task.StatusWorking],
-			Done:           tally[task.StatusDone],
-			Failed:         tally[task.StatusFailed],
-			Deleted:        tally[task.StatusDeleted],
-			Total:          total,
+			queueCounts:    newQueueCounts(tally),
 			ReadyRemaining: readyCount,
 		},
 	}, "take preview")
 }
 
 func writeTakeSummaryWithLimit(w io.Writer, claimed task.Task, tally map[task.Status]int, readyRemaining int, bodyLimit int) error {
-	total := 0
-	for _, n := range tally {
-		total += n
-	}
 	return WriteJSONLine(w, takeSummaryDoc{
 		Claimed: true,
 		Task:    boundTask(claimed, bodyLimit),
 		Queue: takeSummaryQueue{
-			Todo:           tally[task.StatusPending],
-			Doing:          tally[task.StatusWorking],
-			Done:           tally[task.StatusDone],
-			Failed:         tally[task.StatusFailed],
-			Deleted:        tally[task.StatusDeleted],
-			Total:          total,
+			queueCounts:    newQueueCounts(tally),
 			ReadyRemaining: readyRemaining,
 		},
 	}, "take summary")
@@ -172,22 +173,13 @@ func blockedListJSON(blocked []task.BlockedTask) []blockedTaskJSON {
 }
 
 func writeStatusJSON(w io.Writer, tally map[task.Status]int, todo, doing []task.Task, blocked []task.BlockedTask, now time.Time) error {
-	total := 0
-	for _, n := range tally {
-		total += n
-	}
 	var blockedDoc *[]blockedTaskJSON
 	if blocked != nil {
 		value := blockedListJSON(blocked)
 		blockedDoc = &value
 	}
 	return WriteJSONLine(w, statusDoc{
-		Todo:    tally[task.StatusPending],
-		Doing:   tally[task.StatusWorking],
-		Done:    tally[task.StatusDone],
-		Failed:  tally[task.StatusFailed],
-		Deleted: tally[task.StatusDeleted],
-		Total:   total,
+		queueCounts: newQueueCounts(tally),
 		Tasks: statusTasksJSON{
 			Todo:  statusListJSON(todo),
 			Doing: statusDoingListJSON(doing, now),

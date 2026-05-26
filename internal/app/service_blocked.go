@@ -18,7 +18,7 @@ func (s *Service) Blocked(ctx context.Context) ([]task.BlockedTask, error) {
 	}
 	var blocked []task.BlockedTask
 	for _, t := range tasks {
-		if task.NormalizeStatus(t.Status) != task.StatusPending {
+		if task.NormalizeStatus(t.Status) != task.StatusTodo {
 			continue
 		}
 		deps, err := s.store.Dependencies(ctx, t.ID)

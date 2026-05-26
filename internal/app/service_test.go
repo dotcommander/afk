@@ -62,17 +62,17 @@ func TestServiceLifecycle(t *testing.T) {
 	tasks, err := svc.List(ctx, "")
 	require.NoError(t, err)
 	require.Len(t, tasks, 1)
-	require.Equal(t, task.StatusPending, tasks[0].Status)
+	require.Equal(t, task.StatusTodo, tasks[0].Status)
 
 	next, err := svc.Next(ctx)
 	require.NoError(t, err)
 	require.NotNil(t, next)
 	require.Equal(t, id, next.ID)
 
-	popped, err := svc.Pop(ctx)
+	popped, err := svc.Take(ctx, 0, "", "")
 	require.NoError(t, err)
 	require.NotNil(t, popped)
-	require.Equal(t, task.StatusWorking, popped.Status)
+	require.Equal(t, task.StatusDoing, popped.Status)
 	require.Equal(t, fixed.Format(time.RFC3339), popped.Started)
 
 	require.NoError(t, svc.Done(ctx, id, ""))
@@ -105,9 +105,8 @@ func TestServiceFilteringAndCollisionIDs(t *testing.T) {
 	second, err := svc.Add(ctx, "second")
 	require.NoError(t, err)
 	require.NotEqual(t, first, second)
-	require.True(t, strings.HasSuffix(second, "-1"))
 
-	pending, err := svc.List(ctx, string(task.StatusPending))
+	pending, err := svc.List(ctx, string(task.StatusTodo))
 	require.NoError(t, err)
 	require.Len(t, pending, 2)
 	require.Equal(t, "second", pending[1].Body)
@@ -186,8 +185,8 @@ func TestServiceStatusSnapshotUsesCanonicalTodoDoing(t *testing.T) {
 
 	snapshot, err := svc.Status(ctx)
 	require.NoError(t, err)
-	require.Equal(t, 1, snapshot.Counts[task.StatusPending])
-	require.Equal(t, 1, snapshot.Counts[task.StatusWorking])
+	require.Equal(t, 1, snapshot.Counts[task.StatusTodo])
+	require.Equal(t, 1, snapshot.Counts[task.StatusDoing])
 	require.Equal(t, 1, snapshot.Counts[task.StatusDone])
 	require.Equal(t, 1, snapshot.Counts[task.StatusDeleted])
 	require.Len(t, snapshot.Todo, 1)
@@ -196,64 +195,9 @@ func TestServiceStatusSnapshotUsesCanonicalTodoDoing(t *testing.T) {
 	require.Equal(t, todoID, snapshot.Doing[0].ID)
 }
 
-func TestServiceRetriesDuplicateIDOnAdd(t *testing.T) {
-	t.Parallel()
-
-	ctx := context.Background()
-	st := &duplicateOnFirstAddStore{}
-	svc := app.NewService(st, func() time.Time { return fixed })
-
-	id, err := svc.Add(ctx, "duplicate id")
-	require.NoError(t, err)
-	require.Equal(t, "1735787045-1", id)
-	require.Equal(t, 2, st.addCalls)
-}
-
-func TestServiceStopsAfterRepeatedDuplicateIDs(t *testing.T) {
-	t.Parallel()
-
-	ctx := context.Background()
-	st := &alwaysDuplicateStore{}
-	svc := app.NewService(st, func() time.Time { return fixed })
-
-	_, err := svc.Add(ctx, "duplicate forever")
-	require.ErrorIs(t, err, store.ErrDuplicateTask)
-	require.Equal(t, 16, st.addCalls)
-}
-
-type alwaysDuplicateStore struct {
-	app.Store
-	addCalls int
-}
-
-func (s *alwaysDuplicateStore) List(context.Context) ([]task.Task, error) {
-	return nil, nil
-}
-
-func (s *alwaysDuplicateStore) Add(context.Context, task.Task) error {
-	s.addCalls++
-	return store.ErrDuplicateTask
-}
-
-type duplicateOnFirstAddStore struct {
-	app.Store
-	tasks    []task.Task
-	addCalls int
-}
-
-func (s *duplicateOnFirstAddStore) List(context.Context) ([]task.Task, error) {
-	return append([]task.Task(nil), s.tasks...), nil
-}
-
-func (s *duplicateOnFirstAddStore) Add(_ context.Context, t task.Task) error {
-	s.addCalls++
-	if s.addCalls == 1 {
-		s.tasks = append(s.tasks, task.Task{ID: t.ID})
-		return store.ErrDuplicateTask
-	}
-	s.tasks = append(s.tasks, t)
-	return nil
-}
+// Duplicate-ID retry tests were removed when addValidated switched to UUID-
+// based IDs (uuid.NewString). UUIDv4 collisions in this universe are not a
+// realistic concern, so no List/retry loop exists to verify.
 
 func TestServiceRejectsInvalidTasks(t *testing.T) {
 	t.Parallel()
@@ -299,7 +243,7 @@ func TestServiceAddWithOptionsStoresMetadata(t *testing.T) {
 
 	got, err := svc.Show(ctx, id)
 	require.NoError(t, err)
-	require.Equal(t, "high", got.Priority)
+	require.Equal(t, task.PriorityHigh, got.Priority)
 	require.Equal(t, []string{"repo:afk", "type:test"}, got.Tags)
 	require.Equal(t, "/tmp/repo", got.CWD)
 	require.Equal(t, "cli", got.Source)
@@ -385,7 +329,7 @@ func TestServiceReadyExcludesResourceLock(t *testing.T) {
 	require.NoError(t, err)
 	second, err := svc.AddWithOptions(ctx, task.AddOptions{Body: "second", ResourceKey: "repo:x"})
 	require.NoError(t, err)
-	claimed, err := svc.Pop(ctx)
+	claimed, err := svc.Take(ctx, 0, "", "")
 	require.NoError(t, err)
 	require.NotNil(t, claimed)
 
@@ -406,7 +350,7 @@ func TestServiceReadyKeepsExpiredResourceLeaseLockedUntilRequeue(t *testing.T) {
 	require.NoError(t, err)
 	second, err := svc.AddWithOptions(ctx, task.AddOptions{Body: "second", ResourceKey: "repo:x"})
 	require.NoError(t, err)
-	claimed, err := svc.PopWithLease(ctx, time.Second)
+	claimed, err := svc.Take(ctx, time.Second, "", "")
 	require.NoError(t, err)
 	require.NotNil(t, claimed)
 
@@ -435,12 +379,12 @@ func TestServiceNextAndPopEmptyQueue(t *testing.T) {
 	require.NoError(t, err)
 	require.Nil(t, next)
 
-	popped, err := svc.Pop(ctx)
+	popped, err := svc.Take(ctx, 0, "", "")
 	require.NoError(t, err)
 	require.Nil(t, popped)
 }
 
-func TestServiceNextAgreesWithPop(t *testing.T) {
+func TestServiceNextAgreesWithTake(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	svc := newService(t)
@@ -455,7 +399,7 @@ func TestServiceNextAgreesWithPop(t *testing.T) {
 	require.NotNil(t, next)
 	require.Equal(t, first, next.ID)
 
-	popped, err := svc.Pop(ctx)
+	popped, err := svc.Take(ctx, 0, "", "")
 	require.NoError(t, err)
 	require.NotNil(t, popped)
 	require.Equal(t, next.ID, popped.ID)
@@ -476,7 +420,7 @@ func TestServiceNextAndPopAgreeWithPriorityOrder(t *testing.T) {
 	require.NotNil(t, next)
 	require.Equal(t, urgent, next.ID)
 
-	popped, err := svc.Pop(ctx)
+	popped, err := svc.Take(ctx, 0, "", "")
 	require.NoError(t, err)
 	require.NotNil(t, popped)
 	require.Equal(t, urgent, popped.ID)
@@ -489,7 +433,7 @@ func TestServicePopRecordsWorker(t *testing.T) {
 
 	id, err := svc.Add(ctx, "worker")
 	require.NoError(t, err)
-	popped, err := svc.PopWithLeaseForWorker(ctx, 0, "worker-1", "codex")
+	popped, err := svc.Take(ctx, 0, "worker-1", "codex")
 	require.NoError(t, err)
 	require.Equal(t, id, popped.ID)
 
@@ -508,7 +452,7 @@ func TestServiceRequeueStale(t *testing.T) {
 
 	stale, err := svc.Add(ctx, "stale")
 	require.NoError(t, err)
-	claimed, err := svc.PopWithLease(ctx, time.Nanosecond)
+	claimed, err := svc.Take(ctx, time.Nanosecond, "", "")
 	require.NoError(t, err)
 	require.NotNil(t, claimed)
 	require.Equal(t, stale, claimed.ID)
@@ -518,7 +462,7 @@ func TestServiceRequeueStale(t *testing.T) {
 	require.Len(t, requeued, 1)
 	require.Equal(t, stale, requeued[0].ID)
 
-	claimed, err = svc.Pop(ctx)
+	claimed, err = svc.Take(ctx, 0, "", "")
 	require.NoError(t, err)
 	require.NotNil(t, claimed)
 	require.Equal(t, stale, claimed.ID)
@@ -536,7 +480,7 @@ func TestServiceHeartbeat(t *testing.T) {
 
 	id, err := svc.Add(ctx, "heartbeat")
 	require.NoError(t, err)
-	_, err = svc.PopWithLeaseForWorker(ctx, time.Minute, "worker-1", "codex")
+	_, err = svc.Take(ctx, time.Minute, "worker-1", "codex")
 	require.NoError(t, err)
 	require.NoError(t, svc.Heartbeat(ctx, id, "worker-1", 30*time.Minute))
 
@@ -585,7 +529,7 @@ func TestServicePropagatesStoreErrors(t *testing.T) {
 	require.ErrorIs(t, svc.Remove(ctx, "id"), boom)
 	_, err = svc.Prune(ctx, []task.Status{task.StatusDone})
 	require.ErrorIs(t, err, boom)
-	_, err = svc.Pop(ctx)
+	_, err = svc.Take(ctx, 0, "", "")
 	require.ErrorIs(t, err, boom)
 	require.ErrorIs(t, svc.Heartbeat(ctx, "id", "worker", time.Minute), boom)
 	_, err = svc.RequeueStale(ctx, time.Hour)
@@ -597,7 +541,7 @@ func TestServiceExplainPropagatesHistoryErrors(t *testing.T) {
 
 	ctx := context.Background()
 	boom := errors.New("boom")
-	base := []task.Task{{ID: "id", Status: task.StatusPending, Body: "body"}}
+	base := []task.Task{{ID: "id", Status: task.StatusTodo, Body: "body"}}
 
 	svc := app.NewService(&historyErrorStore{tasks: base, eventsErr: boom}, func() time.Time { return fixed })
 	_, err := svc.Explain(ctx, "id")
@@ -916,7 +860,7 @@ func TestDone_WithNote(t *testing.T) {
 
 	id, err := svc.Add(ctx, "task with note")
 	require.NoError(t, err)
-	_, err = svc.Pop(ctx)
+	_, err = svc.Take(ctx, 0, "", "")
 	require.NoError(t, err)
 
 	require.NoError(t, svc.Done(ctx, id, "completed the thing"))
@@ -940,7 +884,7 @@ func TestDone_WithoutNote(t *testing.T) {
 
 	id, err := svc.Add(ctx, "task without note")
 	require.NoError(t, err)
-	_, err = svc.Pop(ctx)
+	_, err = svc.Take(ctx, 0, "", "")
 	require.NoError(t, err)
 
 	require.NoError(t, svc.Done(ctx, id, ""))
@@ -962,7 +906,16 @@ type errorStore struct {
 	err error
 }
 
-func (s *errorStore) List(context.Context) ([]task.Task, error)  { return nil, s.err }
+func (s *errorStore) List(context.Context) ([]task.Task, error) { return nil, s.err }
+func (s *errorStore) Get(context.Context, string) (task.Task, error) {
+	return task.Task{}, s.err
+}
+func (s *errorStore) Counts(context.Context) (map[task.Status]int, error) {
+	return nil, s.err
+}
+func (s *errorStore) ActiveLists(context.Context) ([]task.Task, []task.Task, error) {
+	return nil, nil, s.err
+}
 func (s *errorStore) Ready(context.Context) ([]task.Task, error) { return nil, s.err }
 func (s *errorStore) Add(context.Context, task.Task) error       { return s.err }
 func (s *errorStore) Update(context.Context, string, task.EventType, string, func(*task.Task) bool) error {
@@ -990,6 +943,15 @@ type historyErrorStore struct {
 
 func (s *historyErrorStore) List(context.Context) ([]task.Task, error) {
 	return append([]task.Task(nil), s.tasks...), nil
+}
+
+func (s *historyErrorStore) Get(_ context.Context, id string) (task.Task, error) {
+	for _, t := range s.tasks {
+		if t.ID == id {
+			return t, nil
+		}
+	}
+	return task.Task{}, app.ErrNotFound
 }
 
 func (s *historyErrorStore) Dependencies(context.Context, string) ([]task.Dependency, error) {
