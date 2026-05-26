@@ -47,8 +47,15 @@ AND (
 )`
 
 // SQLiteStore persists tasks in SQLite.
+//
+// now is the clock used for event/dependency timestamps generated inside the
+// store. It is set to time.Now in NewSQLite and can be overridden by tests
+// via SetClock so event ordering is deterministic. Centralizing the clock
+// here keeps the test-injectable Service.now from escaping into wall-clock
+// reads inside the store layer.
 type SQLiteStore struct {
-	db *sql.DB
+	db  *sql.DB
+	now func() time.Time
 }
 
 // Paths identifies the SQLite DB path.
@@ -92,7 +99,7 @@ func NewSQLite(ctx context.Context, paths Paths) (*SQLiteStore, error) {
 		return nil, fmt.Errorf("store: open sqlite %s: %w", paths.SQLitePath, err)
 	}
 	db.SetMaxOpenConns(1)
-	s := &SQLiteStore{db: db}
+	s := &SQLiteStore{db: db, now: time.Now}
 	if err := s.init(ctx); err != nil {
 		_ = db.Close()
 		return nil, err
@@ -301,7 +308,7 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		}
 		return fmt.Errorf("store: add task %s: %w", t.ID, err)
 	}
-	if err := insertEvent(ctx, tx, t.ID, task.EventAdded, t.Created, ""); err != nil {
+	if err := s.insertEvent(ctx, tx, t.ID, task.EventAdded, t.Created, ""); err != nil {
 		return err
 	}
 	return commit(tx)
@@ -331,8 +338,8 @@ WHERE id = ?`,
 		t.Priority, encodeTags(t.Tags), t.CWD, t.Source, t.Agent, t.GroupID, t.ResourceKey, t.ID); err != nil {
 		return fmt.Errorf("store: update task %s: %w", id, err)
 	}
-	at := eventTime(t)
-	if err := insertEvent(ctx, tx, id, event, at, message); err != nil {
+	at := s.eventTime(t)
+	if err := s.insertEvent(ctx, tx, id, event, at, message); err != nil {
 		return err
 	}
 	if err := updateAttemptForEvent(ctx, tx, t, event, at, message); err != nil {
@@ -360,7 +367,7 @@ func (s *SQLiteStore) Delete(ctx context.Context, id string) error {
 	if n == 0 {
 		return fmt.Errorf("task %s: %w", id, ErrNotFound)
 	}
-	if err := insertEvent(ctx, tx, id, task.EventRemoved, "", ""); err != nil {
+	if err := s.insertEvent(ctx, tx, id, task.EventRemoved, "", ""); err != nil {
 		return err
 	}
 	return commit(tx)
@@ -415,7 +422,7 @@ func (s *SQLiteStore) pruneStatus(ctx context.Context, status task.Status) (int,
 		return 0, fmt.Errorf("store: prune %s: %w", status, err)
 	}
 	for _, id := range ids {
-		if err := insertEvent(ctx, tx, id, task.EventPruned, "", string(status)); err != nil {
+		if err := s.insertEvent(ctx, tx, id, task.EventPruned, "", string(status)); err != nil {
 			return 0, err
 		}
 	}
@@ -460,7 +467,7 @@ RETURNING id, created, status, body, started, lease_expires, finished, error,
 		}
 		return nil, err
 	}
-	if err := insertEvent(ctx, tx, t.ID, task.EventClaimed, started, ""); err != nil {
+	if err := s.insertEvent(ctx, tx, t.ID, task.EventClaimed, started, ""); err != nil {
 		return nil, err
 	}
 	if _, err := tx.ExecContext(ctx, `
@@ -515,7 +522,7 @@ SET lease_expires = ?
 WHERE id = ?`, lease, taskID); err != nil {
 		return fmt.Errorf("store: heartbeat update %s: %w", taskID, err)
 	}
-	if err := insertEvent(ctx, tx, taskID, task.EventHeartbeat, now.UTC().Format(time.RFC3339), workerID); err != nil {
+	if err := s.insertEvent(ctx, tx, taskID, task.EventHeartbeat, now.UTC().Format(time.RFC3339), workerID); err != nil {
 		return err
 	}
 	return commit(tx)
@@ -546,7 +553,7 @@ func (s *SQLiteStore) AddDependency(ctx context.Context, taskID, dependsOnID str
 		return ErrDependencyCycle
 	}
 
-	created := nowString()
+	created := s.nowString()
 	res, err := tx.ExecContext(ctx, `
 INSERT INTO task_dependencies (task_id, depends_on_id, created)
 VALUES (?, ?, ?)
@@ -561,7 +568,7 @@ ON CONFLICT(task_id, depends_on_id) DO NOTHING`, taskID, dependsOnID, created)
 	if n == 0 {
 		return commit(tx)
 	}
-	if err := insertEvent(ctx, tx, taskID, task.EventDependencyAdded, created, dependsOnID); err != nil {
+	if err := s.insertEvent(ctx, tx, taskID, task.EventDependencyAdded, created, dependsOnID); err != nil {
 		return err
 	}
 	return commit(tx)

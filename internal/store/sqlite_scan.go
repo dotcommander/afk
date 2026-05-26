@@ -106,9 +106,9 @@ func isDuplicateTaskID(err error) bool {
 	return strings.Contains(err.Error(), "UNIQUE constraint failed: tasks.id")
 }
 
-func insertEvent(ctx context.Context, tx *sql.Tx, taskID string, event task.EventType, at, message string) error {
+func (s *SQLiteStore) insertEvent(ctx context.Context, tx *sql.Tx, taskID string, event task.EventType, at, message string) error {
 	if at == "" {
-		at = nowString()
+		at = s.nowString()
 	}
 	if _, err := tx.ExecContext(ctx, `
 INSERT INTO task_events (task_id, type, at, message)
@@ -154,18 +154,32 @@ VALUES (?, ?, ?, ?, ?, ?, ?)`, t.ID, at, at, string(t.Status), message, "", "");
 	return nil
 }
 
-func eventTime(t task.Task) string {
+func (s *SQLiteStore) eventTime(t task.Task) string {
 	if t.Finished != "" {
 		return t.Finished
 	}
 	if t.Started != "" {
 		return t.Started
 	}
-	return nowString()
+	return s.nowString()
 }
 
-func nowString() string {
-	return time.Now().UTC().Format(time.RFC3339)
+// nowString returns the current store clock formatted as RFC3339 UTC. The
+// clock is settable via SetClock so tests can freeze event timestamps.
+func (s *SQLiteStore) nowString() string {
+	return s.now().UTC().Format(time.RFC3339)
+}
+
+// SetClock overrides the store's internal clock used for event and dependency
+// timestamps generated inside the store (the prior code reached for
+// time.Now() directly, which made those timestamps non-deterministic in
+// tests). Passing nil resets to time.Now.
+func (s *SQLiteStore) SetClock(now func() time.Time) {
+	if now == nil {
+		s.now = time.Now
+		return
+	}
+	s.now = now
 }
 
 func commit(tx *sql.Tx) error {
