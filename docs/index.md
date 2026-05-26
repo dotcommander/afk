@@ -19,3 +19,4 @@ Start here:
 | [scheduling.md](scheduling.md) | Readiness, dependencies, and resource locks. |
 | [configuration.md](configuration.md) | Queue path behavior. |
 | [task-discovery.md](task-discovery.md) | Discovery prompt workflow. |
+| [quality-improvement-workflow.md](quality-improvement-workflow.md) | Repeatable no-HITL quality improvement workflow. |
