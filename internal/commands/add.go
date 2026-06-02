@@ -23,6 +23,7 @@ func newAddCmd(d *Deps) *cobra.Command {
 	var agent string
 	var groupID string
 	var resourceKey string
+	var stage string
 	var blockedBy string
 	var asJSON bool
 	var dryRun bool
@@ -44,6 +45,7 @@ func newAddCmd(d *Deps) *cobra.Command {
 				agent:       agent,
 				groupID:     groupID,
 				resourceKey: resourceKey,
+				stage:       stage,
 				blockedBy:   blockedBy,
 			}, addCommandMode{
 				asJSON:   asJSON,
@@ -61,6 +63,7 @@ func newAddCmd(d *Deps) *cobra.Command {
 	cmd.Flags().StringVar(&agent, "agent", "", "preferred agent")
 	cmd.Flags().StringVar(&groupID, "group", "", "task group id")
 	cmd.Flags().StringVar(&resourceKey, "resource", "", "task resource key (defaults to repo:<git-root>; use none to disable)")
+	cmd.Flags().StringVar(&stage, "stage", "", "free-form pipeline stage label")
 	cmd.Flags().StringVar(&blockedBy, "blocked-by", "", "task id this task is blocked by, or none")
 	cmd.Flags().BoolVar(&asJSON, "json", false, "emit JSON output")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "validate without adding a task")
@@ -79,6 +82,7 @@ type addCommandInput struct {
 	agent       string
 	groupID     string
 	resourceKey string
+	stage       string
 	blockedBy   string
 }
 

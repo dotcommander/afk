@@ -28,13 +28,29 @@ func (s *Service) Fail(ctx context.Context, id, reason string) error {
 
 // SetStatus moves a task to status and records message as lifecycle context.
 func (s *Service) SetStatus(ctx context.Context, id string, status task.Status, message string) error {
+	return s.setStatus(ctx, id, status, message, nil)
+}
+
+// SetStatusWithStage moves a task to status and, when stage is non-nil, also
+// updates the free-form pipeline stage in the same atomic Update. A nil stage
+// leaves the existing stage unchanged.
+func (s *Service) SetStatusWithStage(ctx context.Context, id string, status task.Status, message string, stage *string) error {
+	return s.setStatus(ctx, id, status, message, stage)
+}
+
+func (s *Service) setStatus(ctx context.Context, id string, status task.Status, message string, stage *string) error {
 	status, ok := task.ParseStatus(string(status))
 	if !ok {
 		return task.ErrInvalidStatus
 	}
 	event := eventForStatus(status)
 	return s.store.Update(ctx, id, event, message, func(t *task.Task) bool {
-		return t.SetStatus(status, s.now(), message)
+		changed := t.SetStatus(status, s.now(), message)
+		if stage != nil {
+			t.Stage = *stage
+			changed = true
+		}
+		return changed
 	})
 }
 

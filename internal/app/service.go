@@ -114,6 +114,7 @@ func (s *Service) addValidated(ctx context.Context, opts task.AddOptions) (strin
 		Agent:       opts.Agent,
 		GroupID:     opts.GroupID,
 		ResourceKey: opts.ResourceKey,
+		Stage:       opts.Stage,
 	}
 	if err := s.store.Add(ctx, t); err != nil {
 		return "", err

@@ -11,6 +11,7 @@ import (
 
 func newTasksCmd(d *Deps) *cobra.Command {
 	var status string
+	var stage string
 	var asJSON bool
 
 	cmd := &cobra.Command{
@@ -21,12 +22,29 @@ func newTasksCmd(d *Deps) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			tasks = filterTasksByStage(tasks, stage)
 			return output.WriteList(d.Stdout, tasks, asJSON)
 		},
 	}
 	cmd.Flags().StringVar(&status, "status", "", "filter by status")
+	cmd.Flags().StringVar(&stage, "stage", "", "filter by pipeline stage")
 	cmd.Flags().BoolVar(&asJSON, "json", false, "emit JSONL output")
 	return cmd
+}
+
+// filterTasksByStage returns tasks whose Stage equals stage. An empty stage
+// returns the input unchanged (no filter applied).
+func filterTasksByStage(tasks []task.Task, stage string) []task.Task {
+	if stage == "" {
+		return tasks
+	}
+	out := make([]task.Task, 0, len(tasks))
+	for _, t := range tasks {
+		if t.Stage == stage {
+			out = append(out, t)
+		}
+	}
+	return out
 }
 
 func newFindCmd(d *Deps) *cobra.Command {

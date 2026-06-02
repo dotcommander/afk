@@ -40,6 +40,7 @@ func buildAddCommandOptions(input addCommandInput) (task.AddOptions, string, err
 		Agent:       input.agent,
 		GroupID:     input.groupID,
 		ResourceKey: resourceKey,
+		Stage:       input.stage,
 	}, dependsOnID, nil
 }
 

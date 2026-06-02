@@ -20,7 +20,7 @@ const sqliteBusyRetryDelay = 25 * time.Millisecond
 // migration function is added below.
 const (
 	schemaVersionKey     = "schema_version"
-	currentSchemaVersion = 1
+	currentSchemaVersion = 2
 )
 
 func (s *SQLiteStore) init(ctx context.Context) error {
@@ -41,6 +41,7 @@ CREATE TABLE IF NOT EXISTS tasks (
 	agent TEXT NOT NULL DEFAULT '',
 	group_id TEXT NOT NULL DEFAULT '',
 	resource_key TEXT NOT NULL DEFAULT '',
+	stage TEXT NOT NULL DEFAULT '',
 	ordinal INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS tasks_status_order_idx ON tasks(status, ordinal);
@@ -172,6 +173,7 @@ func (s *SQLiteStore) migrateTaskMetadata(ctx context.Context) error {
 		{"agent", `ALTER TABLE tasks ADD COLUMN agent TEXT NOT NULL DEFAULT ''`},
 		{"group_id", `ALTER TABLE tasks ADD COLUMN group_id TEXT NOT NULL DEFAULT ''`},
 		{"resource_key", `ALTER TABLE tasks ADD COLUMN resource_key TEXT NOT NULL DEFAULT ''`},
+		{"stage", `ALTER TABLE tasks ADD COLUMN stage TEXT NOT NULL DEFAULT ''`},
 		{"lease_expires", `ALTER TABLE tasks ADD COLUMN lease_expires TEXT NOT NULL DEFAULT ''`},
 		{"task_attempts.worker_id", `ALTER TABLE task_attempts ADD COLUMN worker_id TEXT NOT NULL DEFAULT ''`},
 		{"task_attempts.agent", `ALTER TABLE task_attempts ADD COLUMN agent TEXT NOT NULL DEFAULT ''`},

@@ -39,6 +39,7 @@ type Task struct {
 	Finished     string       `json:"finished,omitzero"`
 	Error        string       `json:"error,omitzero"`
 	Dependencies []Dependency `json:"dependencies,omitempty"`
+	Stage        string       `json:"stage,omitempty"` // free-form human pipeline state; empty = unset
 }
 
 // AddOptions carries metadata for a new task.
@@ -51,6 +52,7 @@ type AddOptions struct {
 	Agent       string
 	GroupID     string
 	ResourceKey string
+	Stage       string
 }
 
 // AddOptionsFromTask returns the validation-relevant add metadata for an

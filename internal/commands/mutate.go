@@ -17,6 +17,7 @@ func newSetCmd(d *Deps) *cobra.Command {
 	var summary bool
 	var noteFlag string
 	var noteFile string
+	var stage string
 
 	cmd := &cobra.Command{
 		Use:   "set <id> <status> [note...]",
@@ -31,7 +32,11 @@ func newSetCmd(d *Deps) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if err := d.Service.SetStatus(cmd.Context(), args[0], status, note); err != nil {
+			var stagePtr *string
+			if cmd.Flags().Changed("stage") {
+				stagePtr = &stage
+			}
+			if err := d.Service.SetStatusWithStage(cmd.Context(), args[0], status, note, stagePtr); err != nil {
 				return err
 			}
 			updated, err := d.Service.Show(cmd.Context(), args[0])
@@ -57,6 +62,7 @@ func newSetCmd(d *Deps) *cobra.Command {
 	cmd.Flags().BoolVar(&summary, "summary", false, "emit JSON output with queue counts")
 	cmd.Flags().StringVar(&noteFlag, "note", "", "status note text")
 	cmd.Flags().StringVar(&noteFile, "note-file", "", "read status note from file, or '-' for stdin")
+	cmd.Flags().StringVar(&stage, "stage", "", "set the free-form pipeline stage label (omit to leave unchanged)")
 	return cmd
 }
 

@@ -52,7 +52,7 @@ func (s *SQLiteStore) ActiveLists(ctx context.Context) (todo, doing []task.Task,
 func (s *SQLiteStore) listByStatuses(ctx context.Context, statuses ...string) ([]task.Task, error) {
 	rows, err := s.db.QueryContext(ctx, `
 SELECT id, created, status, body, started, lease_expires, finished, error,
-	priority, tags, cwd, source, agent, group_id, resource_key
+	priority, tags, cwd, source, agent, group_id, resource_key, stage
 FROM tasks
 WHERE status IN (?, ?)
 ORDER BY ordinal, rowid`, statuses[0], statuses[1])

@@ -22,7 +22,7 @@ func scanTask(row taskScanner) (task.Task, error) {
 	var tags string
 	if err := row.Scan(
 		&t.ID, &t.Created, &status, &t.Body, &t.Started, &t.LeaseExpires, &t.Finished, &t.Error,
-		&t.Priority, &tags, &t.CWD, &t.Source, &t.Agent, &t.GroupID, &t.ResourceKey,
+		&t.Priority, &tags, &t.CWD, &t.Source, &t.Agent, &t.GroupID, &t.ResourceKey, &t.Stage,
 	); err != nil {
 		return task.Task{}, fmt.Errorf("store: scan task: %w", err)
 	}
@@ -34,7 +34,7 @@ func scanTask(row taskScanner) (task.Task, error) {
 func getTask(ctx context.Context, tx *sql.Tx, id string) (task.Task, error) {
 	row := tx.QueryRowContext(ctx, `
 SELECT id, created, status, body, started, lease_expires, finished, error,
-	priority, tags, cwd, source, agent, group_id, resource_key
+	priority, tags, cwd, source, agent, group_id, resource_key, stage
 FROM tasks
 WHERE id = ?`, id)
 	t, err := scanTask(row)

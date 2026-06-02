@@ -116,7 +116,7 @@ func (s *SQLiteStore) Close() error {
 func (s *SQLiteStore) List(ctx context.Context) ([]task.Task, error) {
 	rows, err := s.db.QueryContext(ctx, `
 SELECT id, created, status, body, started, lease_expires, finished, error,
-	priority, tags, cwd, source, agent, group_id, resource_key
+	priority, tags, cwd, source, agent, group_id, resource_key, stage
 FROM tasks
 ORDER BY ordinal, rowid`)
 	if err != nil {
@@ -142,7 +142,7 @@ ORDER BY ordinal, rowid`)
 func (s *SQLiteStore) Ready(ctx context.Context) ([]task.Task, error) {
 	rows, err := s.db.QueryContext(ctx, `
 SELECT id, created, status, body, started, lease_expires, finished, error,
-	priority, tags, cwd, source, agent, group_id, resource_key
+	priority, tags, cwd, source, agent, group_id, resource_key, stage
 FROM tasks
 WHERE status = ?`+readyWhereSQL+`
 ORDER BY `+schedulerOrderSQL, string(task.StatusTodo), string(task.StatusDone), string(task.StatusDoing))
@@ -245,7 +245,7 @@ func (s *SQLiteStore) RequeueStale(ctx context.Context, olderThan time.Duration,
 	nowText := now.UTC().Format(time.RFC3339)
 	rows, err := s.db.QueryContext(ctx, `
 SELECT id, created, status, body, started, lease_expires, finished, error,
-	priority, tags, cwd, source, agent, group_id, resource_key
+	priority, tags, cwd, source, agent, group_id, resource_key, stage
 FROM tasks
 WHERE status = ?
 AND (
@@ -298,11 +298,11 @@ func (s *SQLiteStore) Add(ctx context.Context, t task.Task) error {
 	if _, err := tx.ExecContext(ctx, `
 INSERT INTO tasks (
 	id, created, status, body, started, finished, error, ordinal,
-	priority, tags, cwd, source, agent, group_id, resource_key
+	priority, tags, cwd, source, agent, group_id, resource_key, stage
 )
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		t.ID, t.Created, string(t.Status), t.Body, t.Started, t.Finished, t.Error, ordinal,
-		t.Priority, encodeTags(t.Tags), t.CWD, t.Source, t.Agent, t.GroupID, t.ResourceKey); err != nil {
+		t.Priority, encodeTags(t.Tags), t.CWD, t.Source, t.Agent, t.GroupID, t.ResourceKey, t.Stage); err != nil {
 		if isDuplicateTaskID(err) {
 			return fmt.Errorf("store: add task %s: %w", t.ID, ErrDuplicateTask)
 		}
@@ -332,10 +332,10 @@ func (s *SQLiteStore) Update(ctx context.Context, id string, event task.EventTyp
 	if _, err := tx.ExecContext(ctx, `
 UPDATE tasks
 SET created = ?, status = ?, body = ?, started = ?, lease_expires = ?, finished = ?, error = ?,
-	priority = ?, tags = ?, cwd = ?, source = ?, agent = ?, group_id = ?, resource_key = ?
+	priority = ?, tags = ?, cwd = ?, source = ?, agent = ?, group_id = ?, resource_key = ?, stage = ?
 WHERE id = ?`,
 		t.Created, string(t.Status), t.Body, t.Started, t.LeaseExpires, t.Finished, t.Error,
-		t.Priority, encodeTags(t.Tags), t.CWD, t.Source, t.Agent, t.GroupID, t.ResourceKey, t.ID); err != nil {
+		t.Priority, encodeTags(t.Tags), t.CWD, t.Source, t.Agent, t.GroupID, t.ResourceKey, t.Stage, t.ID); err != nil {
 		return fmt.Errorf("store: update task %s: %w", id, err)
 	}
 	at := s.eventTime(t)
@@ -458,7 +458,7 @@ WHERE id = (
 	LIMIT 1
 )
 RETURNING id, created, status, body, started, lease_expires, finished, error,
-	priority, tags, cwd, source, agent, group_id, resource_key`,
+	priority, tags, cwd, source, agent, group_id, resource_key, stage`,
 		string(task.StatusDoing), started, lease, string(task.StatusTodo), string(task.StatusDone), string(task.StatusDoing))
 	t, err := scanTask(row)
 	if err != nil {
