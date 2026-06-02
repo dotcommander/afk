@@ -85,6 +85,7 @@ const (
 	EventRequeued        EventType = "requeued"
 	EventHeartbeat       EventType = "heartbeat"
 	EventDependencyAdded EventType = "dependency_added"
+	EventRelationAdded   EventType = "relation_added"
 )
 
 // Event records a task lifecycle transition.
@@ -110,9 +111,10 @@ type Attempt struct {
 
 // Dependency records that TaskID is blocked by DependsOnID.
 type Dependency struct {
-	TaskID      string `json:"task_id"`
-	DependsOnID string `json:"depends_on_id"`
-	Created     string `json:"created"`
+	TaskID      string       `json:"task_id"`
+	DependsOnID string       `json:"depends_on_id"`
+	Type        RelationType `json:"type,omitempty"`
+	Created     string       `json:"created"`
 }
 
 // ErrGateNotFound reports that a named gate does not exist for a task.

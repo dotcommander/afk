@@ -444,7 +444,7 @@ func TestSQLiteStoreDependencyValidation(t *testing.T) {
 	require.NoError(t, s.Add(ctx, task.Task{ID: "b", Status: task.StatusTodo, Body: "b"}))
 	require.NoError(t, s.Add(ctx, task.Task{ID: "c", Status: task.StatusTodo, Body: "c"}))
 
-	require.ErrorIs(t, s.AddDependency(ctx, "a", "a"), store.ErrInvalidDependency)
+	require.ErrorIs(t, s.AddDependency(ctx, "a", "a"), task.ErrInvalidRelation)
 	require.ErrorIs(t, s.AddDependency(ctx, "a", "missing"), store.ErrNotFound)
 	require.ErrorIs(t, s.AddDependency(ctx, "missing", "a"), store.ErrNotFound)
 

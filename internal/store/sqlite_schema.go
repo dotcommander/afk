@@ -20,7 +20,7 @@ const sqliteBusyRetryDelay = 25 * time.Millisecond
 // migration function is added below.
 const (
 	schemaVersionKey     = "schema_version"
-	currentSchemaVersion = 3
+	currentSchemaVersion = 4
 )
 
 func (s *SQLiteStore) init(ctx context.Context) error {
@@ -72,9 +72,11 @@ CREATE TABLE IF NOT EXISTS task_dependencies (
 	task_id TEXT NOT NULL,
 	depends_on_id TEXT NOT NULL,
 	created TEXT NOT NULL,
+	relation_type TEXT NOT NULL DEFAULT 'blocks',
 	PRIMARY KEY (task_id, depends_on_id)
 );
 CREATE INDEX IF NOT EXISTS task_dependencies_depends_on_idx ON task_dependencies(depends_on_id);
+CREATE INDEX IF NOT EXISTS task_dependencies_type_idx ON task_dependencies(task_id, relation_type);
 CREATE TABLE IF NOT EXISTS task_gates (
 	task_id      TEXT NOT NULL,
 	name         TEXT NOT NULL,
@@ -186,6 +188,7 @@ func (s *SQLiteStore) migrateTaskMetadata(ctx context.Context) error {
 		{"lease_expires", `ALTER TABLE tasks ADD COLUMN lease_expires TEXT NOT NULL DEFAULT ''`},
 		{"task_attempts.worker_id", `ALTER TABLE task_attempts ADD COLUMN worker_id TEXT NOT NULL DEFAULT ''`},
 		{"task_attempts.agent", `ALTER TABLE task_attempts ADD COLUMN agent TEXT NOT NULL DEFAULT ''`},
+		{"task_dependencies.relation_type", `ALTER TABLE task_dependencies ADD COLUMN relation_type TEXT NOT NULL DEFAULT 'blocks'`},
 	}
 	for _, col := range columns {
 		if _, err := s.db.ExecContext(ctx, col.sql); err != nil && !isDuplicateColumn(err) {

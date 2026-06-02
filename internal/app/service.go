@@ -235,6 +235,11 @@ func (s *Service) AddDependency(ctx context.Context, taskID, dependsOnID string)
 	return s.store.AddDependency(ctx, taskID, dependsOnID)
 }
 
+// AddRelation records a typed edge from taskID to relatedID.
+func (s *Service) AddRelation(ctx context.Context, taskID, relatedID string, relType task.RelationType) error {
+	return s.store.AddRelation(ctx, taskID, relatedID, relType)
+}
+
 // Dependencies returns the tasks that taskID is blocked by.
 func (s *Service) Dependencies(ctx context.Context, taskID string) ([]task.Dependency, error) {
 	return s.store.Dependencies(ctx, taskID)

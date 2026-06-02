@@ -111,7 +111,7 @@ func writeTaskDetail(w io.Writer, t task.Task) error {
 			return fmt.Errorf("task detail: write: %w", err)
 		}
 		for _, dep := range t.Dependencies {
-			if _, err := fmt.Fprintf(w, "  %s\n", dep.DependsOnID); err != nil {
+			if _, err := fmt.Fprintf(w, "  %s (%s)\n", dep.DependsOnID, relationDisplay(dep.Type)); err != nil {
 				return fmt.Errorf("task detail: write: %w", err)
 			}
 		}
@@ -192,11 +192,28 @@ func boundTask(t task.Task, bodyLimit int) boundedTask {
 	return boundTaskWithHint(t, bodyLimit, "")
 }
 
+// relationDisplay resolves a dependency's relation type for display. Empty
+// (legacy rows) renders as the default blocks relation so output is never blank.
+func relationDisplay(rt task.RelationType) task.RelationType {
+	if rt == "" {
+		return task.RelationBlocks
+	}
+	return rt
+}
+
 func boundTaskWithHint(t task.Task, bodyLimit int, bodyHint string) boundedTask {
 	body, bodyTruncated := truncateWithStatus(t.Body, bodyLimit)
 	errorText, errorTruncated := truncateWithStatus(t.Error, maxMessageRunes)
 	t.Body = body
 	t.Error = errorText
+	if len(t.Dependencies) > 0 {
+		deps := make([]task.Dependency, len(t.Dependencies))
+		copy(deps, t.Dependencies)
+		for i := range deps {
+			deps[i].Type = relationDisplay(deps[i].Type)
+		}
+		t.Dependencies = deps
+	}
 	if !bodyTruncated {
 		bodyHint = ""
 	}

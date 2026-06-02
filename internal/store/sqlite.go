@@ -33,6 +33,7 @@ AND NOT EXISTS (
 	FROM task_dependencies d
 	LEFT JOIN tasks prereq ON prereq.id = d.depends_on_id
 	WHERE d.task_id = tasks.id
+	AND d.relation_type = 'blocks'
 	AND (prereq.id IS NULL OR prereq.status != ?)
 )
 AND (
@@ -534,56 +535,10 @@ WHERE id = ?`, lease, taskID); err != nil {
 	return commit(tx)
 }
 
-// AddDependency records that taskID is blocked by dependsOnID.
-func (s *SQLiteStore) AddDependency(ctx context.Context, taskID, dependsOnID string) error {
-	if taskID == "" || dependsOnID == "" || taskID == dependsOnID {
-		return ErrInvalidDependency
-	}
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("store: begin add dependency: %w", err)
-	}
-	defer rollback(tx)
-
-	if _, err := getTask(ctx, tx, taskID); err != nil {
-		return err
-	}
-	if _, err := getTask(ctx, tx, dependsOnID); err != nil {
-		return err
-	}
-	cycle, err := dependencyPathExists(ctx, tx, dependsOnID, taskID)
-	if err != nil {
-		return err
-	}
-	if cycle {
-		return ErrDependencyCycle
-	}
-
-	created := s.nowString()
-	res, err := tx.ExecContext(ctx, `
-INSERT INTO task_dependencies (task_id, depends_on_id, created)
-VALUES (?, ?, ?)
-ON CONFLICT(task_id, depends_on_id) DO NOTHING`, taskID, dependsOnID, created)
-	if err != nil {
-		return fmt.Errorf("store: add dependency %s -> %s: %w", taskID, dependsOnID, err)
-	}
-	n, err := res.RowsAffected()
-	if err != nil {
-		return fmt.Errorf("store: add dependency rows affected: %w", err)
-	}
-	if n == 0 {
-		return commit(tx)
-	}
-	if err := s.insertEvent(ctx, tx, taskID, task.EventDependencyAdded, created, dependsOnID); err != nil {
-		return err
-	}
-	return commit(tx)
-}
-
-// Dependencies returns the tasks that taskID is blocked by.
+// Dependencies returns the typed relation edges declared on taskID.
 func (s *SQLiteStore) Dependencies(ctx context.Context, taskID string) ([]task.Dependency, error) {
 	rows, err := s.db.QueryContext(ctx, `
-SELECT task_id, depends_on_id, created
+SELECT task_id, depends_on_id, created, relation_type
 FROM task_dependencies
 WHERE task_id = ?
 ORDER BY created, depends_on_id`, taskID)
@@ -595,9 +550,11 @@ ORDER BY created, depends_on_id`, taskID)
 	var deps []task.Dependency
 	for rows.Next() {
 		var dep task.Dependency
-		if err := rows.Scan(&dep.TaskID, &dep.DependsOnID, &dep.Created); err != nil {
+		var relType string
+		if err := rows.Scan(&dep.TaskID, &dep.DependsOnID, &dep.Created, &relType); err != nil {
 			return nil, fmt.Errorf("store: scan dependency: %w", err)
 		}
+		dep.Type = task.RelationType(relType)
 		deps = append(deps, dep)
 	}
 	if err := rows.Err(); err != nil {

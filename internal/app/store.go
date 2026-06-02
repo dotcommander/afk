@@ -25,6 +25,7 @@ type Store interface {
 	ClaimNextForWorker(ctx context.Context, now time.Time, leaseExpires time.Time, workerID, agent string) (*task.Task, error)
 	Heartbeat(ctx context.Context, taskID, workerID string, now time.Time, leaseExpires time.Time) error
 	AddDependency(ctx context.Context, taskID, dependsOnID string) error
+	AddRelation(ctx context.Context, taskID, relatedID string, relType task.RelationType) error
 	Dependencies(ctx context.Context, taskID string) ([]task.Dependency, error)
 	AddGate(ctx context.Context, taskID, name string) error
 	SatisfyGate(ctx context.Context, taskID, name string) error
