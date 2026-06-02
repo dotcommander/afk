@@ -20,7 +20,7 @@ const sqliteBusyRetryDelay = 25 * time.Millisecond
 // migration function is added below.
 const (
 	schemaVersionKey     = "schema_version"
-	currentSchemaVersion = 2
+	currentSchemaVersion = 3
 )
 
 func (s *SQLiteStore) init(ctx context.Context) error {
@@ -75,6 +75,15 @@ CREATE TABLE IF NOT EXISTS task_dependencies (
 	PRIMARY KEY (task_id, depends_on_id)
 );
 CREATE INDEX IF NOT EXISTS task_dependencies_depends_on_idx ON task_dependencies(depends_on_id);
+CREATE TABLE IF NOT EXISTS task_gates (
+	task_id      TEXT NOT NULL,
+	name         TEXT NOT NULL,
+	satisfied    INTEGER NOT NULL DEFAULT 0,
+	created      TEXT NOT NULL,
+	satisfied_at TEXT,
+	PRIMARY KEY (task_id, name)
+);
+CREATE INDEX IF NOT EXISTS task_gates_task_idx ON task_gates(task_id, satisfied);
 `); err != nil {
 		return fmt.Errorf("store: create schema: %w", err)
 	}

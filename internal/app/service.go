@@ -240,6 +240,21 @@ func (s *Service) Dependencies(ctx context.Context, taskID string) ([]task.Depen
 	return s.store.Dependencies(ctx, taskID)
 }
 
+// AddGate records a named boolean precondition on a task.
+func (s *Service) AddGate(ctx context.Context, taskID, name string) error {
+	return s.store.AddGate(ctx, taskID, name)
+}
+
+// SatisfyGate marks a gate satisfied.
+func (s *Service) SatisfyGate(ctx context.Context, taskID, name string) error {
+	return s.store.SatisfyGate(ctx, taskID, name)
+}
+
+// Gates returns all gates for a task.
+func (s *Service) Gates(ctx context.Context, taskID string) ([]task.Gate, error) {
+	return s.store.Gates(ctx, taskID)
+}
+
 // Ready returns todo tasks with no unfinished dependencies in scheduler order.
 func (s *Service) Ready(ctx context.Context) ([]task.Task, error) {
 	return s.store.Ready(ctx)

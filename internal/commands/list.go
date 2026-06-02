@@ -132,7 +132,11 @@ func newTaskCmd(d *Deps) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return output.WriteExplain(d.Stdout, data.Task, data.Events, data.Attempts, asJSON)
+			gates, err := d.Service.Gates(cmd.Context(), args[0])
+			if err != nil {
+				return err
+			}
+			return output.WriteExplainWithGates(d.Stdout, data.Task, gates, data.Events, data.Attempts, asJSON)
 		},
 	}
 	cmd.Flags().BoolVar(&asJSON, "json", false, "emit JSON output")

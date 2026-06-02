@@ -44,6 +44,12 @@ AND (
 		AND active.resource_key = tasks.resource_key
 		AND active.id != tasks.id
 	)
+)
+AND NOT EXISTS (
+	SELECT 1
+	FROM task_gates g
+	WHERE g.task_id = tasks.id
+	AND g.satisfied = 0
 )`
 
 // SQLiteStore persists tasks in SQLite.

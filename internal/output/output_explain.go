@@ -13,6 +13,7 @@ import (
 
 type explainDoc struct {
 	Task            boundedTask    `json:"task"`
+	Gates           []task.Gate    `json:"gates"`
 	Events          []task.Event   `json:"events"`
 	Attempts        []task.Attempt `json:"attempts"`
 	EventsOmitted   int            `json:"events_omitted,omitzero"`
@@ -21,17 +22,23 @@ type explainDoc struct {
 
 // WriteExplain renders a task and its durable lifecycle history.
 func WriteExplain(w io.Writer, t task.Task, events []task.Event, attempts []task.Attempt, asJSON bool) error {
+	return WriteExplainWithGates(w, t, nil, events, attempts, asJSON)
+}
+
+// WriteExplainWithGates renders a task, its gates, and its durable lifecycle history.
+func WriteExplainWithGates(w io.Writer, t task.Task, gates []task.Gate, events []task.Event, attempts []task.Attempt, asJSON bool) error {
 	visibleEvents, omittedEvents := limitEvents(events)
 	visibleAttempts, omittedAttempts := limitAttempts(attempts)
 	if asJSON {
-		return writeExplainJSON(w, t, visibleEvents, visibleAttempts, omittedEvents, omittedAttempts)
+		return writeExplainJSON(w, t, gates, visibleEvents, visibleAttempts, omittedEvents, omittedAttempts)
 	}
-	return writeExplainText(w, t, visibleEvents, visibleAttempts, omittedEvents, omittedAttempts)
+	return writeExplainText(w, t, gates, visibleEvents, visibleAttempts, omittedEvents, omittedAttempts)
 }
 
-func writeExplainJSON(w io.Writer, t task.Task, events []task.Event, attempts []task.Attempt, omittedEvents, omittedAttempts int) error {
+func writeExplainJSON(w io.Writer, t task.Task, gates []task.Gate, events []task.Event, attempts []task.Attempt, omittedEvents, omittedAttempts int) error {
 	return WriteJSONLine(w, explainDoc{
 		Task:            boundTask(t, maxDetailBodyRunes),
+		Gates:           gates,
 		Events:          boundEvents(events),
 		Attempts:        boundAttempts(attempts),
 		EventsOmitted:   omittedEvents,
@@ -39,14 +46,39 @@ func writeExplainJSON(w io.Writer, t task.Task, events []task.Event, attempts []
 	}, "explain")
 }
 
-func writeExplainText(w io.Writer, t task.Task, events []task.Event, attempts []task.Attempt, omittedEvents, omittedAttempts int) error {
+func writeExplainText(w io.Writer, t task.Task, gates []task.Gate, events []task.Event, attempts []task.Attempt, omittedEvents, omittedAttempts int) error {
 	if err := writeTaskDetail(w, t); err != nil {
+		return err
+	}
+	if err := writeExplainGates(w, gates); err != nil {
 		return err
 	}
 	if err := writeExplainEvents(w, events, omittedEvents); err != nil {
 		return err
 	}
 	return writeExplainAttempts(w, attempts, omittedAttempts)
+}
+
+func writeExplainGates(w io.Writer, gates []task.Gate) error {
+	return writeExplainSection(w, "Gates:", len(gates), 0, "gates", func() error {
+		for _, gate := range gates {
+			if err := writeExplainGate(w, gate); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
+func writeExplainGate(w io.Writer, gate task.Gate) error {
+	state := "unsatisfied"
+	if gate.Satisfied {
+		state = "satisfied"
+	}
+	if _, err := fmt.Fprintf(w, "  %s  %s\n", gate.Name, state); err != nil {
+		return fmt.Errorf("explain: write: %w", err)
+	}
+	return nil
 }
 
 func writeExplainEvents(w io.Writer, events []task.Event, omitted int) error {

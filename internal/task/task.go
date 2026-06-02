@@ -115,6 +115,18 @@ type Dependency struct {
 	Created     string `json:"created"`
 }
 
+// ErrGateNotFound reports that a named gate does not exist for a task.
+var ErrGateNotFound = errors.New("gate not found")
+
+// Gate is a named boolean precondition on a task. SatisfiedAt is nil until satisfied.
+type Gate struct {
+	TaskID      string     `json:"task_id"`
+	Name        string     `json:"name"`
+	Satisfied   bool       `json:"satisfied"`
+	CreatedAt   time.Time  `json:"created_at"`
+	SatisfiedAt *time.Time `json:"satisfied_at,omitempty"`
+}
+
 // ValidStatus reports whether s is a known status.
 func ValidStatus(s Status) bool {
 	_, ok := ParseStatus(string(s))

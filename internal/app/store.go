@@ -26,6 +26,9 @@ type Store interface {
 	Heartbeat(ctx context.Context, taskID, workerID string, now time.Time, leaseExpires time.Time) error
 	AddDependency(ctx context.Context, taskID, dependsOnID string) error
 	Dependencies(ctx context.Context, taskID string) ([]task.Dependency, error)
+	AddGate(ctx context.Context, taskID, name string) error
+	SatisfyGate(ctx context.Context, taskID, name string) error
+	Gates(ctx context.Context, taskID string) ([]task.Gate, error)
 	Events(ctx context.Context, taskID string) ([]task.Event, error)
 	Attempts(ctx context.Context, taskID string) ([]task.Attempt, error)
 	RequeueStale(ctx context.Context, olderThan time.Duration, now time.Time) ([]task.Task, error)
