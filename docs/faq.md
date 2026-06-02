@@ -146,6 +146,9 @@ A strong task body includes:
 - Verify with: exact local command or deterministic check.
 - Reject-if: condition that makes the task invalid or blocked.
 
+`--stage <value>` is an optional free-form pipeline label (such as `triage` or
+`in-review`) independent of status; it does not affect readiness.
+
 ### How do I validate before writing?
 
 Use dry-run:
@@ -213,8 +216,9 @@ afk tasks --status todo --json
 afk tasks --status doing --json
 ```
 
-If visible `todo` work is blocked by resource locks, `afk take` keeps stdout
-empty and writes a short explanation to stderr.
+If visible `todo` work is held back by a resource lock, an unsatisfied gate, or
+a `blocks` relation pointing at unfinished work, `afk take` keeps stdout empty
+and writes a short explanation to stderr.
 
 ### Why does `afk status` show todo work but `afk take` claims nothing?
 
@@ -222,8 +226,13 @@ empty and writes a short explanation to stderr.
 
 A `todo` task is not ready while:
 
-- a dependency is not `done`
+- a `blocks` relation points at a task that is not `done`
 - another `doing` task has the same non-empty resource key
+- a gate on the task is unsatisfied
+
+`store.Ready` (SQL) is the single authority for this. A task is claimable only
+when every `blocks` relation points to a `done` task, no other `doing` task
+holds its resource key, and no gate is unsatisfied.
 
 Inspect the task and active work:
 
@@ -294,6 +303,17 @@ afk add --blocked-by "$first" "update docs after the API contract lands"
 
 The dependent task remains `todo` until the prerequisite is `done`.
 
+A dependency is a `blocks` relation. `--blocked-by` is the shorthand for it. You
+can also create relations after the fact:
+
+```sh
+afk relate <task-id> <related-id> --type blocks|relates|duplicates|parent
+```
+
+The `--type` defaults to `blocks`. Only `blocks` gates readiness; `relates`,
+`duplicates`, and `parent` are informational links that never block a task from
+being claimed.
+
 ### How do I create an independent task when my script may pass a blocker?
 
 Use `none`:
@@ -328,6 +348,30 @@ afk add --resource none "independent task"
 
 Use this only when the work truly does not conflict with other tasks in the
 same repository or shared resource.
+
+### How do gates work?
+
+A gate is a named precondition on a task. While a task has any unsatisfied gate,
+it stays out of the ready set.
+
+```sh
+afk gate add <id> <name>
+afk gate satisfy <id> <name>
+```
+
+`afk gate add` is idempotent. `afk gate satisfy` is one-way; satisfying an
+unknown gate name errors. Use gates to hold work on an external condition such
+as a review being approved or CI turning green.
+
+A typical flow:
+
+```sh
+id=$(afk add "ship the release")
+afk gate add "$id" ci-green
+afk take --dry-run --limit 0 --json --full   # does not surface the task
+afk gate satisfy "$id" ci-green
+afk take --dry-run --limit 0 --json --full   # now surfaces the task
+```
 
 ### What should I do with a bad dependency or resource shape?
 

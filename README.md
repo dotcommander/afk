@@ -13,15 +13,14 @@ afk set "$id" done --note "verified" --summary
 ```
 
 Tasks move through `todo`, `doing`, `done`, `failed`, and `deleted`.
-Readiness is narrower than `todo`: a task is claimable only when all
-dependencies are done and no active `doing` task holds its resource key.
+Readiness is narrower than `todo`: a task is claimable only when every
+`blocks` relation is `done`, no other active `doing` task holds its resource
+key, and no gate is unsatisfied.
 `afk status --blocked` explains dependency blockers; `doing` task status output
 also shows claim age and stale lease diagnostics.
 
 `--stage` is a free-form human pipeline state (e.g. `triage`, `in-review`),
 independent of the five execution states; it does not affect readiness.
-Gates and `blocks` relations do: a task is not claimable while any gate is
-unsatisfied or any `blocks` relation is unsatisfied.
 
 ## core commands
 
@@ -36,7 +35,7 @@ unsatisfied or any `blocks` relation is unsatisfied.
 | `afk set <id> <status> [note...] [--note TEXT] [--note-file PATH|-] [--stage VALUE] [--json] [--summary]` | Set `todo`, `doing`, `done`, `failed`, or `deleted`. |
 | `afk retry <id> [--reason TEXT] [--json]` | Open a new attempt for a failed task. |
 | `afk relate <task-id> <related-id> [--type blocks\|relates\|duplicates\|parent]` | Record a typed relation between tasks. Defaults to `blocks`. Only `blocks` edges gate readiness; `relates`/`duplicates`/`parent` are informational. |
-| `afk gate <task-id> add <name>` / `afk gate <task-id> satisfy <name>` | Named boolean preconditions. A task with any unsatisfied gate is not claimable until every gate is satisfied. Satisfy is one-way. |
+| `afk gate add <id> <name>` / `afk gate satisfy <id> <name>` | Named boolean preconditions. A task with any unsatisfied gate is not claimable until every gate is satisfied. Satisfy is one-way. |
 | `afk snapshot [--label LABEL] [--task ID] [--output PATH]` | Export read-only JSON evidence for before/after comparisons. |
 | `afk prompt [--task ID]` | Generate LLM-agent instructions. |
 | `afk serve` | Run the web visibility layer. |

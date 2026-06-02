@@ -12,12 +12,15 @@ The public command surface is intentionally small.
 |---|---|
 | `afk add <body...>` | Append a new `todo` task and print its id. |
 | `afk add --dry-run [--json] <body...>` | Validate task shape and metadata without mutating the queue. |
-| `afk tasks [--status STATUS] [--json]` | List tasks. Default hides `deleted`; use `--status deleted` or `--status all` when needed. |
+| `afk tasks [--status STATUS] [--stage VALUE] [--json]` | List tasks. Default hides `deleted`; use `--status deleted` or `--status all` when needed. `--stage` filters by pipeline label. |
 | `afk task <id> [--json]` | Show one task with metadata, dependencies, events, and attempts. |
 | `afk status [--summary] [--blocked] [--json]` | Print queue counts; without `--summary`, also includes `todo` and `doing` task lists. `--blocked` adds dependency blocker details. |
 | `afk find <query> [--status STATUS] [--json]` | Search id, body, status, cwd, source, tags, resource, agent, group, and error text. |
 | `afk take [--dry-run] [--limit N] [--lease DURATION] [--worker ID] [--json] [--summary] [--full] [--envelope]` | Preview or atomically claim the first ready task. |
-| `afk set <id> <status> [note...] [--note TEXT] [--note-file PATH|-] [--json] [--summary]` | Move a task to `todo`, `doing`, `done`, `failed`, or `deleted`. |
+| `afk set <id> <status> [note...] [--note TEXT] [--note-file PATH|-] [--stage VALUE] [--json] [--summary]` | Move a task to `todo`, `doing`, `done`, `failed`, or `deleted`. |
+| `afk relate <task-id> <related-id> [--type TYPE]` | Record a typed relation between two tasks. |
+| `afk gate add <task-id> <name>` | Add a named boolean precondition to a task. |
+| `afk gate satisfy <task-id> <name>` | Mark a named precondition satisfied. |
 | `afk retry <id> [--reason TEXT] [--json]` | Convenience command for reopening a failed task as `doing` with a new attempt. |
 | `afk snapshot [--label LABEL] [--task ID] [--output PATH]` | Export a read-only JSON evidence snapshot for before/after comparisons. |
 | `afk prompt [--task ID] [--discover] [--output PATH]` | Emit LLM-agent instruction prompts. |
@@ -25,9 +28,14 @@ The public command surface is intentionally small.
 
 ## take readiness
 
-`afk take` claims only tasks that are ready. A `todo` task is not ready while it
-has unfinished dependencies or while another `doing` task holds the same
-non-empty resource key.
+`afk take` claims only tasks that are ready. A `todo` task is claimable only when
+all hold:
+
+1. every `blocks` relation points to a `done` task
+2. no other `doing` task holds the same non-empty resource key
+3. it has no unsatisfied gate
+
+`store.Ready` (SQL) is the single authority for readiness.
 
 Preview ready tasks without claiming:
 
@@ -48,6 +56,50 @@ counts:
 ```sh
 afk take --dry-run --summary --limit 5
 ```
+
+## relations
+
+```sh
+afk relate "$id" "$other" --type blocks
+```
+
+`--type` defaults to `blocks`. Only `blocks` edges gate readiness: a task with a
+`blocks` edge to a not-`done` task is not claimable. `relates`, `duplicates`, and
+`parent` are informational and never block.
+
+`afk add --blocked-by <id>` is the shorthand for a `blocks` relation:
+
+```sh
+afk add --blocked-by 42 "corrected dependent task"
+```
+
+Self-relation is rejected. Re-relating the same pair updates the type.
+
+## gates
+
+```sh
+afk gate add "$id" tests-green
+afk gate satisfy "$id" tests-green
+```
+
+`gate add` adds a named boolean precondition and is idempotent. `gate satisfy`
+marks it satisfied and is one-way; satisfying an unknown gate name errors. A task
+with any unsatisfied gate is not ready until every gate is satisfied. Neither
+subcommand takes flags.
+
+## stage
+
+```sh
+afk add --stage triage "review the migration"
+afk set "$id" doing --stage in-review
+afk tasks --stage triage
+```
+
+`--stage` is a free-form human pipeline label (e.g. `triage`, `in-review`),
+independent of the five execution states; it does not affect readiness.
+`afk set <id> <status> --stage <value>` sets stage alongside the status change;
+omitting `--stage` leaves the existing stage unchanged. `afk tasks --stage <value>`
+filters by stage.
 
 ## status diagnostics
 
@@ -207,3 +259,6 @@ failed, or manually completed.
 
 Canonical statuses are `todo`, `doing`, `done`, `failed`, and `deleted`.
 Old stored values `pending` and `working` are migrated to `todo` and `doing`.
+
+`--stage` is a separate free-form pipeline label, independent of these five
+execution states; it does not affect readiness.

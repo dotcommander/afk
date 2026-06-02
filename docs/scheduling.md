@@ -9,11 +9,15 @@ afk tasks --status doing --json
 Use those three commands when `afk status` shows `todo` work but workers are
 not claiming anything.
 
-Readiness is separate from status. A task is ready only when:
+Readiness is separate from status. `store.Ready` (SQL) is the single authority.
+A task is ready only when all hold:
 
 - its status is `todo`
-- every dependency is `done`
+- every `blocks` relation points to a `done` task
 - no other `doing` task holds the same non-empty resource key
+- it has no unsatisfied gate
+
+Dependencies are `blocks` relations: `afk add --blocked-by <id>` creates one.
 
 Preview claimable work without mutating the queue:
 
@@ -41,6 +45,39 @@ Inspect those separately:
 ```sh
 afk tasks --status doing --json
 ```
+
+Record a typed relation between two tasks:
+
+```sh
+afk relate "$id" "$other" --type blocks
+```
+
+`--type` defaults to `blocks`. Only `blocks` edges gate readiness: a `blocks`
+edge to a not-`done` task keeps the dependent out of the ready set. `relates`,
+`duplicates`, and `parent` are informational links that never block. `afk add
+--blocked-by <id>` is the shorthand for a `blocks` relation.
+
+Hold a task on an external precondition with a gate:
+
+```sh
+afk add "publish the release"
+afk gate add "$id" review-approved
+afk take --dry-run --limit 0          # the task does not appear
+afk gate satisfy "$id" review-approved
+afk take --dry-run --limit 0          # now it appears
+```
+
+An unsatisfied gate keeps a task out of the ready set until you satisfy it. Use
+gates to hold work on a precondition like a review or a CI run.
+
+`--stage` is a free-form pipeline label, orthogonal to readiness:
+
+```sh
+afk add --stage triage "review the migration"
+```
+
+It is not a scheduling input; it does not affect readiness and is independent of
+status.
 
 Claim one ready task:
 
