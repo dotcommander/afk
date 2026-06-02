@@ -799,7 +799,7 @@ func TestCommandRunEPropagatesServiceErrors(t *testing.T) {
 
 	boom := errors.New("boom")
 	d := testDepsWithWriters(&bytes.Buffer{}, &bytes.Buffer{})
-	d.Service = app.NewService(&commandErrorStore{err: boom}, func() time.Time { return time.Now() })
+	d.Service = app.NewService(&commandErrorStore{err: boom}, time.Now)
 
 	for _, tc := range []struct {
 		name string
@@ -830,7 +830,7 @@ func TestCommandRunEPropagatesServiceErrors(t *testing.T) {
 func TestRunAddForcePropagatesDependencyError(t *testing.T) {
 	stdout, stderr := &bytes.Buffer{}, &bytes.Buffer{}
 	d := testDepsWithWriters(stdout, stderr)
-	d.Service = app.NewService(&commandDependencyErrorStore{}, func() time.Time { return time.Now() })
+	d.Service = app.NewService(&commandDependencyErrorStore{}, time.Now)
 	t.Setenv("AFK_ALLOW_FORCE", "1")
 
 	cmd := &cobra.Command{}
@@ -844,7 +844,7 @@ func TestRunAddForcePropagatesWarningWriteError(t *testing.T) {
 	stdout := &bytes.Buffer{}
 	d := testDepsWithWriters(stdout, &bytes.Buffer{})
 	d.Stderr = commandFailWriter{}
-	d.Service = app.NewService(&commandDependencyErrorStore{}, func() time.Time { return time.Now() })
+	d.Service = app.NewService(&commandDependencyErrorStore{}, time.Now)
 	t.Setenv("AFK_ALLOW_FORCE", "1")
 
 	err := runAddForce(&cobra.Command{}, d, task.AddOptions{Body: "forced"}, "", true)
@@ -857,7 +857,7 @@ func TestRunAddNormalPropagatesDependencyError(t *testing.T) {
 
 	stdout, stderr := &bytes.Buffer{}, &bytes.Buffer{}
 	d := testDepsWithWriters(stdout, stderr)
-	d.Service = app.NewService(&commandDependencyErrorStore{}, func() time.Time { return time.Now() })
+	d.Service = app.NewService(&commandDependencyErrorStore{}, time.Now)
 
 	cmd := &cobra.Command{}
 	err := runAddNormal(cmd, d, task.AddOptions{Body: "normal"}, "dep", true)
@@ -870,7 +870,7 @@ func TestRunAddNormalPropagatesResultWriteError(t *testing.T) {
 
 	d := testDepsWithWriters(&bytes.Buffer{}, &bytes.Buffer{})
 	d.Stdout = commandFailWriter{}
-	d.Service = app.NewService(&commandDependencyErrorStore{}, func() time.Time { return time.Now() })
+	d.Service = app.NewService(&commandDependencyErrorStore{}, time.Now)
 
 	err := runAddNormal(&cobra.Command{}, d, task.AddOptions{Body: "normal"}, "", true)
 	require.Error(t, err)

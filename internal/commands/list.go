@@ -26,7 +26,7 @@ func newTasksCmd(d *Deps) *cobra.Command {
 			return output.WriteList(d.Stdout, tasks, asJSON)
 		},
 	}
-	cmd.Flags().StringVar(&status, "status", "", "filter by status")
+	cmd.Flags().StringVar(&status, statusName, "", "filter by status")
 	cmd.Flags().StringVar(&stage, "stage", "", "filter by pipeline stage")
 	cmd.Flags().BoolVar(&asJSON, "json", false, "emit JSONL output")
 	return cmd
@@ -63,7 +63,7 @@ func newFindCmd(d *Deps) *cobra.Command {
 			return output.WriteList(d.Stdout, tasks, asJSON)
 		},
 	}
-	cmd.Flags().StringVar(&status, "status", "", "filter by status")
+	cmd.Flags().StringVar(&status, statusName, "", "filter by status")
 	cmd.Flags().BoolVar(&asJSON, "json", false, "emit JSONL output")
 	return cmd
 }
@@ -88,7 +88,7 @@ func newStatusCmd(d *Deps) *cobra.Command {
 	var includeBlocked bool
 
 	cmd := &cobra.Command{
-		Use:   "status",
+		Use:   statusName,
 		Short: "Print queue status",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			snapshot, err := d.Service.Status(cmd.Context())

@@ -79,11 +79,7 @@ func joinCmd(exe, args string) string {
 }
 
 // Task renders a focused execution prompt for one task.
-func Task(exe string, t task.Task, events []task.Event, attempts []task.Attempt, gates []task.Gate) string {
-	if exe == "" {
-		exe = "afk"
-	}
-
+func taskMetaLines(t task.Task) []string {
 	var meta []string
 	if t.Stage != "" {
 		meta = append(meta, "Stage: `"+t.Stage+"`")
@@ -109,6 +105,16 @@ func Task(exe string, t task.Task, events []task.Event, attempts []task.Attempt,
 	if t.ResourceKey != "" {
 		meta = append(meta, "Resource: `"+t.ResourceKey+"`")
 	}
+	return meta
+}
+
+// Task renders the focused single-task instruction prompt.
+func Task(exe string, t task.Task, events []task.Event, attempts []task.Attempt, gates []task.Gate) string {
+	if exe == "" {
+		exe = "afk"
+	}
+
+	meta := taskMetaLines(t)
 
 	vEvents, omE := limitPromptEvents(events)
 	vAttempts, omA := limitPromptAttempts(attempts)

@@ -146,7 +146,7 @@ func readNoteFile(d *Deps, path string) (string, error) {
 		if err != nil {
 			return "", fmt.Errorf("set note: open %s: %w", path, err)
 		}
-		defer f.Close()
+		defer func() { _ = f.Close() }()
 		r = f
 	}
 	data, err := io.ReadAll(io.LimitReader(r, maxNoteBytes+1))

@@ -203,15 +203,15 @@ func (s *SQLiteStore) migrateStatusNames(ctx context.Context) error {
 		table string
 		from  string
 		to    string
+		query string
 	}{
-		{table: "tasks", from: "pending", to: "todo"},
-		{table: "tasks", from: "working", to: "doing"},
-		{table: "task_attempts", from: "pending", to: "todo"},
-		{table: "task_attempts", from: "working", to: "doing"},
+		{table: "tasks", from: "pending", to: "todo", query: `UPDATE tasks SET status = ? WHERE status = ?`},
+		{table: "tasks", from: "working", to: "doing", query: `UPDATE tasks SET status = ? WHERE status = ?`},
+		{table: "task_attempts", from: "pending", to: "todo", query: `UPDATE task_attempts SET status = ? WHERE status = ?`},
+		{table: "task_attempts", from: "working", to: "doing", query: `UPDATE task_attempts SET status = ? WHERE status = ?`},
 	}
 	for _, update := range updates {
-		query := fmt.Sprintf("UPDATE %s SET status = ? WHERE status = ?", update.table)
-		if _, err := s.db.ExecContext(ctx, query, update.to, update.from); err != nil {
+		if _, err := s.db.ExecContext(ctx, update.query, update.to, update.from); err != nil {
 			return fmt.Errorf("store: migrate %s status %s: %w", update.table, update.from, err)
 		}
 	}

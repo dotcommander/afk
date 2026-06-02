@@ -11,6 +11,9 @@ import (
 	"github.com/dotcommander/afk/internal/task"
 )
 
+// takeKind is the command name and the JSON "kind" token emitted for claimed tasks.
+const takeKind = "take"
+
 func newTakeCmd(d *Deps) *cobra.Command {
 	var lease string
 	var workerID string
@@ -22,7 +25,7 @@ func newTakeCmd(d *Deps) *cobra.Command {
 	var envelope bool
 
 	cmd := &cobra.Command{
-		Use:   "take",
+		Use:   takeKind,
 		Short: "Claim the first ready task",
 		Long: strings.TrimSpace(`Claim the first ready task.
 
@@ -41,51 +44,9 @@ body_truncated=true, add --full to inspect complete task bodies.`),
 				return err
 			}
 			if dryRun {
-				ready, err := d.Service.Ready(cmd.Context())
-				if err != nil {
-					return err
-				}
-				readyCount := len(ready)
-				if limit > 0 && len(ready) > limit {
-					ready = ready[:limit]
-				}
-				bodyLimit := output.DefaultListBodyRunes
-				if full {
-					bodyLimit = 0
-				}
-				bodyHint := ""
-				if !full {
-					bodyHint = "use --full to see the complete task body"
-				}
-				if envelope || summary {
-					snapshot, err := d.Service.Status(cmd.Context())
-					if err != nil {
-						return err
-					}
-					return output.WriteTakePreview(d.Stdout, ready, snapshot.Counts, readyCount, bodyLimit, bodyHint)
-				}
-				return output.WriteListWithBodyLimitHint(d.Stdout, ready, asJSON, bodyLimit, bodyHint)
+				return runTakeDryRun(cmd, d, takeDryRunOptions{limit: limit, asJSON: asJSON, summary: summary, full: full, envelope: envelope})
 			}
-			claimed, err := d.Service.Take(cmd.Context(), leaseDuration, workerID, "")
-			if err != nil {
-				return err
-			}
-			if claimed == nil {
-				return writeNoReadyExplanation(cmd, d)
-			}
-			if err := task.ValidateAddOptions(task.AddOptionsFromTask(*claimed)); err != nil {
-				if failErr := d.Service.Fail(cmd.Context(), claimed.ID, err.Error()); failErr != nil {
-					return failErr
-				}
-				return fmt.Errorf("take %s: %w", claimed.ID, err)
-			}
-			if summary || envelope {
-				return writeTakeSummary(cmd, d, *claimed, full)
-			}
-			if full {
-				return output.WriteBoundTaskJSONLine(d.Stdout, *claimed, 0, "take")
-			}
-			return output.WriteTaskJSONLine(d.Stdout, *claimed, "take")
+			return runTakeClaim(cmd, d, leaseDuration, workerID, summary, full, envelope)
 		},
 	}
 	cmd.Flags().StringVar(&lease, "lease", "", "lease duration for the claim (for example 30m)")
@@ -97,6 +58,64 @@ body_truncated=true, add --full to inspect complete task bodies.`),
 	cmd.Flags().BoolVar(&full, "full", false, "include full task bodies in JSON output")
 	cmd.Flags().BoolVar(&envelope, "envelope", false, "emit a stable JSON object envelope")
 	return cmd
+}
+
+type takeDryRunOptions struct {
+	limit    int
+	asJSON   bool
+	summary  bool
+	full     bool
+	envelope bool
+}
+
+func runTakeDryRun(cmd *cobra.Command, d *Deps, opts takeDryRunOptions) error {
+	ready, err := d.Service.Ready(cmd.Context())
+	if err != nil {
+		return err
+	}
+	readyCount := len(ready)
+	if opts.limit > 0 && len(ready) > opts.limit {
+		ready = ready[:opts.limit]
+	}
+	bodyLimit := output.DefaultListBodyRunes
+	if opts.full {
+		bodyLimit = 0
+	}
+	bodyHint := ""
+	if !opts.full {
+		bodyHint = "use --full to see the complete task body"
+	}
+	if opts.envelope || opts.summary {
+		snapshot, err := d.Service.Status(cmd.Context())
+		if err != nil {
+			return err
+		}
+		return output.WriteTakePreview(d.Stdout, ready, snapshot.Counts, readyCount, bodyLimit, bodyHint)
+	}
+	return output.WriteListWithBodyLimitHint(d.Stdout, ready, opts.asJSON, bodyLimit, bodyHint)
+}
+
+func runTakeClaim(cmd *cobra.Command, d *Deps, leaseDuration time.Duration, workerID string, summary, full, envelope bool) error {
+	claimed, err := d.Service.Take(cmd.Context(), leaseDuration, workerID, "")
+	if err != nil {
+		return err
+	}
+	if claimed == nil {
+		return writeNoReadyExplanation(cmd, d)
+	}
+	if err := task.ValidateAddOptions(task.AddOptionsFromTask(*claimed)); err != nil {
+		if failErr := d.Service.Fail(cmd.Context(), claimed.ID, err.Error()); failErr != nil {
+			return failErr
+		}
+		return fmt.Errorf("take %s: %w", claimed.ID, err)
+	}
+	if summary || envelope {
+		return writeTakeSummary(cmd, d, *claimed, full)
+	}
+	if full {
+		return output.WriteBoundTaskJSONLine(d.Stdout, *claimed, 0, takeKind)
+	}
+	return output.WriteTaskJSONLine(d.Stdout, *claimed, takeKind)
 }
 
 func writeTakeSummary(cmd *cobra.Command, d *Deps, claimed task.Task, full bool) error {

@@ -149,10 +149,10 @@ func TestWriteListTruncatesLongUnicodeBody(t *testing.T) {
 func TestWriteCountJSON(t *testing.T) {
 	t.Parallel()
 	tally := map[task.Status]int{
-		task.StatusTodo: 2,
-		task.StatusDoing: 1,
-		task.StatusDone:    3,
-		task.StatusFailed:  0,
+		task.StatusTodo:   2,
+		task.StatusDoing:  1,
+		task.StatusDone:   3,
+		task.StatusFailed: 0,
 	}
 
 	var buf bytes.Buffer
@@ -189,9 +189,9 @@ func TestWriteCountJSONEmptyTally(t *testing.T) {
 func TestWriteStatusTextAndJSONUseTodoDoing(t *testing.T) {
 	t.Parallel()
 	tally := map[task.Status]int{
-		task.StatusTodo: 1,
+		task.StatusTodo:  1,
 		task.StatusDoing: 1,
-		task.StatusDone:    2,
+		task.StatusDone:  2,
 	}
 	todo := []task.Task{{
 		ID:      "todo-1",

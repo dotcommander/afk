@@ -12,6 +12,18 @@ import (
 	"github.com/dotcommander/afk/internal/store"
 )
 
+// Command names and annotation tokens shared across the commands package.
+// cmdPrompt is both the prompt command's Use string and the name matched in
+// skipStoreInit; skipStoreInitKey/skipStoreInitValue are the annotation pair
+// that lets `afk prompt` skip opening the DB — keep them paired and unchanged.
+const (
+	cmdPrompt          = "prompt"
+	skipStoreInitKey   = "skipStoreInit"
+	skipStoreInitValue = "true"
+	// statusName is both the "status" command name and the "status" flag name.
+	statusName = "status"
+)
+
 // Deps bundles command dependencies. Constructed once in main(), passed by pointer.
 type Deps struct {
 	Service    *app.Service
@@ -101,19 +113,25 @@ func resolveQueuePaths(flagPath string) (store.Paths, error) {
 
 func skipStoreInit(cmd *cobra.Command) bool {
 	for c := cmd; c != nil; c = c.Parent() {
-		if c.Annotations["skipStoreInit"] == "true" {
-			if c.Name() == "prompt" {
-				discoverFlag := c.Flags().Lookup("discover")
-				if discoverFlag != nil && discoverFlag.Value.String() == "true" {
-					return true
-				}
-				taskFlag := c.Flags().Lookup("task")
-				if taskFlag != nil && taskFlag.Value.String() != "" {
-					return false
-				}
-			}
-			return true
+		if c.Annotations[skipStoreInitKey] != skipStoreInitValue {
+			continue
 		}
+		if c.Name() == cmdPrompt {
+			return promptSkipsStoreInit(c)
+		}
+		return true
 	}
 	return false
+}
+
+func promptSkipsStoreInit(c *cobra.Command) bool {
+	discoverFlag := c.Flags().Lookup("discover")
+	if discoverFlag != nil && discoverFlag.Value.String() == "true" {
+		return true
+	}
+	taskFlag := c.Flags().Lookup("task")
+	if taskFlag != nil && taskFlag.Value.String() != "" {
+		return false
+	}
+	return true
 }

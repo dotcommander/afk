@@ -5,9 +5,8 @@ import (
 	"os"
 	"strings"
 
-	"github.com/spf13/cobra"
-
 	"github.com/dotcommander/afk/internal/prompt"
+	"github.com/spf13/cobra"
 )
 
 func newPromptCmd(d *Deps) *cobra.Command {
@@ -17,10 +16,10 @@ func newPromptCmd(d *Deps) *cobra.Command {
 	var discoverFull bool
 
 	cmd := &cobra.Command{
-		Use:   "prompt",
+		Use:   cmdPrompt,
 		Short: "Generate loop prompt Markdown",
 		Annotations: map[string]string{
-			"skipStoreInit": "true",
+			skipStoreInitKey: skipStoreInitValue,
 		},
 		Args: func(cmd *cobra.Command, args []string) error {
 			if len(args) > 0 {
@@ -32,9 +31,7 @@ func newPromptCmd(d *Deps) *cobra.Command {
 			}
 			return nil
 		},
-		RunE: func(cmd *cobra.Command, args []string) error {
-			exe := "afk"
-			var body string
+		RunE: func(cmd *cobra.Command, _ []string) error {
 			if discoverFull && !discover {
 				cmd.SilenceUsage = true
 				return fmt.Errorf("--full requires --discover")
@@ -43,28 +40,9 @@ func newPromptCmd(d *Deps) *cobra.Command {
 				cmd.SilenceUsage = true
 				return fmt.Errorf("--task and --discover are mutually exclusive")
 			}
-			if discover {
-				if outputPath == "" {
-					return writeDiscoverPrompt(d, discoverFull)
-				}
-				var stdout strings.Builder
-				promptDeps := *d
-				promptDeps.Stdout = &stdout
-				if err := writeDiscoverPrompt(&promptDeps, discoverFull); err != nil {
-					return err
-				}
-				body = stdout.String()
-			} else if taskID != "" {
-				data, err := d.Service.Explain(cmd.Context(), taskID)
-				if err != nil {
-					return err
-				}
-				body = prompt.Task(exe, data.Task, data.Events, data.Attempts, data.Gates)
-			} else {
-				body = prompt.Loop(prompt.LoopOptions{
-					ExecutablePath: exe,
-					SQLitePath:     d.QueuePaths.SQLitePath,
-				})
+			body, done, err := promptBody(cmd, d, outputPath, taskID, discover, discoverFull)
+			if err != nil || done {
+				return err
 			}
 			if outputPath == "" {
 				_, err := fmt.Fprint(d.Stdout, body)
@@ -78,4 +56,35 @@ func newPromptCmd(d *Deps) *cobra.Command {
 	cmd.Flags().BoolVar(&discover, "discover", false, "generate task-discovery workflow guidance")
 	cmd.Flags().BoolVar(&discoverFull, "full", false, "print the full task-discovery policy with --discover")
 	return cmd
+}
+
+// promptBody resolves the prompt Markdown for the requested mode. When done is
+// true the body was already written to d.Stdout (discover with no --output) and
+// the caller must not emit it again.
+func promptBody(cmd *cobra.Command, d *Deps, outputPath, taskID string, discover, discoverFull bool) (body string, done bool, err error) {
+	const exe = "afk"
+	switch {
+	case discover:
+		if outputPath == "" {
+			return "", true, writeDiscoverPrompt(d, discoverFull)
+		}
+		var stdout strings.Builder
+		promptDeps := *d
+		promptDeps.Stdout = &stdout
+		if err := writeDiscoverPrompt(&promptDeps, discoverFull); err != nil {
+			return "", false, err
+		}
+		return stdout.String(), false, nil
+	case taskID != "":
+		data, err := d.Service.Explain(cmd.Context(), taskID)
+		if err != nil {
+			return "", false, err
+		}
+		return prompt.Task(exe, data.Task, data.Events, data.Attempts, data.Gates), false, nil
+	default:
+		return prompt.Loop(prompt.LoopOptions{
+			ExecutablePath: exe,
+			SQLitePath:     d.QueuePaths.SQLitePath,
+		}), false, nil
+	}
 }
