@@ -21,13 +21,7 @@ func (s *SQLiteStore) AddDependency(ctx context.Context, taskID, dependsOnID str
 // relates/duplicates/parent are informational. Re-adding an existing edge
 // updates its relation type. An empty relType defaults to RelationBlocks.
 func (s *SQLiteStore) AddRelation(ctx context.Context, taskID, relatedID string, relType task.RelationType) error {
-	if taskID == "" || relatedID == "" {
-		return ErrInvalidDependency
-	}
-	if taskID == relatedID {
-		return fmt.Errorf("task %s: cannot relate to itself: %w", taskID, task.ErrInvalidRelation)
-	}
-	relType, err := task.ParseRelationType(string(relType))
+	relType, err := validateRelation(taskID, relatedID, relType)
 	if err != nil {
 		return err
 	}
@@ -79,22 +73,34 @@ ON CONFLICT(task_id, depends_on_id) DO UPDATE SET relation_type = excluded.relat
 		return fmt.Errorf("store: add relation %s -> %s: %w", taskID, relatedID, err)
 	}
 
-	// A re-add that does not change the relation type is a no-op: emit no event.
-	if prior == string(relType) {
-		return commit(tx)
-	}
-
-	// Preserve the legacy event type for blocks edges so existing
-	// dependency_added assertions keep passing; other types emit relation_added.
-	if relType == task.RelationBlocks {
-		if err := s.insertEvent(ctx, tx, taskID, task.EventDependencyAdded, created, relatedID); err != nil {
-			return err
-		}
-	} else {
-		message := fmt.Sprintf("%s %s", relType, relatedID)
-		if err := s.insertEvent(ctx, tx, taskID, task.EventRelationAdded, created, message); err != nil {
-			return err
-		}
+	if err := s.recordRelationEvent(ctx, tx, taskID, relatedID, relType, prior, created); err != nil {
+		return err
 	}
 	return commit(tx)
+}
+
+// validateRelation rejects empty/self relations and normalizes the relation
+// type. An empty relType defaults to RelationBlocks (via ParseRelationType).
+func validateRelation(taskID, relatedID string, relType task.RelationType) (task.RelationType, error) {
+	if taskID == "" || relatedID == "" {
+		return "", ErrInvalidDependency
+	}
+	if taskID == relatedID {
+		return "", fmt.Errorf("task %s: cannot relate to itself: %w", taskID, task.ErrInvalidRelation)
+	}
+	return task.ParseRelationType(string(relType))
+}
+
+// recordRelationEvent emits the appropriate edge event, preserving the legacy
+// dependency_added event for blocks edges while other types emit relation_added.
+// A re-add that does not change the relation type is a no-op: emit no event.
+func (s *SQLiteStore) recordRelationEvent(ctx context.Context, tx *sql.Tx, taskID, relatedID string, relType task.RelationType, prior, created string) error {
+	if prior == string(relType) {
+		return nil
+	}
+	if relType == task.RelationBlocks {
+		return s.insertEvent(ctx, tx, taskID, task.EventDependencyAdded, created, relatedID)
+	}
+	message := fmt.Sprintf("%s %s", relType, relatedID)
+	return s.insertEvent(ctx, tx, taskID, task.EventRelationAdded, created, message)
 }

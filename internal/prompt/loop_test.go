@@ -100,7 +100,7 @@ func TestTaskPromptIncludesContextHistoryAndFinalization(t *testing.T) {
 		CWD:      "/tmp/repo",
 		Priority: "high",
 		Tags:     []string{"repo:afk"},
-	}, []task.Event{{At: "2025-01-02T03:04:05Z", Type: task.EventFailed, Message: "boom"}}, []task.Attempt{{ID: 1, Status: task.StatusFailed, Started: "2025-01-02T03:00:00Z", Finished: "2025-01-02T03:04:05Z", Error: "boom"}})
+	}, []task.Event{{At: "2025-01-02T03:04:05Z", Type: task.EventFailed, Message: "boom"}}, []task.Attempt{{ID: 1, Status: task.StatusFailed, Started: "2025-01-02T03:00:00Z", Finished: "2025-01-02T03:04:05Z", Error: "boom"}}, nil)
 
 	require.Contains(t, out, "AFK Task 123")
 	require.Contains(t, out, "fix the thing")
@@ -132,7 +132,7 @@ func TestTaskPromptBoundsBodyAndHistory(t *testing.T) {
 		attempts[i] = task.Attempt{ID: int64(i + 1), Status: task.StatusFailed, Started: "2025-01-02T03:04:05Z", Error: strings.Repeat("a", 1100)}
 	}
 
-	out := prompt.Task("afk", task.Task{ID: "123", Status: task.StatusTodo, Body: strings.Repeat("b", 9000)}, events, attempts)
+	out := prompt.Task("afk", task.Task{ID: "123", Status: task.StatusTodo, Body: strings.Repeat("b", 9000)}, events, attempts, nil)
 
 	require.Contains(t, out, "older events omitted by output limit")
 	require.Contains(t, out, "older attempts omitted by output limit")

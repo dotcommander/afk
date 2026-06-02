@@ -34,6 +34,7 @@ type ExplainData struct {
 	Task     task.Task      `json:"task"`
 	Events   []task.Event   `json:"events"`
 	Attempts []task.Attempt `json:"attempts"`
+	Gates    []task.Gate    `json:"gates,omitempty"`
 }
 
 // NewService constructs a Service.
@@ -279,5 +280,9 @@ func (s *Service) Explain(ctx context.Context, id string) (ExplainData, error) {
 	if err != nil {
 		return ExplainData{}, err
 	}
-	return ExplainData{Task: t, Events: events, Attempts: attempts}, nil
+	gates, err := s.store.Gates(ctx, id)
+	if err != nil {
+		return ExplainData{}, err
+	}
+	return ExplainData{Task: t, Events: events, Attempts: attempts, Gates: gates}, nil
 }

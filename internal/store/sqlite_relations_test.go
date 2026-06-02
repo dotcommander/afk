@@ -11,7 +11,7 @@ import (
 )
 
 // markDone transitions taskID to done via Update, mirroring the worker contract.
-func markDone(t *testing.T, s *store.SQLiteStore, ctx context.Context, id string) {
+func markDone(ctx context.Context, t *testing.T, s *store.SQLiteStore, id string) {
 	t.Helper()
 	now := time.Now()
 	require.NoError(t, s.Update(ctx, id, task.EventDone, "", func(tk *task.Task) bool {
@@ -26,17 +26,17 @@ func TestRelationBlocks_GatesReadiness(t *testing.T) {
 	ctx := context.Background()
 	s := newStore(t)
 
-	addTask(t, s, ctx, "a")
-	addTask(t, s, ctx, "b")
+	addTask(ctx, t, s, "a")
+	addTask(ctx, t, s, "b")
 	require.NoError(t, s.AddRelation(ctx, "a", "b", task.RelationBlocks))
 
 	// "a" is blocked; only "b" is ready.
-	require.Equal(t, []string{"b"}, readyIDs(t, s, ctx))
+	require.Equal(t, []string{"b"}, readyIDs(ctx, t, s))
 
-	markDone(t, s, ctx, "b")
+	markDone(ctx, t, s, "b")
 
 	// "b" is done; "a" is now ready.
-	require.Equal(t, []string{"a"}, readyIDs(t, s, ctx))
+	require.Equal(t, []string{"a"}, readyIDs(ctx, t, s))
 }
 
 // TestRelationRelates_DoesNotBlock verifies that a relates edge is informational:
@@ -46,11 +46,11 @@ func TestRelationRelates_DoesNotBlock(t *testing.T) {
 	ctx := context.Background()
 	s := newStore(t)
 
-	addTask(t, s, ctx, "a")
-	addTask(t, s, ctx, "b")
+	addTask(ctx, t, s, "a")
+	addTask(ctx, t, s, "b")
 	require.NoError(t, s.AddRelation(ctx, "a", "b", task.RelationRelates))
 
-	ids := readyIDs(t, s, ctx)
+	ids := readyIDs(ctx, t, s)
 	require.Contains(t, ids, "a", "task with relates edge must be immediately ready")
 }
 
@@ -61,11 +61,11 @@ func TestRelationParent_DoesNotBlock(t *testing.T) {
 	ctx := context.Background()
 	s := newStore(t)
 
-	addTask(t, s, ctx, "child")
-	addTask(t, s, ctx, "parent")
+	addTask(ctx, t, s, "child")
+	addTask(ctx, t, s, "parent")
 	require.NoError(t, s.AddRelation(ctx, "child", "parent", task.RelationParent))
 
-	ids := readyIDs(t, s, ctx)
+	ids := readyIDs(ctx, t, s)
 	require.Contains(t, ids, "child", "child with parent edge must be immediately ready")
 }
 
@@ -76,11 +76,11 @@ func TestRelationDuplicates_DoesNotBlock(t *testing.T) {
 	ctx := context.Background()
 	s := newStore(t)
 
-	addTask(t, s, ctx, "a")
-	addTask(t, s, ctx, "b")
+	addTask(ctx, t, s, "a")
+	addTask(ctx, t, s, "b")
 	require.NoError(t, s.AddRelation(ctx, "a", "b", task.RelationDuplicates))
 
-	ids := readyIDs(t, s, ctx)
+	ids := readyIDs(ctx, t, s)
 	require.Contains(t, ids, "a", "task with duplicates edge must be immediately ready")
 }
 
@@ -100,7 +100,7 @@ func TestRelationSelf_Rejected(t *testing.T) {
 		t.Run(string(relType), func(t *testing.T) {
 			t.Parallel()
 			s := newStore(t)
-			addTask(t, s, ctx, "x")
+			addTask(ctx, t, s, "x")
 
 			err := s.AddRelation(ctx, "x", "x", relType)
 			require.Error(t, err)
@@ -117,15 +117,15 @@ func TestAddDependency_EqualsBlocksRelation(t *testing.T) {
 	ctx := context.Background()
 	s := newStore(t)
 
-	addTask(t, s, ctx, "a")
-	addTask(t, s, ctx, "b")
+	addTask(ctx, t, s, "a")
+	addTask(ctx, t, s, "b")
 	require.NoError(t, s.AddDependency(ctx, "a", "b"))
 
 	// "a" must be blocked by "b" (same gating as RelationBlocks).
-	require.Equal(t, []string{"b"}, readyIDs(t, s, ctx))
+	require.Equal(t, []string{"b"}, readyIDs(ctx, t, s))
 
-	markDone(t, s, ctx, "b")
-	require.Equal(t, []string{"a"}, readyIDs(t, s, ctx))
+	markDone(ctx, t, s, "b")
+	require.Equal(t, []string{"a"}, readyIDs(ctx, t, s))
 
 	// Dependencies must expose Type == RelationBlocks.
 	deps, err := s.Dependencies(ctx, "a")
@@ -150,8 +150,8 @@ func TestRelationType_RoundTrips(t *testing.T) {
 		t.Run(string(relType), func(t *testing.T) {
 			t.Parallel()
 			s := newStore(t)
-			addTask(t, s, ctx, "a")
-			addTask(t, s, ctx, "b")
+			addTask(ctx, t, s, "a")
+			addTask(ctx, t, s, "b")
 
 			require.NoError(t, s.AddRelation(ctx, "a", "b", relType))
 
@@ -173,8 +173,8 @@ func TestRelationCycle_OnlyForBlocks(t *testing.T) {
 	t.Run("blocks cycle is rejected", func(t *testing.T) {
 		t.Parallel()
 		s := newStore(t)
-		addTask(t, s, ctx, "a")
-		addTask(t, s, ctx, "b")
+		addTask(ctx, t, s, "a")
+		addTask(ctx, t, s, "b")
 
 		require.NoError(t, s.AddRelation(ctx, "a", "b", task.RelationBlocks))
 		err := s.AddRelation(ctx, "b", "a", task.RelationBlocks)
@@ -184,8 +184,8 @@ func TestRelationCycle_OnlyForBlocks(t *testing.T) {
 	t.Run("relates cycle is allowed", func(t *testing.T) {
 		t.Parallel()
 		s := newStore(t)
-		addTask(t, s, ctx, "a")
-		addTask(t, s, ctx, "b")
+		addTask(ctx, t, s, "a")
+		addTask(ctx, t, s, "b")
 
 		require.NoError(t, s.AddRelation(ctx, "a", "b", task.RelationRelates))
 		require.NoError(t, s.AddRelation(ctx, "b", "a", task.RelationRelates),

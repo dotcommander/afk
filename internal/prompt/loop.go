@@ -40,8 +40,19 @@ type taskView struct {
 	OmittedAttempts       int
 	Events                []eventView
 	Attempts              []attemptView
+	Gates                 []gateView
+	Relations             []relationView
 	DoneCmd, FailCmd      string
 	RetryCmd              string
+}
+
+type gateView struct {
+	Name      string
+	Satisfied bool
+}
+
+type relationView struct {
+	ID, Type string
 }
 
 type eventView struct {
@@ -68,12 +79,15 @@ func joinCmd(exe, args string) string {
 }
 
 // Task renders a focused execution prompt for one task.
-func Task(exe string, t task.Task, events []task.Event, attempts []task.Attempt) string {
+func Task(exe string, t task.Task, events []task.Event, attempts []task.Attempt, gates []task.Gate) string {
 	if exe == "" {
 		exe = "afk"
 	}
 
 	var meta []string
+	if t.Stage != "" {
+		meta = append(meta, "Stage: `"+t.Stage+"`")
+	}
 	if t.Priority != "" {
 		meta = append(meta, "Priority: `"+string(t.Priority)+"`")
 	}
@@ -119,6 +133,20 @@ func Task(exe string, t task.Task, events []task.Event, attempts []task.Attempt)
 		}
 	}
 
+	gvs := make([]gateView, len(gates))
+	for i, g := range gates {
+		gvs[i] = gateView{Name: g.Name, Satisfied: g.Satisfied}
+	}
+
+	rvs := make([]relationView, len(t.Dependencies))
+	for i, dep := range t.Dependencies {
+		relType := dep.Type
+		if relType == "" {
+			relType = task.RelationBlocks
+		}
+		rvs[i] = relationView{ID: dep.DependsOnID, Type: string(relType)}
+	}
+
 	v := taskView{
 		ID:              t.ID,
 		Status:          string(t.Status),
@@ -131,6 +159,8 @@ func Task(exe string, t task.Task, events []task.Event, attempts []task.Attempt)
 		OmittedAttempts: omA,
 		Events:          evs,
 		Attempts:        atts,
+		Gates:           gvs,
+		Relations:       rvs,
 		DoneCmd:         joinCmd(exe, "set "+t.ID+` done --note "<verification evidence>"`),
 		FailCmd:         joinCmd(exe, "set "+t.ID+` failed --note "<one-line reason>"`),
 		RetryCmd:        joinCmd(exe, "retry "+t.ID+` --reason "<why retrying now>"`),

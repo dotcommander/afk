@@ -59,7 +59,7 @@ func newPromptCmd(d *Deps) *cobra.Command {
 				if err != nil {
 					return err
 				}
-				body = prompt.Task(exe, data.Task, data.Events, data.Attempts)
+				body = prompt.Task(exe, data.Task, data.Events, data.Attempts, data.Gates)
 			} else {
 				body = prompt.Loop(prompt.LoopOptions{
 					ExecutablePath: exe,

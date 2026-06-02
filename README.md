@@ -18,18 +18,25 @@ dependencies are done and no active `doing` task holds its resource key.
 `afk status --blocked` explains dependency blockers; `doing` task status output
 also shows claim age and stale lease diagnostics.
 
+`--stage` is a free-form human pipeline state (e.g. `triage`, `in-review`),
+independent of the five execution states; it does not affect readiness.
+Gates and `blocks` relations do: a task is not claimable while any gate is
+unsatisfied or any `blocks` relation is unsatisfied.
+
 ## core commands
 
 | Command | Purpose |
 |---|---|
-| `afk add <body...>` | Add a task. Use `--dry-run --json` to validate without writing. |
-| `afk tasks [--status STATUS] [--json]` | List tasks. Deleted tasks are hidden unless requested. |
+| `afk add <body...> [--stage VALUE]` | Add a task. Use `--dry-run --json` to validate without writing. |
+| `afk tasks [--status STATUS] [--stage VALUE] [--json]` | List tasks. Deleted tasks are hidden unless requested. `--stage` filters by pipeline state. |
 | `afk task <id> [--json]` | Show one full task with events and attempts. |
 | `afk status [--summary] [--blocked] [--json]` | Get queue counts, plus active task lists by default. `--blocked` explains dependency-blocked todo tasks. |
 | `afk find <query> [--json]` | Search task text and metadata for duplicate checks. |
 | `afk take [--dry-run] [--lease DURATION] [--worker ID] [--summary] [--full] [--envelope]` | Preview or claim ready work. |
-| `afk set <id> <status> [note...] [--note TEXT] [--note-file PATH|-] [--json] [--summary]` | Set `todo`, `doing`, `done`, `failed`, or `deleted`. |
+| `afk set <id> <status> [note...] [--note TEXT] [--note-file PATH|-] [--stage VALUE] [--json] [--summary]` | Set `todo`, `doing`, `done`, `failed`, or `deleted`. |
 | `afk retry <id> [--reason TEXT] [--json]` | Open a new attempt for a failed task. |
+| `afk relate <task-id> <related-id> [--type blocks\|relates\|duplicates\|parent]` | Record a typed relation between tasks. Defaults to `blocks`. Only `blocks` edges gate readiness; `relates`/`duplicates`/`parent` are informational. |
+| `afk gate <task-id> add <name>` / `afk gate <task-id> satisfy <name>` | Named boolean preconditions. A task with any unsatisfied gate is not claimable until every gate is satisfied. Satisfy is one-way. |
 | `afk snapshot [--label LABEL] [--task ID] [--output PATH]` | Export read-only JSON evidence for before/after comparisons. |
 | `afk prompt [--task ID]` | Generate LLM-agent instructions. |
 | `afk serve` | Run the web visibility layer. |

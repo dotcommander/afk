@@ -41,7 +41,7 @@ No Makefile. The committed `afk` binary at the repo root is a build artifact, no
 Registered in `internal/commands/root.go` (`func NewRoot`). Categories:
 
 - **Inspection**: `tasks`, `task`, `status`, `find`, `snapshot`
-- **Scheduling**: `add --blocked-by`, `take --dry-run`
+- **Scheduling**: `add --blocked-by`, `relate`, `gate`, `take --dry-run`
 - **Lifecycle**: `add`, `set`
 - **Worker**: `take`, hidden `heartbeat`, hidden `requeue-stale`
 - **Meta**: `prompt`
@@ -70,7 +70,7 @@ The `Store` interface is defined in `internal/app/store.go` (package `app`, not 
 
 ### Storage
 
-modernc.org/sqlite (pure Go — no CGO). Five tables created idempotently at `NewSQLite()` open: `tasks`, `metadata`, `task_events`, `task_attempts`, `task_dependencies`. Schema lives inline in `internal/store/sqlite_schema.go` (the `CREATE TABLE` statements). No goose / no migration framework.
+modernc.org/sqlite (pure Go — no CGO). Six tables created idempotently at `NewSQLite()` open: `tasks`, `metadata`, `task_events`, `task_attempts`, `task_dependencies`, `task_gates`. Schema lives inline in `internal/store/sqlite_schema.go` (the `CREATE TABLE` statements). No goose / no migration framework.
 
 SQLite is the only queue backend. A `--queue`/`AFK_QUEUE` path with a non-`.sqlite` extension (including a stale `.jsonl` path) is normalized to a sibling `.sqlite` database; it is never read as JSONL.
 

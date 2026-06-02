@@ -27,6 +27,22 @@ If `{{.CWD}}` exists and the task body does not specify another absolute path, s
 {{end}}{{- range .Attempts}}- attempt #{{.ID}} status={{.Status}} started={{.Started}}{{if .Finished}} finished={{.Finished}}{{end}}{{if .Error}} error={{.Error}}{{end}}
 {{end}}
 {{- end}}
+{{- if .Gates}}
+## Gates
+
+Every gate must be satisfied before this task becomes claimable.
+
+{{range .Gates}}- `{{.Name}}` {{if .Satisfied}}satisfied{{else}}unsatisfied{{end}}
+{{end}}
+{{- end}}
+{{- if .Relations}}
+## Relations
+
+Only `blocks` relations gate readiness; `relates`, `duplicates`, and `parent` are informational.
+
+{{range .Relations}}- `{{.ID}}` ({{.Type}})
+{{end}}
+{{- end}}
 ## Finalize
 
 {{if .CanRetry}}This task is currently failed. If you are retrying it now, open a new attempt before doing work:

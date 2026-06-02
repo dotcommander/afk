@@ -10,17 +10,17 @@ import (
 )
 
 // addTask is a convenience helper that adds a todo task with a given ID.
-func addTask(t *testing.T, s interface {
+func addTask(ctx context.Context, t *testing.T, s interface {
 	Add(context.Context, task.Task) error
-}, ctx context.Context, id string) {
+}, id string) {
 	t.Helper()
 	require.NoError(t, s.Add(ctx, task.Task{ID: id, Status: task.StatusTodo, Body: id}))
 }
 
 // readyIDs returns the IDs of tasks returned by Ready(), in order.
-func readyIDs(t *testing.T, s interface {
+func readyIDs(ctx context.Context, t *testing.T, s interface {
 	Ready(context.Context) ([]task.Task, error)
-}, ctx context.Context) []string {
+}) []string {
 	t.Helper()
 	tasks, err := s.Ready(ctx)
 	require.NoError(t, err)
@@ -36,9 +36,9 @@ func TestGateBaseline_NoGatesIsReady(t *testing.T) {
 	ctx := context.Background()
 	s := newStore(t)
 
-	addTask(t, s, ctx, "task-1")
+	addTask(ctx, t, s, "task-1")
 
-	ids := readyIDs(t, s, ctx)
+	ids := readyIDs(ctx, t, s)
 	require.Equal(t, []string{"task-1"}, ids)
 }
 
@@ -47,10 +47,10 @@ func TestGateAddGate_BlocksReady(t *testing.T) {
 	ctx := context.Background()
 	s := newStore(t)
 
-	addTask(t, s, ctx, "task-1")
+	addTask(ctx, t, s, "task-1")
 	require.NoError(t, s.AddGate(ctx, "task-1", "approval"))
 
-	ids := readyIDs(t, s, ctx)
+	ids := readyIDs(ctx, t, s)
 	require.Empty(t, ids)
 }
 
@@ -59,11 +59,11 @@ func TestGateSatisfyGate_Unblocks(t *testing.T) {
 	ctx := context.Background()
 	s := newStore(t)
 
-	addTask(t, s, ctx, "task-1")
+	addTask(ctx, t, s, "task-1")
 	require.NoError(t, s.AddGate(ctx, "task-1", "approval"))
 	require.NoError(t, s.SatisfyGate(ctx, "task-1", "approval"))
 
-	ids := readyIDs(t, s, ctx)
+	ids := readyIDs(ctx, t, s)
 	require.Equal(t, []string{"task-1"}, ids)
 }
 
@@ -72,7 +72,7 @@ func TestGateAddGate_Idempotent(t *testing.T) {
 	ctx := context.Background()
 	s := newStore(t)
 
-	addTask(t, s, ctx, "task-1")
+	addTask(ctx, t, s, "task-1")
 	require.NoError(t, s.AddGate(ctx, "task-1", "approval"))
 	require.NoError(t, s.AddGate(ctx, "task-1", "approval")) // second call must not error
 
@@ -87,7 +87,7 @@ func TestGateSatisfyGate_UnknownReturnsErrGateNotFound(t *testing.T) {
 	ctx := context.Background()
 	s := newStore(t)
 
-	addTask(t, s, ctx, "task-1")
+	addTask(ctx, t, s, "task-1")
 
 	err := s.SatisfyGate(ctx, "task-1", "missing")
 	require.True(t, errors.Is(err, task.ErrGateNotFound), "expected ErrGateNotFound, got: %v", err)
@@ -100,7 +100,7 @@ func TestGateGates_Shape(t *testing.T) {
 	t.Run("unsatisfied gate has nil SatisfiedAt", func(t *testing.T) {
 		t.Parallel()
 		s := newStore(t)
-		addTask(t, s, ctx, "task-1")
+		addTask(ctx, t, s, "task-1")
 		require.NoError(t, s.AddGate(ctx, "task-1", "review"))
 
 		gates, err := s.Gates(ctx, "task-1")
@@ -114,7 +114,7 @@ func TestGateGates_Shape(t *testing.T) {
 	t.Run("satisfied gate has non-nil SatisfiedAt", func(t *testing.T) {
 		t.Parallel()
 		s := newStore(t)
-		addTask(t, s, ctx, "task-1")
+		addTask(ctx, t, s, "task-1")
 		require.NoError(t, s.AddGate(ctx, "task-1", "review"))
 		require.NoError(t, s.SatisfyGate(ctx, "task-1", "review"))
 
@@ -134,33 +134,33 @@ func TestGateMultipleGates_AllMustBeSatisfied(t *testing.T) {
 	t.Run("neither satisfied: not ready", func(t *testing.T) {
 		t.Parallel()
 		s := newStore(t)
-		addTask(t, s, ctx, "task-1")
+		addTask(ctx, t, s, "task-1")
 		require.NoError(t, s.AddGate(ctx, "task-1", "alpha"))
 		require.NoError(t, s.AddGate(ctx, "task-1", "beta"))
 
-		require.Empty(t, readyIDs(t, s, ctx))
+		require.Empty(t, readyIDs(ctx, t, s))
 	})
 
 	t.Run("one satisfied: still not ready", func(t *testing.T) {
 		t.Parallel()
 		s := newStore(t)
-		addTask(t, s, ctx, "task-1")
+		addTask(ctx, t, s, "task-1")
 		require.NoError(t, s.AddGate(ctx, "task-1", "alpha"))
 		require.NoError(t, s.AddGate(ctx, "task-1", "beta"))
 
 		require.NoError(t, s.SatisfyGate(ctx, "task-1", "alpha"))
-		require.Empty(t, readyIDs(t, s, ctx))
+		require.Empty(t, readyIDs(ctx, t, s))
 	})
 
 	t.Run("both satisfied: ready", func(t *testing.T) {
 		t.Parallel()
 		s := newStore(t)
-		addTask(t, s, ctx, "task-1")
+		addTask(ctx, t, s, "task-1")
 		require.NoError(t, s.AddGate(ctx, "task-1", "alpha"))
 		require.NoError(t, s.AddGate(ctx, "task-1", "beta"))
 
 		require.NoError(t, s.SatisfyGate(ctx, "task-1", "alpha"))
 		require.NoError(t, s.SatisfyGate(ctx, "task-1", "beta"))
-		require.Equal(t, []string{"task-1"}, readyIDs(t, s, ctx))
+		require.Equal(t, []string{"task-1"}, readyIDs(ctx, t, s))
 	})
 }
