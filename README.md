@@ -146,3 +146,5 @@ fi
 - [`docs/scheduling.md`](docs/scheduling.md)
 - [`docs/workers.md`](docs/workers.md)
 - [`docs/configuration.md`](docs/configuration.md)
+- [`docs/using-goal.md`](docs/using-goal.md) — step-by-step guide to `afk goal`
+- [`docs/using-loop.md`](docs/using-loop.md) — step-by-step guide to `afk loop`

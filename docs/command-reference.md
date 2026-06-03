@@ -107,6 +107,8 @@ filters by stage.
 
 ## goal
 
+For a step-by-step walkthrough see [Using afk goal](using-goal.md).
+
 `afk goal "<objective>"` compiles a free-text objective into a structured task
 contract using a configured setup agent, presents that contract, and — only
 after you approve it — queues the contract's tasks as a dependency chain (each
@@ -158,6 +160,8 @@ task is re-queued to `todo`. `audit_command` is also empty by default, so
 `goal audit` errors until it is configured.
 
 ## loop
+
+For a step-by-step walkthrough see [Using afk loop](using-loop.md).
 
 `afk loop` is the built-in autonomous worker-driver. Each iteration it claims the
 first ready task, renders the configured prompt template, runs the configured
