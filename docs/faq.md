@@ -568,7 +568,7 @@ in one JSON evidence artifact.
 
 ### How do I replace `afk run`?
 
-Own the execution loop outside AFK:
+Use the built-in `afk loop` worker-driver (`afk loop --command '...' --max-tasks N`; see runner.md), or own the execution loop outside AFK:
 
 ```sh
 task_json=$(afk take --lease 30m --worker "$USER:$$" --summary)

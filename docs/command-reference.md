@@ -23,6 +23,10 @@ The public command surface is intentionally small.
 | `afk gate satisfy <task-id> <name>` | Mark a named precondition satisfied. |
 | `afk retry <id> [--reason TEXT] [--json]` | Convenience command for reopening a failed task as `doing` with a new attempt. |
 | `afk snapshot [--label LABEL] [--task ID] [--output PATH]` | Export a read-only JSON evidence snapshot for before/after comparisons. |
+| `afk goal <objective> [--dry-run] [--json] [--cwd PATH] [--setup-command TEMPLATE] [--audit-command TEMPLATE] [--max-tokens N] [--max-iterations N] [--max-duration DURATION]` | Compile a free-text objective into an approved task contract and queue it as a dependency chain. |
+| `afk goal status <goalID>` | Show a goal group's durable record and member-task counts. |
+| `afk goal audit <taskID> [--audit-command TEMPLATE]` | Run the independent completion auditor on a task; re-queue on disapproval. |
+| `afk loop [--command TEMPLATE] [--worker ID] [--lease DURATION] [--timeout DURATION] [--cooldown DURATION] [--heartbeat DURATION] [--max-failures N] [--max-tasks N]` | Autonomous worker-driver: claim ready tasks and run an agent command per task. |
 | `afk prompt [--task ID] [--discover] [--output PATH]` | Emit LLM-agent instruction prompts. |
 | `afk serve [--addr HOST:PORT]` | Start the local web UI and API. |
 
@@ -100,6 +104,93 @@ independent of the five execution states; it does not affect readiness.
 `afk set <id> <status> --stage <value>` sets stage alongside the status change;
 omitting `--stage` leaves the existing stage unchanged. `afk tasks --stage <value>`
 filters by stage.
+
+## goal
+
+`afk goal "<objective>"` compiles a free-text objective into a structured task
+contract using a configured setup agent, presents that contract, and — only
+after you approve it — queues the contract's tasks as a dependency chain (each
+task blocked by the previous one):
+
+```sh
+afk goal "migrate the auth package off the deprecated session store"
+```
+
+The objective is treated as untrusted data and HTML-escaped before it is
+interpolated into the agent prompt.
+
+`setup_command` is **empty by default** (fail-closed). With nothing configured,
+`afk goal` errors before contacting any agent:
+
+```sh
+afk goal "anything"
+# Error: no setup command configured (set 'setup_command' in
+# ~/.config/afk/goal.yaml or pass --setup-command)
+```
+
+Configure it once in `~/.config/afk/goal.yaml` (see configuration.md) or pass
+`--setup-command` for a single run. Use `--dry-run` to compile and print the
+contract without queueing, or `--json` for the scripted (non-interactive) path:
+
+```sh
+afk goal --dry-run --setup-command 'claude -p {{.Prompt}}' "tidy the logging layer"
+afk goal --json   --setup-command 'claude -p {{.Prompt}}' "tidy the logging layer"
+```
+
+### goal subcommands
+
+```sh
+afk goal status <goalID>
+afk goal audit <taskID> --audit-command 'claude -p {{.Prompt}}'
+```
+
+`goal status` shows the goal group's durable record (objective, status, creation
+time) and a count of its member tasks by status. `goal audit` runs the
+independent completion auditor on a task; it inspects real artifacts against the
+recorded objective and emits a terminal `<approved/>`/`<disapproved/>` marker
+rather than trusting the completion note. On disapproval (or any audit
+error/timeout — disapproval is the fail-safe) the task is re-queued to `todo`.
+`audit_command` is also empty by default, so `goal audit` errors until it is
+configured.
+
+## loop
+
+`afk loop` is the built-in autonomous worker-driver. Each iteration it claims the
+first ready task, renders the configured prompt template, runs the configured
+agent command, and finalizes the task as `done` or `failed` based on the command
+exit status — then repeats:
+
+```sh
+afk loop --command 'claude -p {{.Prompt}}' --max-tasks 5
+```
+
+`command` is **empty by default** (fail-closed). With nothing configured, the
+loop errors immediately:
+
+```sh
+afk loop
+# Error: no agent command configured (set 'command' in
+# ~/.config/afk/loop.yaml or pass --command)
+```
+
+Configure it once in `~/.config/afk/loop.yaml` (see configuration.md) or pass
+`--command` for a single run. `--max-tasks N` bounds the run to N tasks then
+exits cleanly (`0` = unlimited). Flags override the config file per run:
+
+| Flag | Effect |
+|---|---|
+| `--command TEMPLATE` | Agent command template, e.g. `claude -p {{.Prompt}}`. |
+| `--worker ID` | Worker identity for claims (default: `loop-<pid>`). |
+| `--lease DURATION` | Exclusive claim duration taken on each task. |
+| `--timeout DURATION` | Per-task execution timeout. |
+| `--cooldown DURATION` | Pause between ticks when no task is found. |
+| `--heartbeat DURATION` | Interval for extending the lease while running. |
+| `--max-failures N` | Halt after this many consecutive task failures. |
+| `--max-tasks N` | Exit cleanly after N tasks (`0` = unlimited). |
+
+Loop results are emitted as JSONL on stdout; agent output goes to stderr. See
+runner.md for the full driver workflow and how it compares to the external
+`afk take`/`afk set` loop.
 
 ## status diagnostics
 
@@ -253,7 +344,7 @@ failed, or manually completed.
 | `afk retry <id>` | Still supported. Prefer `afk retry <id> --reason <reason>` for a targeted retry. |
 | `afk reset <id>` | `afk set <id> doing --note "retrying"` for a targeted retry, or `afk set <id> todo --note <note>` to return work to the ready queue. |
 | `afk prune` / `afk rm` | `afk set <id> deleted` |
-| `afk run` | External loop: `afk take`, execute the task, then `afk set`. |
+| `afk run` | `afk loop` (built-in worker-driver), or an external loop: `afk take`, execute the task, then `afk set`. |
 
 ## statuses
 
