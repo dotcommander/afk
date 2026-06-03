@@ -20,7 +20,7 @@ const sqliteBusyRetryDelay = 25 * time.Millisecond
 // migration function is added below.
 const (
 	schemaVersionKey     = "schema_version"
-	currentSchemaVersion = 5
+	currentSchemaVersion = 6
 )
 
 func (s *SQLiteStore) init(ctx context.Context) error {
@@ -86,6 +86,13 @@ CREATE TABLE IF NOT EXISTS task_gates (
 	PRIMARY KEY (task_id, name)
 );
 CREATE INDEX IF NOT EXISTS task_gates_task_idx ON task_gates(task_id, satisfied);
+CREATE TABLE IF NOT EXISTS goal_groups (
+	id TEXT PRIMARY KEY,
+	objective TEXT NOT NULL DEFAULT '',
+	status TEXT NOT NULL DEFAULT '',
+	created TEXT NOT NULL DEFAULT '',
+	group_id TEXT NOT NULL DEFAULT ''
+);
 CREATE VIRTUAL TABLE IF NOT EXISTS tasks_fts USING fts5(
 	id UNINDEXED,
 	status,
@@ -137,6 +144,9 @@ func (s *SQLiteStore) runMigrationsIfNeeded(ctx context.Context) error {
 		return err
 	}
 	if err := s.backfillTasksFTS(ctx); err != nil {
+		return err
+	}
+	if err := s.migrateV6BudgetLimited(ctx); err != nil {
 		return err
 	}
 	return s.writeSchemaVersion(ctx, currentSchemaVersion)
@@ -223,6 +233,24 @@ func (s *SQLiteStore) migrateTaskMetadata(ctx context.Context) error {
 		if _, err := s.db.ExecContext(ctx, col.sql); err != nil && !isDuplicateColumn(err) {
 			return fmt.Errorf("store: migrate %s: %w", col.name, err)
 		}
+	}
+	return nil
+}
+
+// migrateV6BudgetLimited applies schema version 6: the StatusBudgetLimited task
+// status (the status column is already TEXT, so no column change is needed) and
+// the goal_groups table. CREATE TABLE IF NOT EXISTS keeps it idempotent so
+// fresh-DB init and an upgrade from v5 both converge to the same schema.
+func (s *SQLiteStore) migrateV6BudgetLimited(ctx context.Context) error {
+	if _, err := s.db.ExecContext(ctx, `
+CREATE TABLE IF NOT EXISTS goal_groups (
+	id TEXT PRIMARY KEY,
+	objective TEXT NOT NULL DEFAULT '',
+	status TEXT NOT NULL DEFAULT '',
+	created TEXT NOT NULL DEFAULT '',
+	group_id TEXT NOT NULL DEFAULT ''
+)`); err != nil {
+		return fmt.Errorf("store: migrate goal_groups: %w", err)
 	}
 	return nil
 }

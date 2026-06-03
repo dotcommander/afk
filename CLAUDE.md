@@ -43,6 +43,7 @@ Registered in `internal/commands/root.go` (`func NewRoot`). Categories:
 - **Inspection**: `tasks`, `task`, `status`, `find`, `snapshot`
 - **Scheduling**: `add --blocked-by`, `relate`, `gate`, `take --dry-run`
 - **Lifecycle**: `add`, `set`
+- **Goal**: `goal <objective>` (compile→approve→insert as a dependency chain), `goal status <goalID>`, `goal audit <taskID>`
 - **Worker**: `take`, hidden `heartbeat`, hidden `requeue-stale`
 - **Meta**: `prompt`
 - **Web**: `serve`
@@ -82,6 +83,7 @@ SQLite is the only queue backend. A `--queue`/`AFK_QUEUE` path with a non-`.sqli
 - **Targeted retry**: inspect the task, then use `afk retry <id> --reason "<reason>"` or `afk set <id> doing --note "retrying: <reason>"` to open a fresh attempt before doing retry work.
 - **Readiness has one authority**: `store.Ready` (SQL) is the single source of truth for whether a task is ready. `take` and `take --dry-run` consult it directly. Change the readiness predicate only in `store.Ready`.
 - **No viper.** Queue path comes from flag/env/default — there is no config file layer. Don't add one without a reason.
+- **`afk goal` is fail-closed.** It reads `~/.config/afk/goal.yaml` (yaml.v3, written with defaults on first run — not viper) where `setup_command`/`audit_command` are empty by default; `afk goal` errors with `ErrGoalSetupNotConfigured` until a setup agent command is configured (file or `--setup-command`), and `goal audit` errors until an audit command is set. The objective is HTML-escaped before prompt interpolation (untrusted data). The token budget cap only trips when the agent emits a `token_regex`-parseable count; iteration/wall-clock caps always apply.
 - **`afk serve` binds `127.0.0.1` by default** (loopback only — task bodies may be sensitive); supplying a non-loopback `--addr` prints a warning to stderr. The front-end is a single `go:embed`'d `web/index.html` (no build step required); opens a browser tab by default (`--open=false` to suppress).
 
 ## Conventions

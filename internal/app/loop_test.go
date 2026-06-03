@@ -235,6 +235,73 @@ func TestRunLoopWithHeartbeatInterval(t *testing.T) {
 	require.Equal(t, task.StatusDone, got.Status)
 }
 
+// addReadyInGroup seeds n ready tasks tagged with groupID.
+func addReadyInGroup(t *testing.T, svc *app.Service, groupID string, n int) []string {
+	t.Helper()
+	ctx := context.Background()
+	ids := make([]string, n)
+	for i := range n {
+		id, err := svc.AddWithOptions(ctx, task.AddOptions{Body: "loop group task", GroupID: groupID})
+		require.NoError(t, err)
+		ids[i] = id
+	}
+	return ids
+}
+
+// Budget integration: GoalBudgetCheck trips after the first grouped iteration;
+// the loop halts cleanly and the remaining group tasks are tagged
+// budget-limited.
+func TestRunLoopBudget(t *testing.T) {
+	t.Parallel()
+	svc := newService(t)
+	ctx := context.Background()
+	ids := addReadyInGroup(t, svc, "g1", 3)
+
+	// Use the real accounting closure with MaxIterations=1 so the budget trips
+	// after exactly one iteration.
+	cfg := app.GoalConfig{MaxIterations: 1}
+	check := svc.NewGoalBudgetCheck(cfg)
+
+	var results []app.LoopResult
+	err := svc.RunLoop(
+		ctx, minCfg("/usr/bin/true"),
+		app.LoopOptions{Worker: "w", GoalBudgetCheck: check},
+		nil, nil,
+		func(r app.LoopResult) error { results = append(results, r); return nil },
+	)
+	require.NoError(t, err)
+	require.Len(t, results, 1, "loop halts after the first iteration trips the budget")
+	require.Equal(t, "done", results[0].Status)
+
+	// First task completed; the remaining two are suspended budget-limited.
+	first, showErr := svc.Show(ctx, ids[0])
+	require.NoError(t, showErr)
+	require.Equal(t, task.StatusDone, first.Status)
+	for _, id := range ids[1:] {
+		got, e := svc.Show(ctx, id)
+		require.NoError(t, e)
+		require.Equal(t, task.StatusBudgetLimited, got.Status)
+	}
+}
+
+// Nil-check path: when GoalBudgetCheck == nil the loop behaves identically to a
+// plain loop — all grouped tasks are processed, none budget-limited.
+func TestRunLoopNoBudget(t *testing.T) {
+	t.Parallel()
+	svc := newService(t)
+	ctx := context.Background()
+	ids := addReadyInGroup(t, svc, "g2", 3)
+
+	results, err := runLoop(t, svc, minCfg("/usr/bin/true"), app.LoopOptions{Worker: "w"})
+	require.NoError(t, err)
+	require.Len(t, results, 3)
+	for _, id := range ids {
+		got, showErr := svc.Show(ctx, id)
+		require.NoError(t, showErr)
+		require.Equal(t, task.StatusDone, got.Status)
+	}
+}
+
 // emit error stops the loop.
 func TestRunLoopEmitErrorStopsLoop(t *testing.T) {
 	t.Parallel()

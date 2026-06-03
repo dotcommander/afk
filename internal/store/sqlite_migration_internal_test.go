@@ -75,6 +75,36 @@ func TestMigrationAppliesOnFreshDBMissingMetadataRow(t *testing.T) {
 	require.Equal(t, currentSchemaVersion, version)
 }
 
+// TestMigrationV5ToV6 confirms that a DB recorded at schema version 5 is
+// migrated cleanly to version 6 on the next open. Version 6 is a no-op slot
+// (StatusBudgetLimited adds no columns), so the only observable change is the
+// recorded schema_version advancing to currentSchemaVersion.
+func TestMigrationV5ToV6(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "tasks.sqlite")
+
+	// First open creates the schema; force the recorded version back to 5.
+	s1, err := NewSQLite(ctx, Paths{SQLitePath: path})
+	require.NoError(t, err)
+	require.NoError(t, s1.writeSchemaVersion(ctx, 5))
+	stale, err := s1.readSchemaVersion(ctx)
+	require.NoError(t, err)
+	require.Equal(t, 5, stale)
+	require.NoError(t, s1.Close())
+
+	// Reopen: the migration ladder must advance 5 -> currentSchemaVersion.
+	s2, err := NewSQLite(ctx, Paths{SQLitePath: path})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = s2.Close() })
+
+	version, err := s2.readSchemaVersion(ctx)
+	require.NoError(t, err)
+	require.Equal(t, currentSchemaVersion, version)
+	require.Equal(t, 6, currentSchemaVersion)
+}
+
 func TestMigrationIsDuplicateColumnTypedError(t *testing.T) {
 	t.Parallel()
 

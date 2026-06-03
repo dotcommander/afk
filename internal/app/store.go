@@ -39,6 +39,13 @@ type Store interface {
 	// directories, selected by most-recent task per directory, then sorted
 	// alphabetically. limit <= 0 means no limit.
 	RecentDistinctCWDs(ctx context.Context, limit int) ([]string, error)
+	AddGoalGroup(ctx context.Context, g task.GoalGroup) error
+	GetGoalGroup(ctx context.Context, id string) (task.GoalGroup, error)
+	UpdateGoalGroupStatus(ctx context.Context, id, status string) error
+	// BudgetLimitGroup suspends the still-active (todo/doing) tasks in a group by
+	// setting their status to budget-limited. Done/failed/deleted tasks are left
+	// untouched.
+	BudgetLimitGroup(ctx context.Context, groupID string) error
 }
 
 var _ Store = (*store.SQLiteStore)(nil)

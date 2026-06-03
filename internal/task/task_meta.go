@@ -35,6 +35,9 @@ var statusMeta = map[Status]struct {
 	StatusDeleted: {Event: EventDeleted, Apply: func(t *Task, now time.Time, message string) bool {
 		return t.MarkDeleted(now, message)
 	}},
+	StatusBudgetLimited: {Event: EventBudgetLimited, Apply: func(t *Task, now time.Time, message string) bool {
+		return t.MarkBudgetLimited(now, message)
+	}},
 }
 
 // init asserts at process start that every Status constant has a statusMeta

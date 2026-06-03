@@ -16,6 +16,8 @@ const (
 	StatusDone    Status = "done"
 	StatusFailed  Status = "failed"
 	StatusDeleted Status = "deleted"
+
+	StatusBudgetLimited Status = "budget-limited"
 )
 
 // ErrInvalidStatus reports an unknown task status.
@@ -86,6 +88,7 @@ const (
 	EventHeartbeat       EventType = "heartbeat"
 	EventDependencyAdded EventType = "dependency_added"
 	EventRelationAdded   EventType = "relation_added"
+	EventBudgetLimited   EventType = "budget_limited"
 )
 
 // Event records a task lifecycle transition.
@@ -148,6 +151,8 @@ func ParseStatus(s string) (Status, bool) {
 		return StatusFailed, true
 	case StatusDeleted:
 		return StatusDeleted, true
+	case StatusBudgetLimited:
+		return StatusBudgetLimited, true
 	default:
 		return "", false
 	}
@@ -179,7 +184,7 @@ func ActiveStatus(s Status) bool {
 
 // OrderedStatuses returns the canonical display order.
 func OrderedStatuses() []Status {
-	return []Status{StatusTodo, StatusDoing, StatusDone, StatusFailed, StatusDeleted}
+	return []Status{StatusTodo, StatusDoing, StatusDone, StatusFailed, StatusDeleted, StatusBudgetLimited}
 }
 
 // AllStatuses returns every defined Status constant. It is an alias of
@@ -250,6 +255,30 @@ func (t *Task) SetStatus(status Status, now time.Time, message string) bool {
 		return false
 	}
 	return meta.Apply(t, now, message)
+}
+
+// MarkBudgetLimited suspends the task pending user action when a goal budget
+// cap is exhausted. Already-budget-limited tasks are left unchanged.
+func (t *Task) MarkBudgetLimited(now time.Time, reason string) bool {
+	if t.Status == StatusBudgetLimited {
+		return false
+	}
+	t.Status = StatusBudgetLimited
+	t.Finished = formatTime(now)
+	t.LeaseExpires = ""
+	t.Error = reason
+	return true
+}
+
+// GoalGroup is the durable record of a compiled goal: its objective, current
+// status, and the group id that links its member tasks. No I/O — the store
+// owns persistence.
+type GoalGroup struct {
+	ID        string
+	Objective string
+	Status    string
+	CreatedAt string
+	GroupID   string
 }
 
 // Reset returns the task to todo and clears lifecycle/error fields.

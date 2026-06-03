@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Features
+
+- feat(goal): add afk goal command with contract compilation, auditor, and budget caps
+
 ## v0.4.1 (2026-05-22)
 
 ### Features

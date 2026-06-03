@@ -9,6 +9,8 @@ import (
 	"os"
 	"text/template"
 	"time"
+
+	"github.com/dotcommander/afk/internal/task"
 )
 
 // LoopOptions carries runtime overrides resolved by the command layer.
@@ -20,6 +22,12 @@ type LoopOptions struct {
 	// Worker is the worker identity string. When empty, RunLoop derives
 	// "loop-<pid>" so the caller need not construct it.
 	Worker string
+
+	// GoalBudgetCheck, when non-nil, is consulted after each iteration for any
+	// task carrying a GroupID. It accounts the iteration against the goal's
+	// budget and returns the first exceeded cap (or BudgetOK). When nil, budget
+	// checking is disabled and RunLoop behaves identically to a plain loop.
+	GoalBudgetCheck func(groupID string, r LoopResult) (BudgetLimitReason, error)
 }
 
 // LoopResult records the outcome of a single task iteration. Emitted via the
@@ -30,6 +38,13 @@ type LoopResult struct {
 	Error    string        `json:"error,omitempty"`
 	Attempt  int           `json:"attempt"`
 	Duration time.Duration `json:"duration_ns"` // nanoseconds; cheap to record
+
+	// TokensUsed is the token count parsed from the agent output for this
+	// iteration. It stays 0 unless a token_regex is configured AND the loop has
+	// access to parseable agent output; RunLoop forwards agent stdout/stderr
+	// verbatim to agentOut/agentErr without capturing it, so RunLoop itself
+	// leaves this 0. The goal loop populates it when it captures agent output.
+	TokensUsed int `json:"tokens_used,omitempty"`
 }
 
 // RunLoop drives the autonomous task execution loop.
@@ -203,11 +218,44 @@ func (s *Service) RunLoop(
 			return fmt.Errorf("circuit breaker: %d consecutive failures", consecutiveFailures)
 		}
 
+		// --- Goal budget (optional; disabled when GoalBudgetCheck == nil) ---
+		// Only consulted for grouped tasks. On any exceeded cap, suspend the
+		// remaining group tasks (budget-limited) and exit cleanly so no new task
+		// is claimed.
+		halt, budgetErr := s.applyGoalBudget(ctx, t, opts, r)
+		if budgetErr != nil {
+			return budgetErr
+		}
+		if halt {
+			return nil
+		}
+
 		// --- Cooldown (interruptible) ---
 		if err := s.cooldown(ctx, cfg.Cooldown); err != nil {
 			return err
 		}
 	}
+}
+
+// applyGoalBudget consults opts.GoalBudgetCheck for grouped tasks. On any
+// exceeded cap it suspends the remaining group tasks (budget-limited) and
+// reports halt=true so RunLoop exits cleanly without claiming a new task.
+// Returns halt=false for ungrouped tasks or when no check is configured.
+func (s *Service) applyGoalBudget(ctx context.Context, t *task.Task, opts LoopOptions, r LoopResult) (halt bool, err error) {
+	if t.GroupID == "" || opts.GoalBudgetCheck == nil {
+		return false, nil
+	}
+	reason, budgetErr := opts.GoalBudgetCheck(t.GroupID, r)
+	if budgetErr != nil {
+		return false, fmt.Errorf("goal budget check: %w", budgetErr)
+	}
+	if reason != BudgetOK {
+		if limitErr := s.store.BudgetLimitGroup(ctx, t.GroupID); limitErr != nil {
+			return false, fmt.Errorf("budget-limit group %s: %w", t.GroupID, limitErr)
+		}
+		return true, nil
+	}
+	return false, nil
 }
 
 // cooldown sleeps for d interruptibly. Returns ctx.Err() on cancellation,

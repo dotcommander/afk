@@ -208,3 +208,20 @@ func TestAllStatusesAllHaveStatusMetaEntries(t *testing.T) {
 			"EventForStatus(%q) returned empty event — missing statusMeta entry", status)
 	}
 }
+
+func TestBudgetLimitedStatus(t *testing.T) {
+	t.Parallel()
+
+	got, ok := task.ParseStatus("budget-limited")
+	require.True(t, ok)
+	require.Equal(t, task.StatusBudgetLimited, got)
+
+	require.Equal(t, task.StatusBudgetLimited, task.NormalizeStatus("budget-limited"))
+	require.True(t, task.ValidStatus(task.StatusBudgetLimited))
+
+	// Suspended tasks stay visible to the user but are not claimable.
+	require.True(t, task.VisibleStatus(task.StatusBudgetLimited))
+	require.False(t, task.ActiveStatus(task.StatusBudgetLimited))
+
+	require.Contains(t, task.OrderedStatuses(), task.StatusBudgetLimited)
+}
