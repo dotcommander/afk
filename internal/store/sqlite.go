@@ -264,6 +264,7 @@ func sqliteDSN(path string) string {
 	q := u.Query()
 	q.Add("_pragma", "busy_timeout(5000)")
 	q.Add("_pragma", "journal_mode(WAL)")
+	q.Add("_pragma", "synchronous(NORMAL)")
 	q.Set("_txlock", "immediate")
 	u.RawQuery = q.Encode()
 	return u.String()

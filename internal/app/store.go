@@ -42,6 +42,8 @@ type Store interface {
 	AddGoalGroup(ctx context.Context, g task.GoalGroup) error
 	GetGoalGroup(ctx context.Context, id string) (task.GoalGroup, error)
 	UpdateGoalGroupStatus(ctx context.Context, id, status string) error
+	// CountTasksByGroupID returns per-status task counts for a single goal group.
+	CountTasksByGroupID(ctx context.Context, groupID string) (map[string]int, error)
 	// BudgetLimitGroup suspends the still-active (todo/doing) tasks in a group by
 	// setting their status to budget-limited. Done/failed/deleted tasks are left
 	// untouched.

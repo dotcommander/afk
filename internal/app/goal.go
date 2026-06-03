@@ -248,6 +248,11 @@ func (s *Service) GetGoalGroup(ctx context.Context, goalID string) (task.GoalGro
 	return s.store.GetGoalGroup(ctx, goalID)
 }
 
+// CountTasksByGroupID returns per-status task counts for a single goal group.
+func (s *Service) CountTasksByGroupID(ctx context.Context, groupID string) (map[string]int, error) {
+	return s.store.CountTasksByGroupID(ctx, groupID)
+}
+
 // NewGoalBudgetCheck returns a LoopOptions.GoalBudgetCheck closure that tracks
 // a per-group BudgetState in an in-memory map keyed by GroupID and reports the
 // first exceeded cap against cfg. It accounts each iteration (incrementing the

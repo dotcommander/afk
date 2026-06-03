@@ -128,15 +128,9 @@ func newGoalStatusCmd(d *Deps) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			tasks, err := d.Service.List(cmd.Context(), "all")
+			counts, err := d.Service.CountTasksByGroupID(cmd.Context(), goalID)
 			if err != nil {
 				return err
-			}
-			counts := map[string]int{}
-			for _, t := range tasks {
-				if t.GroupID == goalID {
-					counts[string(t.Status)]++
-				}
 			}
 			return output.WriteJSONLine(d.Stdout, struct {
 				ID         string         `json:"id"`

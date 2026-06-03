@@ -40,6 +40,31 @@ func (s *SQLiteStore) UpdateGoalGroupStatus(ctx context.Context, id, status stri
 UPDATE goal_groups SET status = ? WHERE id = ?`, status, id)
 }
 
+// CountTasksByGroupID returns per-status task counts for a single goal group,
+// computed in SQL (GROUP BY) instead of scanning the whole task table.
+func (s *SQLiteStore) CountTasksByGroupID(ctx context.Context, groupID string) (map[string]int, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT status, COUNT(*) FROM tasks WHERE group_id = ? GROUP BY status`, groupID)
+	if err != nil {
+		return nil, fmt.Errorf("store: count tasks by group: %w", err)
+	}
+	defer rows.Close() //nolint:errcheck // rows.Err checked below
+
+	counts := make(map[string]int)
+	for rows.Next() {
+		var status string
+		var count int
+		if err := rows.Scan(&status, &count); err != nil {
+			return nil, fmt.Errorf("store: count tasks by group: %w", err)
+		}
+		counts[status] = count
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("store: count tasks by group: %w", err)
+	}
+	return counts, nil
+}
+
 // BudgetLimitGroup suspends the still-active tasks in a group by setting their
 // status to budget-limited. Only todo/doing tasks are affected; terminal tasks
 // (done/failed/deleted) and already budget-limited tasks are left untouched.

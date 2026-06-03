@@ -42,6 +42,7 @@ CREATE TABLE IF NOT EXISTS tasks (
 	ordinal INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS tasks_status_order_idx ON tasks(status, ordinal);
+CREATE INDEX IF NOT EXISTS tasks_group_id_status_idx ON tasks(group_id, status);
 CREATE TABLE IF NOT EXISTS metadata (
 	key TEXT PRIMARY KEY,
 	value TEXT NOT NULL
