@@ -78,7 +78,7 @@ SQLite is the only queue backend. A `--queue`/`AFK_QUEUE` path with a non-`.sqli
 
 - **`afk prompt` does not open the DB** unless `--task <id>` is given. Controlled by the `skipStoreInit` cobra annotation helper in `internal/commands/root.go` (`func skipStoreInit`). Don't accidentally remove that — it's what lets `/loop` call `afk prompt` cheaply.
 - **`afk run` is not public.** Use `afk take --dry-run` for readiness previews and external loops for execution.
-- **Worker contract**: preview with `afk take --dry-run --json --full` when triaging; claim with `afk take`, then explicitly finish with `afk set <id> done --note <evidence>` or `afk set <id> failed --note <reason>`. Use `--summary` when a receipt should include queue counts.
+- **Worker contract**: preview with `afk take --dry-run --json --full` when triaging; claim with `afk take`, then explicitly finish with `afk set <id> done --note <evidence>` or `afk set <id> failed --note <reason>`. Use `--summary` when a receipt should include queue counts. A terminal transition (`done`/`failed`) **requires** a note as completion evidence — an empty note is rejected with `ErrMissingCompletionNote`; pass `--force` to record a terminal status without one.
 - **Targeted retry**: inspect the task, then use `afk retry <id> --reason "<reason>"` or `afk set <id> doing --note "retrying: <reason>"` to open a fresh attempt before doing retry work.
 - **Readiness has one authority**: `store.Ready` (SQL) is the single source of truth for whether a task is ready. `take` and `take --dry-run` consult it directly. Change the readiness predicate only in `store.Ready`.
 - **No viper.** Queue path comes from flag/env/default — there is no config file layer. Don't add one without a reason.

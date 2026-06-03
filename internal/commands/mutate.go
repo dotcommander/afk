@@ -18,6 +18,7 @@ func newSetCmd(d *Deps) *cobra.Command {
 	var noteFlag string
 	var noteFile string
 	var stage string
+	var force bool
 
 	cmd := &cobra.Command{
 		Use:   "set <id> <status> [note...]",
@@ -31,6 +32,9 @@ func newSetCmd(d *Deps) *cobra.Command {
 			note, err := resolveSetNote(d, args[2:], noteFlag, noteFile)
 			if err != nil {
 				return err
+			}
+			if !force && (status == task.StatusDone || status == task.StatusFailed) && strings.TrimSpace(note) == "" {
+				return fmt.Errorf("%w", task.ErrMissingCompletionNote)
 			}
 			var stagePtr *string
 			if cmd.Flags().Changed("stage") {
@@ -63,6 +67,7 @@ func newSetCmd(d *Deps) *cobra.Command {
 	cmd.Flags().StringVar(&noteFlag, "note", "", "status note text")
 	cmd.Flags().StringVar(&noteFile, "note-file", "", "read status note from file, or '-' for stdin")
 	cmd.Flags().StringVar(&stage, "stage", "", "set the free-form pipeline stage label (omit to leave unchanged)")
+	cmd.Flags().BoolVar(&force, "force", false, "allow done/failed without a completion note")
 	return cmd
 }
 

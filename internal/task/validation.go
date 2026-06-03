@@ -24,6 +24,11 @@ var (
 	ErrInvalidPriority        = errors.New("priority must be urgent, high, normal, or low")
 )
 
+// ErrMissingCompletionNote reports that a terminal `set` transition (done or
+// failed) was attempted without completion evidence. It is a CLI usage error,
+// independent of ErrInvalidTask. Bypass with --force.
+var ErrMissingCompletionNote = errors.New("done/failed requires a note as completion evidence (use --force to override)")
+
 // ChurnPhraseError reports that a generated task body contains a phrase known
 // to produce vague or churn-prone work. It wraps ErrInvalidTask via Is so that
 // errors.Is(err, ErrInvalidTask) returns true.

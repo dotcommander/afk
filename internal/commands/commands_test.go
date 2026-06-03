@@ -56,7 +56,7 @@ func TestCommandsLifecycleThroughRoot(t *testing.T) {
 	require.Contains(t, takeOut, `"lease_expires"`)
 	require.Contains(t, run("task", id), "worker=worker-1")
 
-	require.Equal(t, "set "+id+" done\n", run("set", id, "done"))
+	require.Equal(t, "set "+id+" done\n", run("set", id, "done", "--force"))
 	require.Contains(t, run("status"), "done: 1")
 	require.NotContains(t, run("tasks", "--status", "todo"), id)
 
@@ -212,7 +212,7 @@ func TestTakeSummaryJSON(t *testing.T) {
 	firstID := strings.TrimSpace(run("add", "--no-cwd", "first task"))
 	secondID := strings.TrimSpace(run("add", "--no-cwd", "second task"))
 	doneID := strings.TrimSpace(run("add", "--no-cwd", "done task"))
-	run("set", doneID, "done")
+	run("set", doneID, "done", "--force")
 
 	var doc map[string]any
 	require.NoError(t, json.Unmarshal([]byte(strings.TrimSpace(run("take", "--summary", "--lease", "30m"))), &doc))
@@ -330,7 +330,7 @@ func TestSetDoingCreatesRetryAttempt(t *testing.T) {
 	run("take")
 	run("set", id, "failed", "blocked")
 	run("set", id, "doing", "retrying")
-	run("set", id, "done")
+	run("set", id, "done", "--force")
 
 	var doc map[string]any
 	require.NoError(t, json.Unmarshal([]byte(strings.TrimSpace(run("task", id, "--json"))), &doc))
@@ -341,6 +341,65 @@ func TestSetDoingCreatesRetryAttempt(t *testing.T) {
 	require.Len(t, attempts, 2)
 	require.Contains(t, fmt.Sprint(attempts[0]), "failed")
 	require.Contains(t, fmt.Sprint(attempts[1]), "done")
+}
+
+func TestSetTerminalRequiresCompletionNote(t *testing.T) {
+	t.Parallel()
+
+	queuePath := filepath.Join(t.TempDir(), "tasks.sqlite")
+	stdout, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	d := testDepsWithWriters(stdout, stderr)
+
+	exec := func(args ...string) error {
+		t.Helper()
+		stdout.Reset()
+		stderr.Reset()
+		root := NewRoot(d, "test")
+		root.SetArgs(append([]string{"--queue", queuePath}, args...))
+		return root.Execute()
+	}
+
+	addID := func() string {
+		t.Helper()
+		require.NoError(t, exec("add", "--no-cwd", "completion-note task"))
+		return strings.TrimSpace(stdout.String())
+	}
+
+	// done without a note is rejected.
+	id := addID()
+	err := exec("set", id, "done")
+	require.ErrorIs(t, err, task.ErrMissingCompletionNote)
+	require.Equal(t, "todo", currentStatus(t, d, queuePath, id))
+
+	// failed without a note is rejected.
+	failID := addID()
+	err = exec("set", failID, "failed")
+	require.ErrorIs(t, err, task.ErrMissingCompletionNote)
+	require.Equal(t, "todo", currentStatus(t, d, queuePath, failID))
+
+	// --force bypasses the guard.
+	forceID := addID()
+	require.NoError(t, exec("set", forceID, "done", "--force"))
+	require.Equal(t, "done", currentStatus(t, d, queuePath, forceID))
+
+	// a note satisfies the guard.
+	noteID := addID()
+	require.NoError(t, exec("set", noteID, "done", "--note", "verified: go test ./... passed"))
+	require.Equal(t, "done", currentStatus(t, d, queuePath, noteID))
+}
+
+func currentStatus(t *testing.T, d *Deps, queuePath, id string) string {
+	t.Helper()
+	buf := &bytes.Buffer{}
+	root := NewRoot(d, "test")
+	saved := d.Stdout
+	d.Stdout = buf
+	defer func() { d.Stdout = saved }()
+	root.SetArgs([]string{"--queue", queuePath, "task", id, "--json"})
+	require.NoError(t, root.Execute())
+	var doc map[string]any
+	require.NoError(t, json.Unmarshal([]byte(strings.TrimSpace(buf.String())), &doc))
+	return doc["task"].(map[string]any)["status"].(string)
 }
 
 func TestRetryCommandCreatesRetryAttempt(t *testing.T) {
@@ -365,7 +424,7 @@ func TestRetryCommandCreatesRetryAttempt(t *testing.T) {
 	run("set", id, "failed", "workspace permission blocked")
 
 	require.JSONEq(t, `{"id":"`+id+`","status":"doing","note":"retrying: workspace permission approved"}`, run("retry", id, "--reason", "workspace permission approved", "--json"))
-	run("set", id, "done")
+	run("set", id, "done", "--force")
 
 	var doc map[string]any
 	require.NoError(t, json.Unmarshal([]byte(strings.TrimSpace(run("task", id, "--json"))), &doc))
@@ -473,7 +532,7 @@ func TestStatusSummaryJSON(t *testing.T) {
 
 	todoID := strings.TrimSpace(run("add", "--no-cwd", "todo task"))
 	doneID := strings.TrimSpace(run("add", "--no-cwd", "done task"))
-	run("set", doneID, "done")
+	run("set", doneID, "done", "--force")
 	require.Contains(t, run("take"), todoID)
 
 	var doc map[string]any
@@ -562,7 +621,7 @@ func TestStatusBlockedExplainsDependencyBlockers(t *testing.T) {
 	require.Contains(t, text, blockedID)
 	require.Contains(t, text, prereqID+"(todo)")
 
-	run("set", prereqID, "done")
+	run("set", prereqID, "done", "--force")
 	require.NoError(t, json.Unmarshal([]byte(strings.TrimSpace(run("status", "--blocked", "--json"))), &doc))
 	require.Empty(t, doc["blocked"])
 }
@@ -810,7 +869,7 @@ func TestCommandRunEPropagatesServiceErrors(t *testing.T) {
 		{name: "find", cmd: newFindCmd(d), args: []string{"x"}},
 		{name: "status", cmd: newStatusCmd(d)},
 		{name: "task", cmd: newTaskCmd(d), args: []string{"id"}},
-		{name: "set", cmd: newSetCmd(d), args: []string{"id", "done"}},
+		{name: "set", cmd: newSetCmd(d), args: []string{"id", "done", "--force"}},
 		{name: "take dry-run", cmd: newTakeCmd(d), args: []string{"--dry-run"}},
 		{name: "take claim", cmd: newTakeCmd(d)},
 		{name: "retry", cmd: newRetryCmd(d), args: []string{"id"}},
