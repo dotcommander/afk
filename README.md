@@ -77,16 +77,21 @@ surrounding prompt structure.
 
 Without `--dry-run`/`--json`, `afk goal` prints the compiled contract and prompts
 `Approve contract? [yes/no]:` on stderr. Only an explicit `yes` queues the tasks;
-anything else declines and writes nothing.
+anything else declines and writes nothing. On `yes`, it also prints a JSON receipt
+line `{"goal_id":"<uuid>","tasks":N}` to stdout so you can capture the goal ID for
+use with `afk goal status` or `afk goal audit`.
 
 ### subcommands
 
-- `afk goal status <goalID>` — show a goal group's durable record (objective,
-  status, creation time) and a count of its member tasks by status.
+- `afk goal status <goalID>` — show a goal group's durable record and a count of
+  its member tasks by status. The JSON response includes the raw `objective` (as
+  originally submitted), the contract `outcome` (the setup agent's restatement),
+  the goal status, creation time, and member-task counts by status.
 - `afk goal audit <taskID> [--audit-command TEMPLATE]` — run the independent
   completion auditor on a task. The auditor is a separate agent invocation that
-  inspects the real artifacts against the goal's recorded objective and emits a
-  terminal `<approved/>`/`<disapproved/>` marker; it does not trust the task's
+  inspects the real artifacts against the **raw user objective** (not the
+  contract restatement), so it can catch setup-agent misinterpretation. It emits
+  a terminal `<approved/>`/`<disapproved/>` marker and does not trust the task's
   completion note. On disapproval (or any audit error/timeout — disapproval is
   the fail-safe default) the task is re-queued to `todo`.
 

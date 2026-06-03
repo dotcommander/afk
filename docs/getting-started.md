@@ -61,8 +61,10 @@ afk goal --setup-command 'claude -p {{.Prompt}}' "migrate auth off the old sessi
 ```
 
 `afk goal` is fail-closed: it errors until a setup command is configured (file
-or flag). See [command-reference.md](command-reference.md#goal) for the contract,
-approval, and `goal status` / `goal audit` subcommands.
+or flag). On approval, it prints a JSON receipt `{"goal_id":"<uuid>","tasks":N}`
+to stdout — use the `goal_id` with `afk goal status` or `afk goal audit`. See
+[command-reference.md](command-reference.md#goal) for the contract, approval, and
+`goal status` / `goal audit` subcommands.
 
 Run the visibility layer:
 

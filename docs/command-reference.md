@@ -110,7 +110,8 @@ filters by stage.
 `afk goal "<objective>"` compiles a free-text objective into a structured task
 contract using a configured setup agent, presents that contract, and — only
 after you approve it — queues the contract's tasks as a dependency chain (each
-task blocked by the previous one):
+task blocked by the previous one). On approval, `afk goal` prints a
+`{"goal_id":"<uuid>","tasks":N}` JSON receipt to stdout:
 
 ```sh
 afk goal "migrate the auth package off the deprecated session store"
@@ -144,14 +145,17 @@ afk goal status <goalID>
 afk goal audit <taskID> --audit-command 'claude -p {{.Prompt}}'
 ```
 
-`goal status` shows the goal group's durable record (objective, status, creation
-time) and a count of its member tasks by status. `goal audit` runs the
-independent completion auditor on a task; it inspects real artifacts against the
-recorded objective and emits a terminal `<approved/>`/`<disapproved/>` marker
-rather than trusting the completion note. On disapproval (or any audit
-error/timeout — disapproval is the fail-safe) the task is re-queued to `todo`.
-`audit_command` is also empty by default, so `goal audit` errors until it is
-configured.
+`goal status` shows the goal group's durable record and a count of its member
+tasks by status. The JSON response includes both the raw `objective` (as
+originally submitted by the user) and the contract `outcome` (the setup agent's
+restatement), plus status, creation time, and member-task counts by status.
+`goal audit` runs the independent completion auditor on a task; it inspects real
+artifacts against the **raw user objective** (not the contract restatement), so
+it can catch setup-agent misinterpretation. It emits a terminal
+`<approved/>`/`<disapproved/>` marker rather than trusting the completion note.
+On disapproval (or any audit error/timeout — disapproval is the fail-safe) the
+task is re-queued to `todo`. `audit_command` is also empty by default, so
+`goal audit` errors until it is configured.
 
 ## loop
 
