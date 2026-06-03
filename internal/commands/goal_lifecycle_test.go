@@ -73,8 +73,8 @@ func TestGoalLifecycleApprovePath(t *testing.T) {
 		return stdout.String(), stderr.String(), err
 	}
 
-	// Step 1: run goal with interactive approval "yes".
-	_, stderr, err := execCmd("yes\n", "goal", "--setup-command", setup, objective)
+	// Step 1: run goal with interactive approval "yes"; capture stdout for receipt.
+	approveOut, stderr, err := execCmd("yes\n", "goal", "--setup-command", setup, objective)
 	require.NoError(t, err, "stderr: %s", stderr)
 
 	// Step 2: list tasks; find task with firstTaskBody; require 3 tasks total.
@@ -83,21 +83,37 @@ func TestGoalLifecycleApprovePath(t *testing.T) {
 	rows := parseGoalTaskRows(t, tasksOut)
 	require.Len(t, rows, 3, "expected 3 inserted tasks, got: %s", tasksOut)
 
-	var targetID, goalID string
+	var targetID, goalIDFromTasks string
 	for _, r := range rows {
 		if r.Body == firstTaskBody {
 			targetID = r.ID
-			goalID = r.GroupID
+			goalIDFromTasks = r.GroupID
 		}
 	}
 	require.NotEmpty(t, targetID, "task with body %q not found in: %s", firstTaskBody, tasksOut)
-	require.NotEmpty(t, goalID, "group_id not set on task %s", targetID)
+	require.NotEmpty(t, goalIDFromTasks, "group_id not set on task %s", targetID)
 
-	// Step 3: goal status — contains the contract outcome and "todo".
-	// The stored objective is the contract's "outcome" field, not the CLI arg.
+	// Assert receipt: last non-blank line of approveOut is the goal-receipt JSON.
+	require.Contains(t, approveOut, `"goal_id":`)
+	var receipt struct {
+		GoalID string `json:"goal_id"`
+		Tasks  int    `json:"tasks"`
+	}
+	for _, line := range strings.Split(approveOut, "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "{") {
+			_ = json.Unmarshal([]byte(line), &receipt)
+		}
+	}
+	require.Equal(t, goalIDFromTasks, receipt.GoalID, "receipt goal_id must match tasks group_id")
+
+	goalID := goalIDFromTasks
+
+	// Step 3: goal status — contains the raw user objective and "todo"; outcome field has the contract outcome.
 	statusOut, _, err := execCmd("", "goal", "status", goalID)
 	require.NoError(t, err)
-	require.Contains(t, statusOut, "report command supports CSV export") // contractBlock outcome
+	require.Contains(t, statusOut, "add CSV export to the report command") // raw objective
+	require.Contains(t, statusOut, "report command supports CSV export")   // contract outcome (in outcome field)
 	require.Contains(t, statusOut, "todo")
 
 	// Step 4: audit approve — output contains approved:true and disapproved:false.

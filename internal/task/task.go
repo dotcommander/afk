@@ -276,6 +276,8 @@ func (t *Task) MarkBudgetLimited(now time.Time, reason string) bool {
 type GoalGroup struct {
 	ID        string
 	Objective string
+	// Outcome is the contract's restated outcome, kept for reference; Objective is the raw user objective.
+	Outcome   string
 	Status    string
 	CreatedAt string
 	GroupID   string

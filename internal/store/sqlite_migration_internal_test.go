@@ -102,7 +102,7 @@ func TestMigrationV5ToV6(t *testing.T) {
 	version, err := s2.readSchemaVersion(ctx)
 	require.NoError(t, err)
 	require.Equal(t, currentSchemaVersion, version)
-	require.Equal(t, 6, currentSchemaVersion)
+	require.Equal(t, 7, currentSchemaVersion)
 }
 
 func TestMigrationIsDuplicateColumnTypedError(t *testing.T) {

@@ -269,13 +269,16 @@ func (s *Service) NewGoalBudgetCheck(cfg GoalConfig) func(string, LoopResult) (B
 	}
 }
 
-// RecordGoalGroup persists the goal group row after user approval. The
-// contract's Outcome becomes the durable Objective; status starts "active"
-// (Decision 7) and CreatedAt uses the Service clock.
-func (s *Service) RecordGoalGroup(ctx context.Context, goalID string, contract GoalContract) error {
+// RecordGoalGroup persists the goal group row after user approval. The RAW
+// user objective is stored as the durable Objective (so goal status and the
+// auditor judge against what the user actually asked); the contract's Outcome
+// is stored separately in the Outcome column for reference. Status starts
+// "active" and CreatedAt uses the Service clock.
+func (s *Service) RecordGoalGroup(ctx context.Context, goalID, objective string, contract GoalContract) error {
 	return s.store.AddGoalGroup(ctx, task.GoalGroup{
 		ID:        goalID,
-		Objective: contract.Outcome,
+		Objective: objective,
+		Outcome:   contract.Outcome,
 		Status:    "active",
 		CreatedAt: formatTime(s.now()),
 		GroupID:   goalID,

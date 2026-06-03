@@ -8,9 +8,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-
-	"modernc.org/sqlite"
-	sqlite3 "modernc.org/sqlite/lib"
 )
 
 const sqliteBusyRetryDelay = 25 * time.Millisecond
@@ -20,7 +17,7 @@ const sqliteBusyRetryDelay = 25 * time.Millisecond
 // migration function is added below.
 const (
 	schemaVersionKey     = "schema_version"
-	currentSchemaVersion = 6
+	currentSchemaVersion = 7
 )
 
 func (s *SQLiteStore) init(ctx context.Context) error {
@@ -89,6 +86,7 @@ CREATE INDEX IF NOT EXISTS task_gates_task_idx ON task_gates(task_id, satisfied)
 CREATE TABLE IF NOT EXISTS goal_groups (
 	id TEXT PRIMARY KEY,
 	objective TEXT NOT NULL DEFAULT '',
+	outcome TEXT NOT NULL DEFAULT '',
 	status TEXT NOT NULL DEFAULT '',
 	created TEXT NOT NULL DEFAULT '',
 	group_id TEXT NOT NULL DEFAULT ''
@@ -149,6 +147,9 @@ func (s *SQLiteStore) runMigrationsIfNeeded(ctx context.Context) error {
 	if err := s.migrateV6BudgetLimited(ctx); err != nil {
 		return err
 	}
+	if err := s.migrateV7GoalOutcome(ctx); err != nil {
+		return err
+	}
 	return s.writeSchemaVersion(ctx, currentSchemaVersion)
 }
 
@@ -178,37 +179,6 @@ func (s *SQLiteStore) writeSchemaVersion(ctx context.Context, version int) error
 		return fmt.Errorf("store: write schema version: %w", err)
 	}
 	return nil
-}
-
-func (s *SQLiteStore) execWithBusyRetry(ctx context.Context, query string, args ...any) error {
-	return retrySQLiteBusy(ctx, func(ctx context.Context) error {
-		_, err := s.db.ExecContext(ctx, query, args...)
-		return err
-	})
-}
-
-func retrySQLiteBusy(ctx context.Context, fn func(context.Context) error) error {
-	var err error
-	for {
-		err = fn(ctx)
-		if !isSQLiteBusy(err) {
-			return err
-		}
-		if waitErr := waitSQLiteBusyRetry(ctx); waitErr != nil {
-			return err
-		}
-	}
-}
-
-func waitSQLiteBusyRetry(ctx context.Context) error {
-	timer := time.NewTimer(sqliteBusyRetryDelay)
-	defer timer.Stop()
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	case <-timer.C:
-		return nil
-	}
 }
 
 func (s *SQLiteStore) migrateTaskMetadata(ctx context.Context) error {
@@ -275,6 +245,15 @@ func (s *SQLiteStore) migrateStatusNames(ctx context.Context) error {
 	return nil
 }
 
+// migrateV7GoalOutcome adds the outcome column to goal_groups for existing DBs.
+// Idempotent: isDuplicateColumn absorbs the error when the column already exists.
+func (s *SQLiteStore) migrateV7GoalOutcome(ctx context.Context) error {
+	if _, err := s.db.ExecContext(ctx, `ALTER TABLE goal_groups ADD COLUMN outcome TEXT NOT NULL DEFAULT ''`); err != nil && !isDuplicateColumn(err) {
+		return fmt.Errorf("store: migrate goal_groups outcome: %w", err)
+	}
+	return nil
+}
+
 // backfillTasksFTS repopulates the tasks_fts index from the tasks table during
 // migration. It clears the index first so repeated migrations (or a version
 // bump on an existing DB whose tasks_fts was created empty by IF NOT EXISTS)
@@ -290,44 +269,4 @@ FROM tasks`); err != nil {
 		return fmt.Errorf("store: backfill tasks_fts: %w", err)
 	}
 	return nil
-}
-
-// isDuplicateColumn reports whether err is the "duplicate column name"
-// failure raised when an ALTER TABLE ADD COLUMN re-applies a column that a
-// prior migration already added. Mirrors the isSQLiteBusy idiom: match a
-// typed *sqlite.Error and gate on Code() first. "duplicate column name" maps
-// to the generic SQLITE_ERROR result code (no distinct extended code), so the
-// message substring check runs only as a last resort against the typed error.
-func isDuplicateColumn(err error) bool {
-	if err == nil {
-		return false
-	}
-	var se *sqlite.Error
-	if !errors.As(err, &se) {
-		return false
-	}
-	if se.Code() != sqlite3.SQLITE_ERROR {
-		return false
-	}
-	return strings.Contains(se.Error(), "duplicate column name")
-}
-
-// isSQLiteBusy reports whether err is a SQLite contention error that the
-// retry loop should back off on. Uses errors.As against *sqlite.Error so the
-// check is robust to wrapped errors and message-string locale drift across
-// driver versions.
-func isSQLiteBusy(err error) bool {
-	if err == nil {
-		return false
-	}
-	var se *sqlite.Error
-	if !errors.As(err, &se) {
-		return false
-	}
-	switch se.Code() {
-	case sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED:
-		return true
-	default:
-		return false
-	}
 }

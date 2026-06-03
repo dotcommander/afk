@@ -35,7 +35,8 @@ func (s *Service) RunGoalAudit(
 	}
 
 	// Objective for the audit frame comes from the durable goal group, not the
-	// caller, so the auditor checks against the recorded contract outcome.
+	// caller, so the auditor judges against the raw user objective (the contract
+	// outcome is retained separately in group.Outcome for reference).
 	var objective string
 	if goalID != "" {
 		group, err := s.store.GetGoalGroup(ctx, goalID)

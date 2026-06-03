@@ -107,7 +107,13 @@ func runGoalCmd(cmd *cobra.Command, d *Deps, objective string, cfg app.GoalConfi
 	if err := d.Service.InsertGoalTasks(cmd.Context(), goalID, contract, cwd); err != nil {
 		return err
 	}
-	return d.Service.RecordGoalGroup(cmd.Context(), goalID, contract)
+	if err := d.Service.RecordGoalGroup(cmd.Context(), goalID, objective, contract); err != nil {
+		return err
+	}
+	return output.WriteJSONLine(d.Stdout, struct {
+		GoalID string `json:"goal_id"`
+		Tasks  int    `json:"tasks"`
+	}{GoalID: goalID, Tasks: len(contract.Tasks)}, "goal-receipt")
 }
 
 // newGoalStatusCmd shows a goal group's durable record and member task counts.
@@ -135,6 +141,7 @@ func newGoalStatusCmd(d *Deps) *cobra.Command {
 			return output.WriteJSONLine(d.Stdout, struct {
 				ID         string         `json:"id"`
 				Objective  string         `json:"objective"`
+				Outcome    string         `json:"outcome"`
 				Status     string         `json:"status"`
 				CreatedAt  string         `json:"created_at"`
 				GroupID    string         `json:"group_id"`
@@ -142,6 +149,7 @@ func newGoalStatusCmd(d *Deps) *cobra.Command {
 			}{
 				ID:         group.ID,
 				Objective:  group.Objective,
+				Outcome:    group.Outcome,
 				Status:     group.Status,
 				CreatedAt:  group.CreatedAt,
 				GroupID:    group.GroupID,

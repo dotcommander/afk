@@ -12,8 +12,8 @@ import (
 // AddGoalGroup inserts a goal_groups row.
 func (s *SQLiteStore) AddGoalGroup(ctx context.Context, g task.GoalGroup) error {
 	return s.execWithBusyRetry(ctx, `
-INSERT INTO goal_groups (id, objective, status, created, group_id)
-VALUES (?, ?, ?, ?, ?)`, g.ID, g.Objective, g.Status, g.CreatedAt, g.GroupID)
+INSERT INTO goal_groups (id, objective, outcome, status, created, group_id)
+VALUES (?, ?, ?, ?, ?, ?)`, g.ID, g.Objective, g.Outcome, g.Status, g.CreatedAt, g.GroupID)
 }
 
 // GetGoalGroup fetches a goal_groups row by id.
@@ -21,9 +21,9 @@ func (s *SQLiteStore) GetGoalGroup(ctx context.Context, id string) (task.GoalGro
 	var g task.GoalGroup
 	err := retrySQLiteBusy(ctx, func(ctx context.Context) error {
 		return s.db.QueryRowContext(ctx, `
-SELECT id, objective, status, created, group_id
+SELECT id, objective, outcome, status, created, group_id
 FROM goal_groups
-WHERE id = ?`, id).Scan(&g.ID, &g.Objective, &g.Status, &g.CreatedAt, &g.GroupID)
+WHERE id = ?`, id).Scan(&g.ID, &g.Objective, &g.Outcome, &g.Status, &g.CreatedAt, &g.GroupID)
 	})
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {

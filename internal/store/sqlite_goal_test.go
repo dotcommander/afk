@@ -21,6 +21,7 @@ func TestGoalGroups(t *testing.T) {
 	g := task.GoalGroup{
 		ID:        "goal-1",
 		Objective: "add CSV export to the report command",
+		Outcome:   "report command supports CSV export",
 		Status:    "active",
 		CreatedAt: "2025-01-02T03:04:05Z",
 		GroupID:   "goal-1",
@@ -32,6 +33,7 @@ func TestGoalGroups(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, g.ID, got.ID)
 	require.Equal(t, g.Objective, got.Objective)
+	require.Equal(t, g.Outcome, got.Outcome)
 	require.Equal(t, "active", got.Status)
 
 	require.NoError(t, s.UpdateGoalGroupStatus(ctx, "goal-1", "complete"))
