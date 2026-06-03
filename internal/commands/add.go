@@ -236,24 +236,11 @@ func addValidationError(cmd *cobra.Command, opts task.AddOptions, err error) err
 	if errors.Is(err, task.ErrInvalidTask) {
 		cmd.SilenceUsage = true
 		cmd.SilenceErrors = true
-		if isGeneratedAdd(opts) {
+		if task.IsGeneratedCandidate(opts.Source, opts.Tags) {
 			return fmt.Errorf("%w; generated/discovery tasks need the full discovery shape, run with --diagnose to see every missing field or remove --source task-discovery/--tag discovery", err)
 		}
 	}
 	return err
-}
-
-func isGeneratedAdd(opts task.AddOptions) bool {
-	if strings.EqualFold(opts.Source, "task-discovery") {
-		return true
-	}
-	for _, tag := range opts.Tags {
-		switch strings.ToLower(strings.TrimSpace(tag)) {
-		case "candidate", "needs-validation", "discovery":
-			return true
-		}
-	}
-	return false
 }
 
 // runAddDiagnose runs ValidateAddOptionsAll and reports every failure on its

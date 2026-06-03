@@ -104,3 +104,31 @@ func (s *SQLiteStore) recordRelationEvent(ctx context.Context, tx *sql.Tx, taskI
 	message := fmt.Sprintf("%s %s", relType, relatedID)
 	return s.insertEvent(ctx, tx, taskID, task.EventRelationAdded, created, message)
 }
+
+// Dependencies returns the typed relation edges declared on taskID.
+func (s *SQLiteStore) Dependencies(ctx context.Context, taskID string) ([]task.Dependency, error) {
+	rows, err := s.db.QueryContext(ctx, `
+SELECT task_id, depends_on_id, created, relation_type
+FROM task_dependencies
+WHERE task_id = ?
+ORDER BY created, depends_on_id`, taskID)
+	if err != nil {
+		return nil, fmt.Errorf("store: dependencies: %w", err)
+	}
+	defer rows.Close() //nolint:errcheck // rows.Err checked below
+
+	var deps []task.Dependency
+	for rows.Next() {
+		var dep task.Dependency
+		var relType string
+		if err := rows.Scan(&dep.TaskID, &dep.DependsOnID, &dep.Created, &relType); err != nil {
+			return nil, fmt.Errorf("store: scan dependency: %w", err)
+		}
+		dep.Type = task.RelationType(relType)
+		deps = append(deps, dep)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("store: dependency rows: %w", err)
+	}
+	return deps, nil
+}

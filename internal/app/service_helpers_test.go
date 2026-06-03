@@ -85,7 +85,7 @@ func TestEventForStatus(t *testing.T) {
 	require.Equal(t, task.EventClaimed, eventForStatus(task.StatusDoing))
 	require.Equal(t, task.EventRequeued, eventForStatus(task.StatusTodo))
 	require.PanicsWithValue(t,
-		"app: eventForStatus called with unknown status unknown — callers must validate via task.ParseStatus first",
+		"task: EventForStatus called with unknown status unknown — callers must validate via ParseStatus first",
 		func() { _ = eventForStatus(task.Status("unknown")) },
 		"unknown status should panic (callers must validate via task.ParseStatus first)")
 }

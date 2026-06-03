@@ -90,23 +90,9 @@ func (s *Service) RequeueStale(ctx context.Context, olderThan time.Duration) ([]
 	return s.store.RequeueStale(ctx, olderThan, s.now())
 }
 
-// eventForStatus maps a validated task.Status to its lifecycle event. All
-// callers MUST validate via task.ParseStatus first (SetStatus does at
-// service_lifecycle.go:31). Unknown statuses panic — that signals a Status
-// constant was added without updating this switch, not a runtime input bug.
+// eventForStatus maps a validated task.Status to its lifecycle event via the
+// task package's single status-metadata table. All callers MUST validate via
+// task.ParseStatus first (setStatus does at service_lifecycle.go:42).
 func eventForStatus(status task.Status) task.EventType {
-	switch status {
-	case task.StatusDone:
-		return task.EventDone
-	case task.StatusFailed:
-		return task.EventFailed
-	case task.StatusDeleted:
-		return task.EventDeleted
-	case task.StatusDoing:
-		return task.EventClaimed
-	case task.StatusTodo:
-		return task.EventRequeued
-	default:
-		panic("app: eventForStatus called with unknown status " + string(status) + " — callers must validate via task.ParseStatus first")
-	}
+	return task.EventForStatus(status)
 }

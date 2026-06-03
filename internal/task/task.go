@@ -182,6 +182,13 @@ func OrderedStatuses() []Status {
 	return []Status{StatusTodo, StatusDoing, StatusDone, StatusFailed, StatusDeleted}
 }
 
+// AllStatuses returns every defined Status constant. It is an alias of
+// OrderedStatuses (the canonical enumerator) so exhaustiveness checks and
+// display logic read from one source.
+func AllStatuses() []Status {
+	return OrderedStatuses()
+}
+
 // MarkWorking claims the task for work and records the start timestamp.
 func (t *Task) MarkWorking(now time.Time) {
 	t.Status = StatusDoing
@@ -236,31 +243,13 @@ func (t *Task) MarkDeleted(now time.Time, reason string) bool {
 	return true
 }
 
-// SetStatus applies a generic lifecycle transition.
+// SetStatus applies a generic lifecycle transition via the statusMeta table.
 func (t *Task) SetStatus(status Status, now time.Time, message string) bool {
-	status = NormalizeStatus(status)
-	switch status {
-	case StatusTodo:
-		if t.Status == StatusTodo {
-			return false
-		}
-		t.Reset()
-		return true
-	case StatusDoing:
-		if t.Status == StatusDoing {
-			return false
-		}
-		t.MarkWorking(now)
-		return true
-	case StatusDone:
-		return t.MarkDone(now)
-	case StatusFailed:
-		return t.MarkFailed(now, message)
-	case StatusDeleted:
-		return t.MarkDeleted(now, message)
-	default:
+	meta, ok := statusMeta[NormalizeStatus(status)]
+	if !ok {
 		return false
 	}
+	return meta.Apply(t, now, message)
 }
 
 // Reset returns the task to todo and clears lifecycle/error fields.

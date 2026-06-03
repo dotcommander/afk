@@ -141,6 +141,31 @@ func TestSetStatusAndLeaseHelpers(t *testing.T) {
 	require.False(t, tk.SetStatus("not-real", now, ""))
 }
 
+func TestStatusMetaCoversAllOrderedStatuses(t *testing.T) {
+	t.Parallel()
+
+	now := time.Now()
+	for _, status := range task.OrderedStatuses() {
+		// Every canonical status must resolve to an event without panicking.
+		require.NotEmpty(t, string(task.EventForStatus(status)),
+			"EventForStatus(%q) returned empty event", status)
+
+		// And must drive a transition through SetStatus from a fresh todo task.
+		tk := task.Task{Status: task.StatusTodo}
+		_ = tk.SetStatus(status, now, "msg")
+		require.Equal(t, status, tk.Status,
+			"SetStatus(%q) did not land on the target status", status)
+	}
+}
+
+func TestEventForStatusPanicsOnUnknown(t *testing.T) {
+	t.Parallel()
+
+	require.PanicsWithValue(t,
+		"task: EventForStatus called with unknown status bogus — callers must validate via ParseStatus first",
+		func() { _ = task.EventForStatus(task.Status("bogus")) })
+}
+
 func TestAddOptionsFromTask(t *testing.T) {
 	t.Parallel()
 
@@ -164,4 +189,22 @@ func TestAddOptionsFromTask(t *testing.T) {
 	require.Equal(t, tk.Agent, opts.Agent)
 	require.Equal(t, tk.GroupID, opts.GroupID)
 	require.Equal(t, tk.ResourceKey, opts.ResourceKey)
+}
+
+func TestAllStatusesMatchesOrderedStatuses(t *testing.T) {
+	t.Parallel()
+
+	require.Equal(t, task.OrderedStatuses(), task.AllStatuses(),
+		"AllStatuses must enumerate the same canonical statuses as OrderedStatuses")
+}
+
+func TestAllStatusesAllHaveStatusMetaEntries(t *testing.T) {
+	t.Parallel()
+
+	// Mirrors the init() startup guard: every enumerated status resolves to a
+	// non-empty event via the statusMeta table without panicking.
+	for _, status := range task.AllStatuses() {
+		require.NotEmpty(t, string(task.EventForStatus(status)),
+			"EventForStatus(%q) returned empty event — missing statusMeta entry", status)
+	}
 }

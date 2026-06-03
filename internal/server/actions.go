@@ -14,22 +14,23 @@ import (
 	"github.com/dotcommander/afk/internal/task"
 )
 
-// actionInput is the optional JSON body for mutation endpoints.
+// setTaskInput is the JSON body for PATCH /api/tasks/{id}.
 // An empty / absent body is valid and produces the zero value.
-type actionInput struct {
-	Note     string   `json:"note"`
-	Error    string   `json:"error"`
-	Reason   string   `json:"reason"`
-	Statuses []string `json:"statuses"`
-	Status   string   `json:"status"`
+// Note, Error, and Reason are all accepted as the "message" field
+// for backwards compatibility with existing clients.
+type setTaskInput struct {
+	Status string `json:"status"`
+	Note   string `json:"note"`
+	Error  string `json:"error"`
+	Reason string `json:"reason"`
 }
 
-// decodeInput reads and decodes an optional JSON body.
-// EOF (empty body) produces the zero actionInput without error.
-func decodeInput(r *http.Request) (actionInput, error) {
-	var in actionInput
+// decodeSetTask reads and decodes an optional JSON body into setTaskInput.
+// EOF (empty body) produces the zero value without error.
+func decodeSetTask(r *http.Request) (setTaskInput, error) {
+	var in setTaskInput
 	if err := decodeJSONBody(r, &in); err != nil {
-		return actionInput{}, fmt.Errorf("decode body: %w", err)
+		return setTaskInput{}, fmt.Errorf("decode body: %w", err)
 	}
 	return in, nil
 }
@@ -57,7 +58,7 @@ func (s *Server) handleSetTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	in, err := decodeInput(r)
+	in, err := decodeSetTask(r)
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, err)
 		return

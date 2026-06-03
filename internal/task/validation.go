@@ -59,7 +59,7 @@ func ValidateAddOptions(opts AddOptions) error {
 	if err := ValidatePriority(opts.Priority); err != nil {
 		return err
 	}
-	if !isGeneratedCandidate(opts.Source, opts.Tags) {
+	if !IsGeneratedCandidate(opts.Source, opts.Tags) {
 		return nil
 	}
 	if reasons := generatedCandidateChecks(opts); len(reasons) > 0 {
@@ -81,7 +81,7 @@ func ValidateAddOptionsAll(opts AddOptions) error {
 	if err := ValidatePriority(opts.Priority); err != nil {
 		return err
 	}
-	if !isGeneratedCandidate(opts.Source, opts.Tags) {
+	if !IsGeneratedCandidate(opts.Source, opts.Tags) {
 		return nil
 	}
 	reasons := generatedCandidateChecks(opts)
@@ -151,7 +151,8 @@ func ValidateBody(body string) error {
 	if normalized == "" {
 		return invalid("empty body")
 	}
-	for _, phrase := range invalidExactBodies {
+	cfg := validationCfg()
+	for _, phrase := range cfg.ExactBodies {
 		if normalized == phrase {
 			return invalid("not actionable software work")
 		}
@@ -160,9 +161,9 @@ func ValidateBody(body string) error {
 		phrases []string
 		reason  string
 	}{
-		{invalidAutonomyPhrases, "requires human-in-the-loop decision"},
-		{invalidVagueSoftwarePhrases, "vague or non-actionable software work"},
-		{invalidBodyPhrases, "physical or personal-service request"},
+		{cfg.AutonomyPhrases, "requires human-in-the-loop decision"},
+		{cfg.VagueSoftware, "vague or non-actionable software work"},
+		{cfg.BodyPhrases, "physical or personal-service request"},
 	}
 	for _, check := range checks {
 		for _, phrase := range check.phrases {
@@ -182,7 +183,7 @@ func normalizeBody(body string) string {
 	return strings.Join(strings.Fields(strings.ToLower(strings.TrimSpace(body))), " ")
 }
 
-func isGeneratedCandidate(source string, tags []string) bool {
+func IsGeneratedCandidate(source string, tags []string) bool {
 	if strings.EqualFold(source, "task-discovery") {
 		return true
 	}
@@ -201,59 +202,12 @@ func containsFold(s, substr string) bool {
 
 func firstGeneratedChurnPhrase(body string) string {
 	normalized := normalizeBody(body)
-	for _, phrase := range invalidGeneratedPhrases {
+	for _, phrase := range validationCfg().GeneratedPhrases {
 		if strings.Contains(normalized, phrase) {
 			return phrase
 		}
 	}
 	return ""
-}
-
-var invalidExactBodies = []string{
-	"continue this",
-	"fix the thing",
-	"make it better",
-	"do something",
-	"whatever",
-	"pick my nose",
-}
-
-var invalidBodyPhrases = []string{
-	"pick my nose",
-	"brush my teeth",
-	"wash my hair",
-}
-
-var invalidAutonomyPhrases = []string{
-	"askuserquestion",
-	"hitl gate",
-	"hitl-dependent",
-	"human in the loop",
-	"post this question to the user",
-	"wait for answer",
-	"wait for user answer",
-}
-
-var invalidVagueSoftwarePhrases = []string{
-	"polish the game play",
-	"polish the gameplay",
-	"work on polishing",
-}
-
-var invalidGeneratedPhrases = []string{
-	"and/or",
-	"clean up",
-	"cleanup",
-	"etc.",
-	"general polish",
-	"improve overall",
-	"investigate broadly",
-	"make better",
-	"nice to have",
-	"polish",
-	"refactor broadly",
-	"style-only",
-	"x or y",
 }
 
 func hasAbsolutePath(s string) bool {

@@ -972,3 +972,122 @@ func requireIDs(t *testing.T, tasks []task.Task, ids ...string) {
 	}
 	require.Equal(t, ids, got)
 }
+
+func TestFind(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	s := newStore(t)
+
+	require.NoError(t, s.Add(ctx, task.Task{ID: "1", Status: task.StatusTodo, Body: "fix search matching", Tags: []string{"area:search"}}))
+	require.NoError(t, s.Add(ctx, task.Task{ID: "2", Status: task.StatusTodo, Body: "unrelated visible task", CWD: "/tmp/beta"}))
+	require.NoError(t, s.Add(ctx, task.Task{ID: "3", Status: task.StatusTodo, Body: "deleted search match", ResourceKey: "repo:/tmp/gamma"}))
+
+	all, err := s.Find(ctx, "   ")
+	require.NoError(t, err)
+	require.Len(t, all, 3)
+
+	bySearch, err := s.Find(ctx, "search")
+	require.NoError(t, err)
+	require.Len(t, bySearch, 2)
+	require.Equal(t, "1", bySearch[0].ID)
+	require.Equal(t, "3", bySearch[1].ID)
+
+	byTag, err := s.Find(ctx, "area:search")
+	require.NoError(t, err)
+	require.Len(t, byTag, 1)
+	require.Equal(t, "1", byTag[0].ID)
+
+	byResource, err := s.Find(ctx, "gamma")
+	require.NoError(t, err)
+	require.Len(t, byResource, 1)
+	require.Equal(t, "3", byResource[0].ID)
+
+	// AU trigger: updating body must re-index.
+	require.NoError(t, s.Update(ctx, "2", task.EventFailed, "", func(tk *task.Task) bool {
+		tk.Body = "now mentions search too"
+		return true
+	}))
+	afterUpdate, err := s.Find(ctx, "search")
+	require.NoError(t, err)
+	require.Len(t, afterUpdate, 3)
+
+	// AD trigger: deleting a task must drop it from the index.
+	require.NoError(t, s.Delete(ctx, "1"))
+	afterDelete, err := s.Find(ctx, "search")
+	require.NoError(t, err)
+	require.Len(t, afterDelete, 2)
+	for _, tk := range afterDelete {
+		require.NotEqual(t, "1", tk.ID)
+	}
+
+	// Arbitrary user text with FTS operators must not error.
+	none, err := s.Find(ctx, `"(NOT no-such-token)"`)
+	require.NoError(t, err)
+	require.Empty(t, none)
+}
+
+func BenchmarkFind(b *testing.B) {
+	ctx := context.Background()
+	s, err := store.NewSQLite(ctx, store.Paths{
+		SQLitePath: filepath.Join(b.TempDir(), "tasks.sqlite"),
+	})
+	require.NoError(b, err)
+	b.Cleanup(func() { require.NoError(b, s.Close()) })
+
+	const n = 10000
+	for i := 0; i < n; i++ {
+		body := "routine task body number"
+		if i%500 == 0 {
+			body = "special needle marker body"
+		}
+		require.NoError(b, s.Add(ctx, task.Task{
+			ID:     fmt.Sprintf("task-%05d", i),
+			Status: task.StatusTodo,
+			Body:   body,
+			Tags:   []string{fmt.Sprintf("batch:%d", i%10)},
+		}))
+	}
+
+	b.ResetTimer()
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		out, err := s.Find(ctx, "needle")
+		if err != nil {
+			b.Fatal(err)
+		}
+		if len(out) == 0 {
+			b.Fatal("expected matches")
+		}
+	}
+}
+
+func TestRecentDistinctCWDs(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	s := newStore(t)
+
+	tasks := []task.Task{
+		{ID: "t1", Status: task.StatusTodo, Body: "old", CWD: "/old", Created: "2025-01-02T03:00:00Z"},
+		{ID: "t2", Status: task.StatusTodo, Body: "new-b-1", CWD: "/new-b", Created: "2025-01-02T03:04:00Z"},
+		{ID: "t3", Status: task.StatusTodo, Body: "new-a", CWD: "/new-a", Created: "2025-01-02T03:03:00Z"},
+		{ID: "t4", Status: task.StatusTodo, Body: "new-b-2", CWD: "/new-b", Created: "2025-01-02T03:02:00Z"},
+		{ID: "t5", Status: task.StatusTodo, Body: "empty-cwd", CWD: "", Created: "2025-01-02T03:05:00Z"},
+	}
+	for _, tk := range tasks {
+		require.NoError(t, s.Add(ctx, tk))
+	}
+
+	t.Run("limit=2 returns two most-recent distinct cwds alphabetically", func(t *testing.T) {
+		t.Parallel()
+		got, err := s.RecentDistinctCWDs(ctx, 2)
+		require.NoError(t, err)
+		require.Equal(t, []string{"/new-a", "/new-b"}, got)
+	})
+
+	t.Run("limit=0 returns all distinct non-empty cwds alphabetically", func(t *testing.T) {
+		t.Parallel()
+		got, err := s.RecentDistinctCWDs(ctx, 0)
+		require.NoError(t, err)
+		require.Equal(t, []string{"/new-a", "/new-b", "/old"}, got)
+	})
+}

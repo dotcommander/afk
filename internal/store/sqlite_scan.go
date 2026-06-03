@@ -102,6 +102,21 @@ func decodeTags(raw string) []string {
 	return tags
 }
 
+// buildFTSMatch converts free-text query into an FTS5 MATCH expression. Each
+// whitespace-delimited token is double-quoted (to neutralize FTS5 operators
+// such as quotes, parens, AND/OR, and column filters in user input) and given
+// a trailing prefix wildcard, then AND-joined. Returns "" for an all-whitespace
+// query so callers can fall back to returning everything. Embedded double
+// quotes inside a token are doubled per FTS5 string-literal escaping.
+func buildFTSMatch(query string) string {
+	var terms []string
+	for _, tok := range strings.Fields(query) {
+		escaped := strings.ReplaceAll(tok, `"`, `""`)
+		terms = append(terms, `"`+escaped+`"*`)
+	}
+	return strings.Join(terms, " ")
+}
+
 func isDuplicateTaskID(err error) bool {
 	return strings.Contains(err.Error(), "UNIQUE constraint failed: tasks.id")
 }

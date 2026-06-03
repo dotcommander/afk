@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/dotcommander/afk/internal/store"
 	"github.com/dotcommander/afk/internal/task"
 	"github.com/google/uuid"
 )
@@ -124,9 +125,21 @@ func (s *Service) addValidated(ctx context.Context, opts task.AddOptions) (strin
 }
 
 // List returns tasks filtered by status, or visible tasks if statusFilter is empty.
+//
+// A concrete status filter is pushed into a status-scoped SQL query
+// (Store.ListByStatus over the status index) instead of a full-table scan.
+// The "" (visible) and "all" cases still read the whole table and filter in
+// Go via filterByStatus, since they span every status. Both paths preserve
+// List() order (ordinal, rowid).
 func (s *Service) List(ctx context.Context, statusFilter string) ([]task.Task, error) {
 	if err := validateStatusFilter(statusFilter); err != nil {
 		return nil, err
+	}
+	trimmed := strings.TrimSpace(statusFilter)
+	if trimmed != "" && trimmed != "all" {
+		// validateStatusFilter already guaranteed this parses.
+		parsed, _ := task.ParseStatus(trimmed)
+		return s.store.ListByStatus(ctx, parsed)
 	}
 	tasks, err := s.store.List(ctx)
 	if err != nil {
@@ -158,13 +171,11 @@ func (s *Service) Find(ctx context.Context, query, statusFilter string) ([]task.
 }
 
 // RecentPaths returns up to recentPathLimit distinct non-empty task working
-// directories — the most recently created ones, sorted alphabetically.
+// directories — the most recently created ones, sorted alphabetically. The
+// distinct-and-recent selection is pushed into SQL (Store.RecentDistinctCWDs)
+// so no full-table sort happens in Go.
 func (s *Service) RecentPaths(ctx context.Context) ([]string, error) {
-	tasks, err := s.store.List(ctx)
-	if err != nil {
-		return nil, err
-	}
-	return recentPaths(tasks, recentPathLimit), nil
+	return s.store.RecentDistinctCWDs(ctx, recentPathLimit)
 }
 
 // Show returns one task by id. Uses an indexed Get rather than a full-table
@@ -264,6 +275,13 @@ func (s *Service) Gates(ctx context.Context, taskID string) ([]task.Gate, error)
 // Ready returns todo tasks with no unfinished dependencies in scheduler order.
 func (s *Service) Ready(ctx context.Context) ([]task.Task, error) {
 	return s.store.Ready(ctx)
+}
+
+// ExplainNotReady returns a structured, formatting-free breakdown of why the
+// queue has no claimable task. Readiness logic lives entirely in the store
+// (readyWhereSQL); this is a pass-through.
+func (s *Service) ExplainNotReady(ctx context.Context) (store.NotReadyExplanation, error) {
+	return s.store.ExplainNotReady(ctx)
 }
 
 // Explain returns task state and lifecycle history.

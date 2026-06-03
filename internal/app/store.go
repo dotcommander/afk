@@ -15,7 +15,9 @@ type Store interface {
 	Get(ctx context.Context, id string) (task.Task, error)
 	Counts(ctx context.Context) (map[task.Status]int, error)
 	ActiveLists(ctx context.Context) (todo, doing []task.Task, err error)
+	ListByStatus(ctx context.Context, status task.Status) ([]task.Task, error)
 	Ready(ctx context.Context) ([]task.Task, error)
+	ExplainNotReady(ctx context.Context) (store.NotReadyExplanation, error)
 	Add(ctx context.Context, t task.Task) error
 	Update(ctx context.Context, id string, event task.EventType, message string, fn func(*task.Task) bool) error
 	Delete(ctx context.Context, id string) error
@@ -33,6 +35,10 @@ type Store interface {
 	Events(ctx context.Context, taskID string) ([]task.Event, error)
 	Attempts(ctx context.Context, taskID string) ([]task.Attempt, error)
 	RequeueStale(ctx context.Context, olderThan time.Duration, now time.Time) ([]task.Task, error)
+	// RecentDistinctCWDs returns up to limit distinct non-empty task working
+	// directories, selected by most-recent task per directory, then sorted
+	// alphabetically. limit <= 0 means no limit.
+	RecentDistinctCWDs(ctx context.Context, limit int) ([]string, error)
 }
 
 var _ Store = (*store.SQLiteStore)(nil)

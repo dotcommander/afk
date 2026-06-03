@@ -932,6 +932,9 @@ func (s *errorStore) Heartbeat(context.Context, string, string, time.Time, time.
 func (s *errorStore) RequeueStale(context.Context, time.Duration, time.Time) ([]task.Task, error) {
 	return nil, s.err
 }
+func (s *errorStore) RecentDistinctCWDs(context.Context, int) ([]string, error) {
+	return nil, s.err
+}
 
 type historyErrorStore struct {
 	app.Store

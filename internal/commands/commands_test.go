@@ -189,7 +189,7 @@ func TestTakeExplainsNoReadyTasksBlockedByResourceLock(t *testing.T) {
 	require.NoError(t, run("take"))
 	require.Empty(t, stdout.String())
 	require.Contains(t, stderr.String(), "No ready tasks")
-	require.Contains(t, stderr.String(), "1 todo task(s) blocked by active resource locks")
+	require.Contains(t, stderr.String(), "1 of 1 todo task(s) blocked by dependencies, resource locks, or unsatisfied gates.")
 }
 
 func TestTakeSummaryJSON(t *testing.T) {
@@ -816,9 +816,9 @@ func TestAddCommandHelpers(t *testing.T) {
 	require.Equal(t, "", fieldIfSet("cwd", ""))
 	require.Equal(t, "cwd=/tmp/repo", fieldIfSet("cwd", "/tmp/repo"))
 	require.False(t, isTerminalWriter(&bytes.Buffer{}))
-	require.True(t, isGeneratedAdd(task.AddOptions{Source: "task-discovery"}))
-	require.True(t, isGeneratedAdd(task.AddOptions{Tags: []string{" discovery "}}))
-	require.False(t, isGeneratedAdd(task.AddOptions{}))
+	require.True(t, task.IsGeneratedCandidate("task-discovery", nil))
+	require.True(t, task.IsGeneratedCandidate("", []string{" discovery "}))
+	require.False(t, task.IsGeneratedCandidate("", nil))
 
 	stdout, stderr := &bytes.Buffer{}, &bytes.Buffer{}
 	d := testDepsWithWriters(stdout, stderr)

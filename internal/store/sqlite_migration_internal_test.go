@@ -3,6 +3,8 @@ package store
 import (
 	"context"
 	"database/sql"
+	"errors"
+	"fmt"
 	"path/filepath"
 	"testing"
 
@@ -71,4 +73,33 @@ func TestMigrationAppliesOnFreshDBMissingMetadataRow(t *testing.T) {
 	version, err := s.readSchemaVersion(ctx)
 	require.NoError(t, err)
 	require.Equal(t, currentSchemaVersion, version)
+}
+
+func TestMigrationIsDuplicateColumnTypedError(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	db, err := sql.Open("sqlite", sqliteDSN(filepath.Join(t.TempDir(), "tasks.sqlite")))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+
+	_, err = db.ExecContext(ctx, `CREATE TABLE dup (a TEXT)`)
+	require.NoError(t, err)
+
+	// A fresh, non-conflicting ADD COLUMN must succeed (not a duplicate).
+	_, err = db.ExecContext(ctx, `ALTER TABLE dup ADD COLUMN b TEXT`)
+	require.NoError(t, err)
+	require.False(t, isDuplicateColumn(err))
+
+	// Re-adding the same column yields the duplicate-column error, which
+	// isDuplicateColumn must recognize via the typed *sqlite.Error path.
+	_, dupErr := db.ExecContext(ctx, `ALTER TABLE dup ADD COLUMN b TEXT`)
+	require.Error(t, dupErr)
+	require.True(t, isDuplicateColumn(dupErr))
+
+	// Wrapped duplicate-column errors are still recognized (errors.As walks
+	// the chain) and non-sqlite errors are rejected.
+	require.True(t, isDuplicateColumn(fmt.Errorf("store: migrate b: %w", dupErr)))
+	require.False(t, isDuplicateColumn(errors.New("some other error")))
+	require.False(t, isDuplicateColumn(nil))
 }

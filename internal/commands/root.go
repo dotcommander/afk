@@ -91,6 +91,7 @@ func NewRoot(d *Deps, version string) *cobra.Command {
 		newRequeueStaleCmd(d),
 		newHeartbeatCmd(d),
 		newPromptCmd(d),
+		newLoopCmd(d),
 	)
 
 	return root

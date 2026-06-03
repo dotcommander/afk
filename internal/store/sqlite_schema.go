@@ -20,7 +20,7 @@ const sqliteBusyRetryDelay = 25 * time.Millisecond
 // migration function is added below.
 const (
 	schemaVersionKey     = "schema_version"
-	currentSchemaVersion = 4
+	currentSchemaVersion = 5
 )
 
 func (s *SQLiteStore) init(ctx context.Context) error {
@@ -86,6 +86,32 @@ CREATE TABLE IF NOT EXISTS task_gates (
 	PRIMARY KEY (task_id, name)
 );
 CREATE INDEX IF NOT EXISTS task_gates_task_idx ON task_gates(task_id, satisfied);
+CREATE VIRTUAL TABLE IF NOT EXISTS tasks_fts USING fts5(
+	id UNINDEXED,
+	status,
+	body,
+	priority,
+	cwd,
+	source,
+	agent,
+	group_id,
+	resource_key,
+	error,
+	tags,
+	tokenize='unicode61'
+);
+CREATE TRIGGER IF NOT EXISTS tasks_fts_ai AFTER INSERT ON tasks BEGIN
+	INSERT INTO tasks_fts(id, status, body, priority, cwd, source, agent, group_id, resource_key, error, tags)
+	VALUES (new.id, new.status, new.body, new.priority, new.cwd, new.source, new.agent, new.group_id, new.resource_key, new.error, new.tags);
+END;
+CREATE TRIGGER IF NOT EXISTS tasks_fts_ad AFTER DELETE ON tasks BEGIN
+	DELETE FROM tasks_fts WHERE id = old.id;
+END;
+CREATE TRIGGER IF NOT EXISTS tasks_fts_au AFTER UPDATE ON tasks BEGIN
+	DELETE FROM tasks_fts WHERE id = old.id;
+	INSERT INTO tasks_fts(id, status, body, priority, cwd, source, agent, group_id, resource_key, error, tags)
+	VALUES (new.id, new.status, new.body, new.priority, new.cwd, new.source, new.agent, new.group_id, new.resource_key, new.error, new.tags);
+END;
 `); err != nil {
 		return fmt.Errorf("store: create schema: %w", err)
 	}
@@ -108,6 +134,9 @@ func (s *SQLiteStore) runMigrationsIfNeeded(ctx context.Context) error {
 		return err
 	}
 	if err := s.migrateStatusNames(ctx); err != nil {
+		return err
+	}
+	if err := s.backfillTasksFTS(ctx); err != nil {
 		return err
 	}
 	return s.writeSchemaVersion(ctx, currentSchemaVersion)
@@ -218,8 +247,41 @@ func (s *SQLiteStore) migrateStatusNames(ctx context.Context) error {
 	return nil
 }
 
+// backfillTasksFTS repopulates the tasks_fts index from the tasks table during
+// migration. It clears the index first so repeated migrations (or a version
+// bump on an existing DB whose tasks_fts was created empty by IF NOT EXISTS)
+// converge to one row per task. Idempotent: safe to run on every migration.
+func (s *SQLiteStore) backfillTasksFTS(ctx context.Context) error {
+	if _, err := s.db.ExecContext(ctx, `DELETE FROM tasks_fts`); err != nil {
+		return fmt.Errorf("store: clear tasks_fts: %w", err)
+	}
+	if _, err := s.db.ExecContext(ctx, `
+INSERT INTO tasks_fts(id, status, body, priority, cwd, source, agent, group_id, resource_key, error, tags)
+SELECT id, status, body, priority, cwd, source, agent, group_id, resource_key, error, tags
+FROM tasks`); err != nil {
+		return fmt.Errorf("store: backfill tasks_fts: %w", err)
+	}
+	return nil
+}
+
+// isDuplicateColumn reports whether err is the "duplicate column name"
+// failure raised when an ALTER TABLE ADD COLUMN re-applies a column that a
+// prior migration already added. Mirrors the isSQLiteBusy idiom: match a
+// typed *sqlite.Error and gate on Code() first. "duplicate column name" maps
+// to the generic SQLITE_ERROR result code (no distinct extended code), so the
+// message substring check runs only as a last resort against the typed error.
 func isDuplicateColumn(err error) bool {
-	return strings.Contains(err.Error(), "duplicate column name")
+	if err == nil {
+		return false
+	}
+	var se *sqlite.Error
+	if !errors.As(err, &se) {
+		return false
+	}
+	if se.Code() != sqlite3.SQLITE_ERROR {
+		return false
+	}
+	return strings.Contains(se.Error(), "duplicate column name")
 }
 
 // isSQLiteBusy reports whether err is a SQLite contention error that the

@@ -134,38 +134,15 @@ func writeTakeSummary(cmd *cobra.Command, d *Deps, claimed task.Task, full bool)
 }
 
 func writeNoReadyExplanation(cmd *cobra.Command, d *Deps) error {
-	todo, err := d.Service.List(cmd.Context(), string(task.StatusTodo))
+	e, err := d.Service.ExplainNotReady(cmd.Context())
 	if err != nil {
 		return err
 	}
-	if len(todo) == 0 {
+	if e.TodoTotal == 0 {
 		_, err = fmt.Fprintln(d.Stderr, "No ready tasks: queue has no todo tasks.")
 		return err
 	}
-
-	doing, err := d.Service.List(cmd.Context(), string(task.StatusDoing))
-	if err != nil {
-		return err
-	}
-	activeResources := make(map[string]struct{}, len(doing))
-	for _, t := range doing {
-		if t.ResourceKey != "" {
-			activeResources[t.ResourceKey] = struct{}{}
-		}
-	}
-
-	resourceBlocked := 0
-	for _, t := range todo {
-		if _, ok := activeResources[t.ResourceKey]; t.ResourceKey != "" && ok {
-			resourceBlocked++
-		}
-	}
-
-	if resourceBlocked > 0 {
-		_, err = fmt.Fprintf(d.Stderr, "No ready tasks: %d todo task(s) blocked by active resource locks; %d todo task(s) total.\n", resourceBlocked, len(todo))
-		return err
-	}
-	_, err = fmt.Fprintf(d.Stderr, "No ready tasks: %d todo task(s) blocked by dependencies.\n", len(todo))
+	_, err = fmt.Fprintf(d.Stderr, "No ready tasks: %d of %d todo task(s) blocked by dependencies, resource locks, or unsatisfied gates.\n", e.Blocked, e.TodoTotal)
 	return err
 }
 

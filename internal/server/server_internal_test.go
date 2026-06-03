@@ -19,11 +19,11 @@ import (
 func TestDecodeInputEmptyAndTooLarge(t *testing.T) {
 	t.Parallel()
 
-	in, err := decodeInput(httptest.NewRequest(http.MethodPatch, "/api/tasks/1", nil))
+	in, err := decodeSetTask(httptest.NewRequest(http.MethodPatch, "/api/tasks/1", nil))
 	require.NoError(t, err)
-	require.Equal(t, actionInput{}, in)
+	require.Equal(t, setTaskInput{}, in)
 
-	_, err = decodeInput(httptest.NewRequest(http.MethodPatch, "/api/tasks/1", strings.NewReader(strings.Repeat("x", 70*1024))))
+	_, err = decodeSetTask(httptest.NewRequest(http.MethodPatch, "/api/tasks/1", strings.NewReader(strings.Repeat("x", 70*1024))))
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "decode body")
 }
@@ -31,11 +31,11 @@ func TestDecodeInputEmptyAndTooLarge(t *testing.T) {
 func TestDecodeInputStrictJSON(t *testing.T) {
 	t.Parallel()
 
-	_, err := decodeInput(httptest.NewRequest(http.MethodPatch, "/api/tasks/1", strings.NewReader(`{"status":"done","extra":true}`)))
+	_, err := decodeSetTask(httptest.NewRequest(http.MethodPatch, "/api/tasks/1", strings.NewReader(`{"status":"done","extra":true}`)))
 	require.Error(t, err)
 	require.Contains(t, err.Error(), `unknown field "extra"`)
 
-	_, err = decodeInput(httptest.NewRequest(http.MethodPatch, "/api/tasks/1", strings.NewReader(`{"status":"done"} {"status":"failed"}`)))
+	_, err = decodeSetTask(httptest.NewRequest(http.MethodPatch, "/api/tasks/1", strings.NewReader(`{"status":"done"} {"status":"failed"}`)))
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "exactly one JSON value")
 }
@@ -139,5 +139,8 @@ func (s *failingStore) ActiveLists(context.Context) ([]task.Task, []task.Task, e
 }
 func (s *failingStore) Ready(context.Context) ([]task.Task, error) { return nil, s.err }
 func (s *failingStore) ClaimNextForWorker(context.Context, time.Time, time.Time, string, string) (*task.Task, error) {
+	return nil, s.err
+}
+func (s *failingStore) RecentDistinctCWDs(context.Context, int) ([]string, error) {
 	return nil, s.err
 }

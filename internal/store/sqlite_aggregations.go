@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/dotcommander/afk/internal/task"
 )
@@ -47,6 +48,58 @@ func (s *SQLiteStore) ActiveLists(ctx context.Context) (todo, doing []task.Task,
 		return nil, nil, err
 	}
 	return todo, doing, nil
+}
+
+// statusStoredValues maps a canonical status to every raw stored value that
+// normalizes to it — the canonical value plus any legacy alias. This mirrors
+// the alias folding in task.NormalizeStatus so ListByStatus returns the same
+// rows a NormalizeStatus-then-filter pass over List() would, including legacy
+// "pending"/"working" rows written before the canonical names existed.
+var statusStoredValues = map[task.Status][]string{
+	task.StatusTodo:    {string(task.StatusTodo), "pending"},
+	task.StatusDoing:   {string(task.StatusDoing), "working"},
+	task.StatusDone:    {string(task.StatusDone)},
+	task.StatusFailed:  {string(task.StatusFailed)},
+	task.StatusDeleted: {string(task.StatusDeleted)},
+}
+
+// ListByStatus returns tasks whose stored status normalizes to the given
+// canonical status, in List() order (ordinal, rowid). It scopes the read to
+// the status index (tasks_status_order_idx) instead of scanning the whole
+// table. status must be a canonical task.Status; callers normalize first.
+func (s *SQLiteStore) ListByStatus(ctx context.Context, status task.Status) ([]task.Task, error) {
+	stored, ok := statusStoredValues[task.NormalizeStatus(status)]
+	if !ok {
+		return nil, nil
+	}
+	placeholders := strings.Repeat("?, ", len(stored)-1) + "?"
+	args := make([]any, len(stored))
+	for i, v := range stored {
+		args[i] = v
+	}
+	rows, err := s.db.QueryContext(ctx, `
+SELECT id, created, status, body, started, lease_expires, finished, error,
+	priority, tags, cwd, source, agent, group_id, resource_key, stage
+FROM tasks
+WHERE status IN (`+placeholders+`)
+ORDER BY ordinal, rowid`, args...)
+	if err != nil {
+		return nil, fmt.Errorf("store: list by status %s: %w", status, err)
+	}
+	defer rows.Close() //nolint:errcheck // rows.Err checked below
+
+	var tasks []task.Task
+	for rows.Next() {
+		t, err := scanTask(rows)
+		if err != nil {
+			return nil, err
+		}
+		tasks = append(tasks, t)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("store: list by status rows: %w", err)
+	}
+	return tasks, nil
 }
 
 func (s *SQLiteStore) listByStatuses(ctx context.Context, statuses ...string) ([]task.Task, error) {
