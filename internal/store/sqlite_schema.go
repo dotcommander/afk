@@ -17,7 +17,7 @@ const sqliteBusyRetryDelay = 25 * time.Millisecond
 // migration function is added below.
 const (
 	schemaVersionKey     = "schema_version"
-	currentSchemaVersion = 7
+	currentSchemaVersion = 8
 )
 
 func (s *SQLiteStore) init(ctx context.Context) error {
@@ -113,7 +113,9 @@ END;
 CREATE TRIGGER IF NOT EXISTS tasks_fts_ad AFTER DELETE ON tasks BEGIN
 	DELETE FROM tasks_fts WHERE id = old.id;
 END;
-CREATE TRIGGER IF NOT EXISTS tasks_fts_au AFTER UPDATE ON tasks BEGIN
+CREATE TRIGGER IF NOT EXISTS tasks_fts_au AFTER UPDATE ON tasks
+WHEN (old.status<>new.status OR old.body<>new.body OR old.priority<>new.priority OR old.cwd<>new.cwd OR old.source<>new.source OR old.agent<>new.agent OR old.group_id<>new.group_id OR old.resource_key<>new.resource_key OR old.error<>new.error OR old.tags<>new.tags)
+BEGIN
 	DELETE FROM tasks_fts WHERE id = old.id;
 	INSERT INTO tasks_fts(id, status, body, priority, cwd, source, agent, group_id, resource_key, error, tags)
 	VALUES (new.id, new.status, new.body, new.priority, new.cwd, new.source, new.agent, new.group_id, new.resource_key, new.error, new.tags);
@@ -149,6 +151,9 @@ func (s *SQLiteStore) runMigrationsIfNeeded(ctx context.Context) error {
 		return err
 	}
 	if err := s.migrateV7GoalOutcome(ctx); err != nil {
+		return err
+	}
+	if err := s.migrateV8FTSUpdateScope(ctx); err != nil {
 		return err
 	}
 	return s.writeSchemaVersion(ctx, currentSchemaVersion)
@@ -251,6 +256,28 @@ func (s *SQLiteStore) migrateStatusNames(ctx context.Context) error {
 func (s *SQLiteStore) migrateV7GoalOutcome(ctx context.Context) error {
 	if _, err := s.db.ExecContext(ctx, `ALTER TABLE goal_groups ADD COLUMN outcome TEXT NOT NULL DEFAULT ''`); err != nil && !isDuplicateColumn(err) {
 		return fmt.Errorf("store: migrate goal_groups outcome: %w", err)
+	}
+	return nil
+}
+
+// migrateV8FTSUpdateScope applies schema version 8: the tasks_fts_au AFTER
+// UPDATE trigger gains a WHEN clause so it only rebuilds a task's FTS row when
+// an FTS-indexed content column actually changes. Lease/heartbeat bumps
+// (lease_expires) and other non-content edits no longer trigger an FTS
+// delete+insert. Idempotent: DROP TRIGGER IF EXISTS then recreate.
+func (s *SQLiteStore) migrateV8FTSUpdateScope(ctx context.Context) error {
+	if _, err := s.db.ExecContext(ctx, `DROP TRIGGER IF EXISTS tasks_fts_au`); err != nil {
+		return fmt.Errorf("store: drop tasks_fts_au: %w", err)
+	}
+	if _, err := s.db.ExecContext(ctx, `
+CREATE TRIGGER IF NOT EXISTS tasks_fts_au AFTER UPDATE ON tasks
+WHEN (old.status<>new.status OR old.body<>new.body OR old.priority<>new.priority OR old.cwd<>new.cwd OR old.source<>new.source OR old.agent<>new.agent OR old.group_id<>new.group_id OR old.resource_key<>new.resource_key OR old.error<>new.error OR old.tags<>new.tags)
+BEGIN
+	DELETE FROM tasks_fts WHERE id = old.id;
+	INSERT INTO tasks_fts(id, status, body, priority, cwd, source, agent, group_id, resource_key, error, tags)
+	VALUES (new.id, new.status, new.body, new.priority, new.cwd, new.source, new.agent, new.group_id, new.resource_key, new.error, new.tags);
+END;`); err != nil {
+		return fmt.Errorf("store: recreate tasks_fts_au: %w", err)
 	}
 	return nil
 }

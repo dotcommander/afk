@@ -1011,6 +1011,21 @@ func TestFind(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, afterUpdate, 3)
 
+	// AU trigger WHEN clause: a lease-only update (no FTS-indexed column
+	// changes) must NOT rebuild the FTS row — task 3 stays findable by its
+	// original body with content unchanged.
+	require.NoError(t, s.Update(ctx, "3", task.EventHeartbeat, "", func(tk *task.Task) bool {
+		tk.LeaseExpires = time.Now().UTC().Add(time.Minute).Format(time.RFC3339)
+		return true
+	}))
+	afterLeaseBump, err := s.Find(ctx, "search")
+	require.NoError(t, err)
+	require.Len(t, afterLeaseBump, 3)
+	stillByBody, err := s.Find(ctx, "deleted")
+	require.NoError(t, err)
+	require.Len(t, stillByBody, 1)
+	require.Equal(t, "3", stillByBody[0].ID)
+
 	// AD trigger: deleting a task must drop it from the index.
 	require.NoError(t, s.Delete(ctx, "1"))
 	afterDelete, err := s.Find(ctx, "search")
