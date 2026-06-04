@@ -792,6 +792,42 @@ func TestSQLiteStoreRequeueStale(t *testing.T) {
 	require.Equal(t, task.EventRequeued, events[len(events)-1].Type)
 }
 
+func TestSQLiteStoreReapRecoversKilledWorkerLease(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	s := newStore(t)
+	now := time.Date(2025, 1, 2, 4, 4, 5, 0, time.UTC)
+
+	require.NoError(t, s.Add(ctx, task.Task{ID: "inflight", Status: task.StatusTodo, Body: "inflight"}))
+
+	// Worker claims with a short lease that has already expired by `now`
+	// (models a worker that died mid-execution and never heartbeated).
+	claimed, err := s.ClaimNext(ctx, now.Add(-time.Hour), now.Add(-30*time.Minute))
+	require.NoError(t, err)
+	require.NotNil(t, claimed)
+	require.Equal(t, task.StatusDoing, claimed.Status)
+	require.NotEmpty(t, claimed.LeaseExpires)
+
+	// Reaper runs (cron tick). The lease is expired, so the task is requeued
+	// regardless of the older-than fallback.
+	requeued, err := s.RequeueStale(ctx, 20*time.Minute, now)
+	require.NoError(t, err)
+	require.Len(t, requeued, 1)
+	require.Equal(t, "inflight", requeued[0].ID)
+
+	// Task is back to todo with the lease cleared, and is claimable again.
+	tasks, err := s.List(ctx)
+	require.NoError(t, err)
+	require.Equal(t, task.StatusTodo, tasks[0].Status)
+	require.Empty(t, tasks[0].LeaseExpires)
+
+	reclaimed, err := s.ClaimNext(ctx, now, now.Add(20*time.Minute))
+	require.NoError(t, err)
+	require.NotNil(t, reclaimed)
+	require.Equal(t, "inflight", reclaimed.ID)
+	require.Equal(t, task.StatusDoing, reclaimed.Status)
+}
+
 func TestSQLiteStoreRemoveAndPruneRecordEvents(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()

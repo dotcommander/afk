@@ -74,7 +74,6 @@ CREATE TABLE IF NOT EXISTS task_dependencies (
 	PRIMARY KEY (task_id, depends_on_id)
 );
 CREATE INDEX IF NOT EXISTS task_dependencies_depends_on_idx ON task_dependencies(depends_on_id);
-CREATE INDEX IF NOT EXISTS task_dependencies_type_idx ON task_dependencies(task_id, relation_type);
 CREATE TABLE IF NOT EXISTS task_gates (
 	task_id      TEXT NOT NULL,
 	name         TEXT NOT NULL,
@@ -139,6 +138,9 @@ func (s *SQLiteStore) runMigrationsIfNeeded(ctx context.Context) error {
 		return nil
 	}
 	if err := s.migrateTaskMetadata(ctx); err != nil {
+		return err
+	}
+	if err := s.migrateTaskDependencyTypeIndex(ctx); err != nil {
 		return err
 	}
 	if err := s.migrateStatusNames(ctx); err != nil {
@@ -209,6 +211,19 @@ func (s *SQLiteStore) migrateTaskMetadata(ctx context.Context) error {
 		if _, err := s.db.ExecContext(ctx, col.sql); err != nil && !isDuplicateColumn(err) {
 			return fmt.Errorf("store: migrate %s: %w", col.name, err)
 		}
+	}
+	return nil
+}
+
+// migrateTaskDependencyTypeIndex creates the task_dependencies(task_id,
+// relation_type) index. It runs in the migration phase rather than the base
+// DDL because the index references the relation_type column, which is added by
+// migrateTaskMetadata on legacy DBs that predate it. Creating the index here —
+// after that ALTER — avoids a "no such column: relation_type" failure on open.
+// CREATE INDEX IF NOT EXISTS keeps it idempotent for fresh and re-run DBs.
+func (s *SQLiteStore) migrateTaskDependencyTypeIndex(ctx context.Context) error {
+	if _, err := s.db.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS task_dependencies_type_idx ON task_dependencies(task_id, relation_type)`); err != nil {
+		return fmt.Errorf("store: migrate task_dependencies_type_idx: %w", err)
 	}
 	return nil
 }

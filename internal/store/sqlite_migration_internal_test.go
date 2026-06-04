@@ -196,3 +196,55 @@ func TestMigrationIsDuplicateColumnTypedError(t *testing.T) {
 	require.False(t, isDuplicateColumn(errors.New("some other error")))
 	require.False(t, isDuplicateColumn(nil))
 }
+
+func TestMigrationLegacyTaskDependenciesMissingRelationType(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "tasks.sqlite")
+
+	// Build a legacy-shaped DB on a raw connection: task_dependencies WITHOUT
+	// the relation_type column, and WITHOUT the task_dependencies_type_idx that
+	// references it. No schema_version row, so NewSQLite runs the full ladder.
+	raw, err := sql.Open("sqlite", sqliteDSN(path))
+	require.NoError(t, err)
+	_, err = raw.ExecContext(ctx, `
+CREATE TABLE task_dependencies (
+	task_id TEXT NOT NULL,
+	depends_on_id TEXT NOT NULL,
+	created TEXT NOT NULL,
+	PRIMARY KEY (task_id, depends_on_id)
+);`)
+	require.NoError(t, err)
+	// Sanity: the type index must not exist yet, and CREATE INDEX on the
+	// missing column must fail — this is the exact failure NewSQLite hit.
+	_, idxErr := raw.ExecContext(ctx,
+		`CREATE INDEX task_dependencies_type_idx ON task_dependencies(task_id, relation_type)`)
+	require.Error(t, idxErr, "precondition: relation_type must be absent so the legacy index fails")
+	require.NoError(t, raw.Close())
+
+	// Opening the legacy DB must succeed: migrateTaskMetadata adds
+	// relation_type, then migrateTaskDependencyTypeIndex creates the index.
+	s, err := NewSQLite(ctx, Paths{SQLitePath: path})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = s.Close() })
+
+	version, err := s.readSchemaVersion(ctx)
+	require.NoError(t, err)
+	require.Equal(t, currentSchemaVersion, version)
+
+	// The relation_type column and the type index must both be present.
+	check, err := sql.Open("sqlite", sqliteDSN(path))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = check.Close() })
+
+	var colCount int
+	require.NoError(t, check.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM pragma_table_info('task_dependencies') WHERE name = 'relation_type'`).Scan(&colCount))
+	require.Equal(t, 1, colCount, "relation_type column must be added on legacy upgrade")
+
+	var idxCount int
+	require.NoError(t, check.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = 'task_dependencies_type_idx'`).Scan(&idxCount))
+	require.Equal(t, 1, idxCount, "task_dependencies_type_idx must end up present after legacy upgrade")
+}

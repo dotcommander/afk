@@ -14,6 +14,9 @@ import (
 // takeKind is the command name and the JSON "kind" token emitted for claimed tasks.
 const takeKind = "take"
 
+// reapKind is the command name for the cron-driven stale-task reaper.
+const reapKind = "reap"
+
 func newTakeCmd(d *Deps) *cobra.Command {
 	var lease string
 	var workerID string
@@ -177,6 +180,45 @@ func newRequeueStaleCmd(d *Deps) *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&olderThan, "older-than", "1h", "requeue doing tasks older than this duration when no lease is set")
+	return cmd
+}
+
+func newReapCmd(d *Deps) *cobra.Command {
+	var olderThan string
+
+	cmd := &cobra.Command{
+		Use:   reapKind,
+		Short: "Reset stale doing tasks to todo (cron-driven reaper)",
+		Long: strings.TrimSpace(`Reset stale doing tasks back to todo so they become claimable again.
+
+A task is stale when its lease has expired, or (when it has no lease) when its
+start time is older than --older-than. Intended to run unattended on a fixed
+interval, for example a cron entry:
+
+  */10 * * * * afk reap --older-than 20m
+
+Prints the id of each requeued task to stdout, one per line.`),
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			dur, err := time.ParseDuration(olderThan)
+			if err != nil {
+				return fmt.Errorf("parse older-than: %w", err)
+			}
+			if dur <= 0 {
+				return fmt.Errorf("parse older-than: duration must be positive")
+			}
+			tasks, err := d.Service.RequeueStale(cmd.Context(), dur)
+			if err != nil {
+				return err
+			}
+			for _, t := range tasks {
+				if _, err := fmt.Fprintln(d.Stdout, t.ID); err != nil {
+					return err
+				}
+			}
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&olderThan, "older-than", "20m", "requeue doing tasks older than this duration when no lease is set")
 	return cmd
 }
 
