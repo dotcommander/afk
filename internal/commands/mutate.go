@@ -25,41 +25,7 @@ func newSetCmd(d *Deps) *cobra.Command {
 		Short: "Set task status",
 		Args:  cobra.MinimumNArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			status, ok := task.ParseStatus(args[1])
-			if !ok {
-				return fmt.Errorf("%w: %q", task.ErrInvalidStatus, args[1])
-			}
-			note, err := resolveSetNote(d, args[2:], noteFlag, noteFile)
-			if err != nil {
-				return err
-			}
-			if !force && (status == task.StatusDone || status == task.StatusFailed) && strings.TrimSpace(note) == "" {
-				return fmt.Errorf("%w", task.ErrMissingCompletionNote)
-			}
-			var stagePtr *string
-			if cmd.Flags().Changed("stage") {
-				stagePtr = &stage
-			}
-			if err := d.Service.SetStatusWithStage(cmd.Context(), args[0], status, note, stagePtr); err != nil {
-				return err
-			}
-			updated, err := d.Service.Show(cmd.Context(), args[0])
-			if err != nil {
-				return err
-			}
-			if asJSON || summary {
-				result := setResultFromTask(updated, note)
-				if summary {
-					snapshot, err := d.Service.Status(cmd.Context())
-					if err != nil {
-						return err
-					}
-					result.Queue = queueResultFromCounts(snapshot.Counts)
-				}
-				return output.WriteJSONLine(d.Stdout, result, "set")
-			}
-			_, err = fmt.Fprintf(d.Stdout, "set %s %s\n", args[0], status)
-			return err
+			return runSet(cmd, args, d, &stage, noteFlag, noteFile, asJSON, summary, force)
 		},
 	}
 	cmd.Flags().BoolVar(&asJSON, "json", false, "emit JSON output")
@@ -69,6 +35,48 @@ func newSetCmd(d *Deps) *cobra.Command {
 	cmd.Flags().StringVar(&stage, "stage", "", "set the free-form pipeline stage label (omit to leave unchanged)")
 	cmd.Flags().BoolVar(&force, "force", false, "allow done/failed without a completion note")
 	return cmd
+}
+
+// runSet executes the `set` command: parse status, resolve the note, enforce
+// the completion-note rule, apply the status (with optional stage), then emit
+// either JSON/summary or a plain confirmation line. Extracted from newSetCmd's
+// RunE closure to keep cognitive complexity within the linter threshold.
+func runSet(cmd *cobra.Command, args []string, d *Deps, stage *string, noteFlag, noteFile string, asJSON, summary, force bool) error {
+	status, ok := task.ParseStatus(args[1])
+	if !ok {
+		return fmt.Errorf("%w: %q", task.ErrInvalidStatus, args[1])
+	}
+	note, err := resolveSetNote(d, args[2:], noteFlag, noteFile)
+	if err != nil {
+		return err
+	}
+	if !force && (status == task.StatusDone || status == task.StatusFailed) && strings.TrimSpace(note) == "" {
+		return fmt.Errorf("%w", task.ErrMissingCompletionNote)
+	}
+	var stagePtr *string
+	if cmd.Flags().Changed("stage") {
+		stagePtr = stage
+	}
+	if err := d.Service.SetStatusWithStage(cmd.Context(), args[0], status, note, stagePtr); err != nil {
+		return err
+	}
+	updated, err := d.Service.Show(cmd.Context(), args[0])
+	if err != nil {
+		return err
+	}
+	if asJSON || summary {
+		result := setResultFromTask(updated, note)
+		if summary {
+			snapshot, err := d.Service.Status(cmd.Context())
+			if err != nil {
+				return err
+			}
+			result.Queue = queueResultFromCounts(snapshot.Counts)
+		}
+		return output.WriteJSONLine(d.Stdout, result, "set")
+	}
+	_, err = fmt.Fprintf(d.Stdout, "set %s %s\n", args[0], status)
+	return err
 }
 
 func newRetryCmd(d *Deps) *cobra.Command {

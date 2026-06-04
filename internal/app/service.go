@@ -14,6 +14,9 @@ import (
 // recentPathLimit caps how many distinct working directories RecentPaths returns.
 const recentPathLimit = 10
 
+// statusFilterAll is the List/Find status filter that spans every status.
+const statusFilterAll = "all"
+
 // Service coordinates task use cases across the store and task model.
 type Service struct {
 	store       Store
@@ -136,7 +139,7 @@ func (s *Service) List(ctx context.Context, statusFilter string) ([]task.Task, e
 		return nil, err
 	}
 	trimmed := strings.TrimSpace(statusFilter)
-	if trimmed != "" && trimmed != "all" {
+	if trimmed != "" && trimmed != statusFilterAll {
 		// validateStatusFilter already guaranteed this parses.
 		parsed, _ := task.ParseStatus(trimmed)
 		return s.store.ListByStatus(ctx, parsed)

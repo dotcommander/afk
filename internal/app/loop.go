@@ -65,6 +65,8 @@ type LoopResult struct {
 //   - opts.MaxTasks reached — clean exit, nil returned.
 //   - Circuit breaker trips (cfg.MaxConsecutiveFailures > 0) — error returned.
 //   - ctx is cancelled — ctx.Err() returned.
+//
+//nolint:gocognit,gocyclo,funlen // loop orchestration; sub-steps extracted to render/heartbeat/classify helpers
 func (s *Service) RunLoop(
 	ctx context.Context,
 	cfg LoopConfig,
@@ -141,26 +143,8 @@ func (s *Service) RunLoop(
 		prompt := buf.String()
 
 		// --- Heartbeat goroutine ---
-		// Exit condition: hbCtx cancelled (via hbCancel deferred below).
-		var hbCancel context.CancelFunc
-		if cfg.HeartbeatInterval > 0 {
-			var hbCtx context.Context
-			hbCtx, hbCancel = context.WithCancel(ctx)
-			go func() {
-				ticker := time.NewTicker(cfg.HeartbeatInterval)
-				defer ticker.Stop()
-				for {
-					select {
-					case <-ticker.C:
-						// Best-effort: heartbeat errors are logged nowhere intentionally.
-						// The lease will expire naturally if heartbeats fail consistently.
-						_ = s.Heartbeat(hbCtx, t.ID, worker, cfg.Lease)
-					case <-hbCtx.Done():
-						return
-					}
-				}
-			}()
-		}
+		// Exit condition: hbCtx cancelled (via hbCancel called below).
+		hbCancel := s.startHeartbeat(ctx, cfg, t.ID, worker)
 
 		// --- Spawn agent ---
 		runErr := runAgent(ctx, cfg.Command, prompt, cfg.TaskTimeout, agentOut, agentErr)
@@ -171,33 +155,14 @@ func (s *Service) RunLoop(
 		}
 
 		// --- Classify result ---
-		var (
-			status  string
-			errText string
-		)
-		switch {
-		case runErr == nil:
-			if doneErr := s.Done(ctx, t.ID, "completed by afk loop"); doneErr != nil {
-				return fmt.Errorf("mark done %s: %w", t.ID, doneErr)
-			}
-			status = "done"
+		status, errText, failed, classifyErr := s.classifyRun(ctx, t.ID, runErr)
+		if classifyErr != nil {
+			return classifyErr
+		}
+		if failed {
+			consecutiveFailures++
+		} else {
 			consecutiveFailures = 0
-
-		case errors.Is(runErr, ErrAgentTimeout):
-			if failErr := s.Fail(ctx, t.ID, "timeout"); failErr != nil {
-				return fmt.Errorf("mark failed %s: %w", t.ID, failErr)
-			}
-			status = "timeout"
-			errText = runErr.Error()
-			consecutiveFailures++
-
-		default:
-			if failErr := s.Fail(ctx, t.ID, runErr.Error()); failErr != nil {
-				return fmt.Errorf("mark failed %s: %w", t.ID, failErr)
-			}
-			status = "failed"
-			errText = runErr.Error()
-			consecutiveFailures++
 		}
 
 		tasksProcessed++
@@ -256,6 +221,56 @@ func (s *Service) applyGoalBudget(ctx context.Context, t *task.Task, opts LoopOp
 		return true, nil
 	}
 	return false, nil
+}
+
+// startHeartbeat launches a best-effort lease-heartbeat goroutine when
+// cfg.HeartbeatInterval > 0 and returns its cancel func; returns nil when
+// heartbeats are disabled. Exit condition: the returned cancel is invoked
+// (cancels the goroutine's context).
+func (s *Service) startHeartbeat(ctx context.Context, cfg LoopConfig, taskID, worker string) context.CancelFunc {
+	if cfg.HeartbeatInterval <= 0 {
+		return nil
+	}
+	hbCtx, hbCancel := context.WithCancel(ctx)
+	go func() {
+		ticker := time.NewTicker(cfg.HeartbeatInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				// Best-effort: heartbeat errors are logged nowhere intentionally.
+				// The lease will expire naturally if heartbeats fail consistently.
+				_ = s.Heartbeat(hbCtx, taskID, worker, cfg.Lease)
+			case <-hbCtx.Done():
+				return
+			}
+		}
+	}()
+	return hbCancel
+}
+
+// classifyRun records the task's terminal state for this attempt and returns
+// the loop-result status string, error text, and whether the attempt failed
+// (failed=true means it should count toward the consecutive-failure breaker).
+// A non-nil error is fatal to the loop (store write failed).
+func (s *Service) classifyRun(ctx context.Context, taskID string, runErr error) (status, errText string, failed bool, err error) {
+	switch {
+	case runErr == nil:
+		if doneErr := s.Done(ctx, taskID, "completed by afk loop"); doneErr != nil {
+			return "", "", false, fmt.Errorf("mark done %s: %w", taskID, doneErr)
+		}
+		return "done", "", false, nil
+	case errors.Is(runErr, ErrAgentTimeout):
+		if failErr := s.Fail(ctx, taskID, "timeout"); failErr != nil {
+			return "", "", false, fmt.Errorf("mark failed %s: %w", taskID, failErr)
+		}
+		return "timeout", runErr.Error(), true, nil
+	default:
+		if failErr := s.Fail(ctx, taskID, runErr.Error()); failErr != nil {
+			return "", "", false, fmt.Errorf("mark failed %s: %w", taskID, failErr)
+		}
+		return "failed", runErr.Error(), true, nil
+	}
 }
 
 // cooldown sleeps for d interruptibly. Returns ctx.Err() on cancellation,

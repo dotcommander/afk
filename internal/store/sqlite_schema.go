@@ -21,6 +21,17 @@ const (
 )
 
 func (s *SQLiteStore) init(ctx context.Context) error {
+	if err := s.createBaseSchema(ctx); err != nil {
+		return err
+	}
+	return retrySQLiteBusy(ctx, s.runMigrationsIfNeeded)
+}
+
+// createBaseSchema runs the bootstrap CREATE TABLE/INDEX/TRIGGER DDL in a single
+// busy-retried batch. Idempotent (IF NOT EXISTS); migrations layer on top.
+//
+//nolint:funlen // single cohesive bootstrap DDL string; splitting fragments one batch
+func (s *SQLiteStore) createBaseSchema(ctx context.Context) error {
 	if err := s.execWithBusyRetry(ctx, `
 CREATE TABLE IF NOT EXISTS tasks (
 	id TEXT PRIMARY KEY,
@@ -122,7 +133,7 @@ END;
 `); err != nil {
 		return fmt.Errorf("store: create schema: %w", err)
 	}
-	return retrySQLiteBusy(ctx, s.runMigrationsIfNeeded)
+	return nil
 }
 
 // runMigrationsIfNeeded reads the recorded schema_version and runs every
@@ -253,10 +264,10 @@ func (s *SQLiteStore) migrateStatusNames(ctx context.Context) error {
 		to    string
 		query string
 	}{
-		{table: "tasks", from: "pending", to: "todo", query: `UPDATE tasks SET status = ? WHERE status = ?`},
-		{table: "tasks", from: "working", to: "doing", query: `UPDATE tasks SET status = ? WHERE status = ?`},
-		{table: "task_attempts", from: "pending", to: "todo", query: `UPDATE task_attempts SET status = ? WHERE status = ?`},
-		{table: "task_attempts", from: "working", to: "doing", query: `UPDATE task_attempts SET status = ? WHERE status = ?`},
+		{table: "tasks", from: legacyStatusPending, to: "todo", query: `UPDATE tasks SET status = ? WHERE status = ?`},
+		{table: "tasks", from: legacyStatusWorking, to: "doing", query: `UPDATE tasks SET status = ? WHERE status = ?`},
+		{table: "task_attempts", from: legacyStatusPending, to: "todo", query: `UPDATE task_attempts SET status = ? WHERE status = ?`},
+		{table: "task_attempts", from: legacyStatusWorking, to: "doing", query: `UPDATE task_attempts SET status = ? WHERE status = ?`},
 	}
 	for _, update := range updates {
 		if _, err := s.db.ExecContext(ctx, update.query, update.to, update.from); err != nil {

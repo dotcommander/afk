@@ -39,11 +39,11 @@ func (s *SQLiteStore) Counts(ctx context.Context) (map[task.Status]int, error) {
 // values are matched ("pending" → todo, "working" → doing) so the result
 // matches a NormalizeStatus-then-bucket pass over a List() result.
 func (s *SQLiteStore) ActiveLists(ctx context.Context) (todo, doing []task.Task, err error) {
-	todo, err = s.listByStatuses(ctx, string(task.StatusTodo), "pending")
+	todo, err = s.listByStatuses(ctx, string(task.StatusTodo), legacyStatusPending)
 	if err != nil {
 		return nil, nil, err
 	}
-	doing, err = s.listByStatuses(ctx, string(task.StatusDoing), "working")
+	doing, err = s.listByStatuses(ctx, string(task.StatusDoing), legacyStatusWorking)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -55,9 +55,16 @@ func (s *SQLiteStore) ActiveLists(ctx context.Context) (todo, doing []task.Task,
 // the alias folding in task.NormalizeStatus so ListByStatus returns the same
 // rows a NormalizeStatus-then-filter pass over List() would, including legacy
 // "pending"/"working" rows written before the canonical names existed.
+// Legacy status alias values stored in older DBs, normalized to canonical
+// task.Status names by statusStoredValues / migrateStatusNames.
+const (
+	legacyStatusPending = "pending"
+	legacyStatusWorking = "working"
+)
+
 var statusStoredValues = map[task.Status][]string{
-	task.StatusTodo:    {string(task.StatusTodo), "pending"},
-	task.StatusDoing:   {string(task.StatusDoing), "working"},
+	task.StatusTodo:    {string(task.StatusTodo), legacyStatusPending},
+	task.StatusDoing:   {string(task.StatusDoing), legacyStatusWorking},
 	task.StatusDone:    {string(task.StatusDone)},
 	task.StatusFailed:  {string(task.StatusFailed)},
 	task.StatusDeleted: {string(task.StatusDeleted)},
@@ -77,12 +84,16 @@ func (s *SQLiteStore) ListByStatus(ctx context.Context, status task.Status) ([]t
 	for i, v := range stored {
 		args[i] = v
 	}
-	rows, err := s.db.QueryContext(ctx, `
+	// placeholders is a fixed run of "?" bind markers (count = len(stored)); no
+	// user data is interpolated — all values pass through args as parameters.
+	//nolint:gosec // G202: bind-marker concat only, args are parameters
+	query := `
 SELECT id, created, status, body, started, lease_expires, finished, error,
 	priority, tags, cwd, source, agent, group_id, resource_key, stage
 FROM tasks
-WHERE status IN (`+placeholders+`)
-ORDER BY ordinal, rowid`, args...)
+WHERE status IN (` + placeholders + `)
+ORDER BY ordinal, rowid`
+	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("store: list by status %s: %w", status, err)
 	}

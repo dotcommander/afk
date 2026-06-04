@@ -122,7 +122,7 @@ func loadLoopConfig() LoopConfig {
 // directories as needed. Errors are ignored: a failed write must not block
 // the loop, and the in-memory defaults are used regardless.
 func writeDefaultLoopConfig(path string, defaults LoopConfig) {
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
 		return
 	}
 	data, err := yaml.Marshal(defaults)

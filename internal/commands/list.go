@@ -15,7 +15,7 @@ func newTasksCmd(d *Deps) *cobra.Command {
 	var asJSON bool
 
 	cmd := &cobra.Command{
-		Use:   "tasks",
+		Use:   cmdTasks,
 		Short: "List tasks",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			tasks, err := d.Service.List(cmd.Context(), status)

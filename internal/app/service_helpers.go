@@ -37,7 +37,7 @@ func filterByStatus(tasks []task.Task, status string) []task.Task {
 	if status == "" {
 		return filterVisible(tasks)
 	}
-	if status == "all" {
+	if status == statusFilterAll {
 		return append([]task.Task(nil), tasks...)
 	}
 	parsed, ok := task.ParseStatus(status)
@@ -65,7 +65,7 @@ func filterVisible(tasks []task.Task) []task.Task {
 
 func validateStatusFilter(status string) error {
 	status = strings.TrimSpace(status)
-	if status == "" || status == "all" {
+	if status == "" || status == statusFilterAll {
 		return nil
 	}
 	if _, ok := task.ParseStatus(status); !ok {

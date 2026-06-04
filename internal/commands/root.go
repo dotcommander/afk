@@ -22,6 +22,8 @@ const (
 	skipStoreInitValue = "true"
 	// statusName is both the "status" command name and the "status" flag name.
 	statusName = "status"
+	// cmdTasks is the "tasks" list command name.
+	cmdTasks = "tasks"
 )
 
 // Deps bundles command dependencies. Constructed once in main(), passed by pointer.

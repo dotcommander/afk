@@ -125,7 +125,7 @@ func loadValidationConfig() validationConfig {
 // directories as needed. Errors are ignored: a failed write must not block
 // validation, and the in-memory defaults are used regardless.
 func writeDefaultValidationConfig(path string, defaults validationConfig) {
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
 		return
 	}
 	data, err := yaml.Marshal(defaults)

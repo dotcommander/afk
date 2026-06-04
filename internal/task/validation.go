@@ -183,6 +183,9 @@ func normalizeBody(body string) string {
 	return strings.Join(strings.Fields(strings.ToLower(strings.TrimSpace(body))), " ")
 }
 
+// IsGeneratedCandidate reports whether a task with the given source/tags is a
+// machine-generated discovery candidate (source "task-discovery", or a
+// candidate/needs-validation/discovery tag).
 func IsGeneratedCandidate(source string, tags []string) bool {
 	if strings.EqualFold(source, "task-discovery") {
 		return true

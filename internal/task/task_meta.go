@@ -12,7 +12,7 @@ var statusMeta = map[Status]struct {
 	Event EventType
 	Apply func(t *Task, now time.Time, message string) bool
 }{
-	StatusTodo: {Event: EventRequeued, Apply: func(t *Task, now time.Time, _ string) bool {
+	StatusTodo: {Event: EventRequeued, Apply: func(t *Task, _ time.Time, _ string) bool {
 		if t.Status == StatusTodo {
 			return false
 		}

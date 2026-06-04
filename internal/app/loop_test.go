@@ -13,14 +13,6 @@ import (
 
 // minCfg returns a LoopConfig suitable for fast unit tests: zero cooldown,
 // no heartbeat, small lease.
-// trueCmd / falseCmd / sleepCmd use absolute paths because exec.Command does
-// not search PATH; macOS places these under /usr/bin (true/false) and /bin (sleep).
-const (
-	trueCmd  = "/usr/bin/true"
-	falseCmd = "/usr/bin/false"
-	sleepCmd = "/bin/sleep"
-)
-
 func minCfg(command string) app.LoopConfig {
 	return app.LoopConfig{
 		Command:                command,
