@@ -35,7 +35,7 @@ func newServerFixture(t *testing.T) (http.Handler, *app.Service) {
 	require.NoError(t, err)
 	doneID, err := svc.Add(ctx, "done task")
 	require.NoError(t, err)
-	require.NoError(t, svc.SetStatus(ctx, doneID, task.StatusDone, ""))
+	require.NoError(t, svc.SetStatus(ctx, doneID, task.StatusDone, "fixture complete"))
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	srv := server.New(svc, logger, "127.0.0.1:0", false)
@@ -181,6 +181,28 @@ func TestPATCHTaskSetsStatus(t *testing.T) {
 	require.Contains(t, got.Error, "test failure reason")
 }
 
+func TestPATCHTaskRejectsTerminalStatusWithoutNote(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	h, svc := newServerFixture(t)
+	tasks, err := svc.List(ctx, "todo")
+	require.NoError(t, err)
+	id := tasks[0].ID
+
+	body := `{"status":"done"}`
+	rec := httptest.NewRecorder()
+	req := withCSRF(t, h, httptest.NewRequest(http.MethodPatch, "/api/tasks/"+id, strings.NewReader(body)))
+	req.Header.Set("Content-Type", "application/json")
+	h.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusBadRequest, rec.Code)
+	require.Contains(t, rec.Body.String(), task.ErrMissingCompletionNote.Error())
+	got, err := svc.Show(ctx, id)
+	require.NoError(t, err)
+	require.Equal(t, task.StatusTodo, got.Status)
+}
+
 func TestPATCHTaskUsesNoteAndReasonFallbacks(t *testing.T) {
 	t.Parallel()
 
@@ -260,7 +282,7 @@ func TestGETPathsAndErrorResponses(t *testing.T) {
 
 	badStatus := httptest.NewRecorder()
 	h.ServeHTTP(badStatus, httptest.NewRequest(http.MethodGet, "/api/tasks?status=not-real", nil))
-	require.Equal(t, http.StatusInternalServerError, badStatus.Code)
+	require.Equal(t, http.StatusBadRequest, badStatus.Code)
 	require.Contains(t, badStatus.Body.String(), "invalid task status")
 }
 

@@ -75,7 +75,7 @@ func TestServiceLifecycle(t *testing.T) {
 	require.Equal(t, task.StatusDoing, popped.Status)
 	require.Equal(t, fixed.Format(time.RFC3339), popped.Started)
 
-	require.NoError(t, svc.Done(ctx, id, ""))
+	require.NoError(t, svc.Done(ctx, id, "verified"))
 	got, err := svc.Show(ctx, id)
 	require.NoError(t, err)
 	require.Equal(t, task.StatusDone, got.Status)
@@ -93,6 +93,31 @@ func TestServiceLifecycle(t *testing.T) {
 	tasks, err = svc.List(ctx, "")
 	require.NoError(t, err)
 	require.Empty(t, tasks)
+}
+
+func TestServiceSetStatusRequiresTerminalNoteUnlessForced(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	svc := newService(t)
+
+	doneID, err := svc.Add(ctx, "terminal note task")
+	require.NoError(t, err)
+	err = svc.SetStatus(ctx, doneID, task.StatusDone, "")
+	require.ErrorIs(t, err, task.ErrMissingCompletionNote)
+	got, err := svc.Show(ctx, doneID)
+	require.NoError(t, err)
+	require.Equal(t, task.StatusTodo, got.Status)
+
+	require.NoError(t, svc.SetStatusWithStageForce(ctx, doneID, task.StatusDone, "", nil))
+	got, err = svc.Show(ctx, doneID)
+	require.NoError(t, err)
+	require.Equal(t, task.StatusDone, got.Status)
+
+	failedID, err := svc.Add(ctx, "terminal fail task")
+	require.NoError(t, err)
+	err = svc.SetStatus(ctx, failedID, task.StatusFailed, "   ")
+	require.ErrorIs(t, err, task.ErrMissingCompletionNote)
+	require.NoError(t, svc.SetStatus(ctx, failedID, task.StatusFailed, "verified failure"))
 }
 
 func TestServiceFilteringAndCollisionIDs(t *testing.T) {
@@ -293,7 +318,7 @@ func TestServiceReady(t *testing.T) {
 	require.Equal(t, prereq, ready[0].ID)
 	require.Equal(t, independent, ready[1].ID)
 
-	require.NoError(t, svc.Done(ctx, prereq, ""))
+	require.NoError(t, svc.Done(ctx, prereq, "prereq verified"))
 	ready, err = svc.Ready(ctx)
 	require.NoError(t, err)
 	require.Len(t, ready, 2)
@@ -467,7 +492,7 @@ func TestServiceRequeueStale(t *testing.T) {
 	require.NotNil(t, claimed)
 	require.Equal(t, stale, claimed.ID)
 
-	require.NoError(t, svc.Done(ctx, stale, ""))
+	require.NoError(t, svc.Done(ctx, stale, "stale recovery verified"))
 	got, err := svc.Show(ctx, stale)
 	require.NoError(t, err)
 	require.Equal(t, task.StatusDone, got.Status)
@@ -523,9 +548,9 @@ func TestServicePropagatesStoreErrors(t *testing.T) {
 	require.ErrorIs(t, err, boom)
 	_, err = svc.Next(ctx)
 	require.ErrorIs(t, err, boom)
-	require.ErrorIs(t, svc.Done(ctx, "id", ""), boom)
+	require.ErrorIs(t, svc.Done(ctx, "id", "verified"), boom)
 	require.ErrorIs(t, svc.Fail(ctx, "id", "reason"), boom)
-	require.ErrorIs(t, svc.SetStatus(ctx, "id", task.StatusDone, ""), boom)
+	require.ErrorIs(t, svc.SetStatus(ctx, "id", task.StatusDone, "verified"), boom)
 	require.ErrorIs(t, svc.Remove(ctx, "id"), boom)
 	_, err = svc.Prune(ctx, []task.Status{task.StatusDone})
 	require.ErrorIs(t, err, boom)
@@ -877,7 +902,7 @@ func TestDone_WithNote(t *testing.T) {
 	require.True(t, found, "expected an EventDone event")
 }
 
-func TestDone_WithoutNote(t *testing.T) {
+func TestDoneRequiresNote(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	svc := newService(t)
@@ -887,18 +912,19 @@ func TestDone_WithoutNote(t *testing.T) {
 	_, err = svc.Take(ctx, 0, "", "")
 	require.NoError(t, err)
 
-	require.NoError(t, svc.Done(ctx, id, ""))
+	err = svc.Done(ctx, id, "")
+	require.ErrorIs(t, err, task.ErrMissingCompletionNote)
 
 	data, err := svc.Explain(ctx, id)
 	require.NoError(t, err)
+	require.Equal(t, task.StatusDoing, data.Task.Status)
 	var found bool
 	for _, e := range data.Events {
 		if e.Type == task.EventDone {
-			require.Equal(t, "", e.Message)
 			found = true
 		}
 	}
-	require.True(t, found, "expected an EventDone event")
+	require.False(t, found, "empty completion evidence must not record EventDone")
 }
 
 type errorStore struct {

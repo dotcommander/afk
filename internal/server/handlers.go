@@ -6,6 +6,7 @@ import (
 	"net/http"
 
 	"github.com/dotcommander/afk/internal/app"
+	"github.com/dotcommander/afk/internal/task"
 )
 
 var errInvalidCSRF = errors.New("invalid csrf token")
@@ -34,9 +35,14 @@ func resolveID(w http.ResponseWriter, r *http.Request) (string, bool) {
 	return id, true
 }
 
-// writeResult encodes v on success, maps ErrNotFound → 404, other errors → 500.
+// writeResult encodes v on success, maps user-input errors to 400,
+// ErrNotFound to 404, and other errors to 500.
 func writeResult(w http.ResponseWriter, v any, err error) {
 	if err != nil {
+		if errors.Is(err, task.ErrInvalidStatus) {
+			writeErr(w, http.StatusBadRequest, err)
+			return
+		}
 		if errors.Is(err, app.ErrNotFound) {
 			writeErr(w, http.StatusNotFound, err)
 			return

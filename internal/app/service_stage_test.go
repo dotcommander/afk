@@ -66,7 +66,7 @@ func TestSetStatusWithStageNilStagePreservesExistingStage(t *testing.T) {
 	require.NoError(t, err)
 
 	// Transition status but pass nil stage (Flags().Changed contract: flag not supplied).
-	require.NoError(t, svc.SetStatusWithStage(ctx, id, task.StatusDone, "", nil))
+	require.NoError(t, svc.SetStatusWithStage(ctx, id, task.StatusDone, "stage preserved", nil))
 
 	got, err := svc.Show(ctx, id)
 	require.NoError(t, err)

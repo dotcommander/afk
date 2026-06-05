@@ -57,7 +57,12 @@ func runSet(cmd *cobra.Command, args []string, d *Deps, stage *string, noteFlag,
 	if cmd.Flags().Changed("stage") {
 		stagePtr = stage
 	}
-	if err := d.Service.SetStatusWithStage(cmd.Context(), args[0], status, note, stagePtr); err != nil {
+	if force {
+		err = d.Service.SetStatusWithStageForce(cmd.Context(), args[0], status, note, stagePtr)
+	} else {
+		err = d.Service.SetStatusWithStage(cmd.Context(), args[0], status, note, stagePtr)
+	}
+	if err != nil {
 		return err
 	}
 	updated, err := d.Service.Show(cmd.Context(), args[0])

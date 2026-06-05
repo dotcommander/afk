@@ -141,14 +141,63 @@ ORDER BY ordinal, rowid`, string(task.StatusDoing), nowText, cutoff)
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("store: stale rows: %w", err)
 	}
+	requeued := make([]task.Task, 0, len(stale))
 	for _, t := range stale {
-		id := t.ID
-		if err := s.Update(ctx, id, task.EventRequeued, "stale", func(tk *task.Task) bool {
-			tk.Reset()
-			return true
-		}); err != nil {
+		prior, ok, err := s.requeueIfStillStale(ctx, t.ID, cutoff, nowText)
+		if err != nil {
 			return nil, err
 		}
+		if ok {
+			requeued = append(requeued, prior)
+		}
 	}
-	return stale, nil
+	return requeued, nil
+}
+
+func (s *SQLiteStore) requeueIfStillStale(ctx context.Context, id, cutoff, nowText string) (task.Task, bool, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return task.Task{}, false, fmt.Errorf("store: begin requeue stale: %w", err)
+	}
+	defer rollback(tx)
+
+	t, err := getTask(ctx, tx, id)
+	if err != nil {
+		return task.Task{}, false, err
+	}
+	if !taskStillStale(t, cutoff, nowText) {
+		return task.Task{}, false, nil
+	}
+	prior := t
+	t.Reset()
+	if _, err := tx.ExecContext(ctx, `
+UPDATE tasks
+SET created = ?, status = ?, body = ?, started = ?, lease_expires = ?, finished = ?, error = ?,
+	priority = ?, tags = ?, cwd = ?, source = ?, agent = ?, group_id = ?, resource_key = ?, stage = ?
+WHERE id = ?`,
+		t.Created, string(t.Status), t.Body, t.Started, t.LeaseExpires, t.Finished, t.Error,
+		t.Priority, encodeTags(t.Tags), t.CWD, t.Source, t.Agent, t.GroupID, t.ResourceKey, t.Stage, t.ID); err != nil {
+		return task.Task{}, false, fmt.Errorf("store: requeue stale task %s: %w", id, err)
+	}
+	at := s.eventTime(t)
+	if err := s.insertEvent(ctx, tx, id, task.EventRequeued, at, "stale"); err != nil {
+		return task.Task{}, false, err
+	}
+	if err := updateAttemptForEvent(ctx, tx, t, task.EventRequeued, at, "stale"); err != nil {
+		return task.Task{}, false, err
+	}
+	if err := commit(tx); err != nil {
+		return task.Task{}, false, err
+	}
+	return prior, true, nil
+}
+
+func taskStillStale(t task.Task, cutoff, nowText string) bool {
+	if t.Status != task.StatusDoing {
+		return false
+	}
+	if t.LeaseExpires != "" {
+		return t.LeaseExpires <= nowText
+	}
+	return t.Started != "" && t.Started <= cutoff
 }

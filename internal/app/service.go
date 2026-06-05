@@ -76,6 +76,23 @@ func (s *Service) AddWithOptions(ctx context.Context, opts task.AddOptions) (str
 	return s.addValidated(ctx, opts)
 }
 
+// AddWithOptionsBlockedBy appends a new todo task and records a blocking
+// dependency as one queue operation. SQLite stores do this atomically; other
+// stores get a rollback fallback so dependency-write failures do not leave
+// newly inserted tasks claimable.
+func (s *Service) AddWithOptionsBlockedBy(ctx context.Context, opts task.AddOptions, dependsOnID string) (string, error) {
+	if dependsOnID == "" {
+		return s.AddWithOptions(ctx, opts)
+	}
+	if err := task.ValidateAddOptions(opts); err != nil {
+		if s.sidecarPath != "" {
+			_ = RecordRejection(s.sidecarPath, opts, err, s.now())
+		}
+		return "", err
+	}
+	return s.addValidatedWithDependency(ctx, opts, dependsOnID)
+}
+
 // AddWithOptionsForce inserts a task even if validation rejects it. The
 // rejection (if any) is still recorded to the sidecar for audit. When
 // validation passes, behavior is identical to AddWithOptions — no
@@ -100,14 +117,61 @@ func (s *Service) AddWithOptionsForce(ctx context.Context, opts task.AddOptions)
 	return s.addValidated(ctx, opts)
 }
 
+// AddWithOptionsForceBlockedBy is the force-add variant of AddWithOptionsBlockedBy.
+func (s *Service) AddWithOptionsForceBlockedBy(ctx context.Context, opts task.AddOptions, dependsOnID string) (string, error) {
+	if dependsOnID == "" {
+		return s.AddWithOptionsForce(ctx, opts)
+	}
+	err := task.ValidateAddOptions(opts)
+	if err == nil {
+		return s.AddWithOptionsBlockedBy(ctx, opts, dependsOnID)
+	}
+	if !errors.Is(err, task.ErrInvalidTask) {
+		return "", err
+	}
+	if s.sidecarPath != "" {
+		_ = RecordRejection(s.sidecarPath, opts, err, s.now())
+	}
+	opts.Tags = append(append([]string{}, opts.Tags...), "force-added")
+	return s.addValidatedWithDependency(ctx, opts, dependsOnID)
+}
+
 // addValidated inserts a task that has already passed (or been exempted from)
 // validation. It is the single source of truth for "how opts becomes a row".
 // ID format: google/uuid v4 string (collision probability ~0; no List+retry
 // loop needed). Existing on-disk numeric/seconds IDs remain valid since the
 // id column is plain TEXT.
 func (s *Service) addValidated(ctx context.Context, opts task.AddOptions) (string, error) {
+	t := s.newTask(opts)
+	if err := s.store.Add(ctx, t); err != nil {
+		return "", err
+	}
+	return t.ID, nil
+}
+
+func (s *Service) addValidatedWithDependency(ctx context.Context, opts task.AddOptions, dependsOnID string) (string, error) {
+	t := s.newTask(opts)
+	if atomicStore, ok := s.store.(interface {
+		AddWithDependency(context.Context, task.Task, string) error
+	}); ok {
+		if err := atomicStore.AddWithDependency(ctx, t, dependsOnID); err != nil {
+			return "", err
+		}
+		return t.ID, nil
+	}
+	if err := s.store.Add(ctx, t); err != nil {
+		return "", err
+	}
+	if err := s.store.AddDependency(ctx, t.ID, dependsOnID); err != nil {
+		_ = s.store.Delete(ctx, t.ID)
+		return "", err
+	}
+	return t.ID, nil
+}
+
+func (s *Service) newTask(opts task.AddOptions) task.Task {
 	now := s.now()
-	t := task.Task{
+	return task.Task{
 		ID:          s.newID(),
 		Created:     formatTime(now),
 		Status:      task.StatusTodo,
@@ -121,10 +185,6 @@ func (s *Service) addValidated(ctx context.Context, opts task.AddOptions) (strin
 		ResourceKey: opts.ResourceKey,
 		Stage:       opts.Stage,
 	}
-	if err := s.store.Add(ctx, t); err != nil {
-		return "", err
-	}
-	return t.ID, nil
 }
 
 // List returns tasks filtered by status, or visible tasks if statusFilter is empty.

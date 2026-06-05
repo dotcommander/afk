@@ -131,28 +131,18 @@ func runAddForce(cmd *cobra.Command, d *Deps, opts task.AddOptions, dependsOnID 
 	if _, err := fmt.Fprintln(d.Stderr, "warning: --force bypassing validation"); err != nil {
 		return err
 	}
-	id, err := d.Service.AddWithOptionsForce(cmd.Context(), opts)
+	id, err := d.Service.AddWithOptionsForceBlockedBy(cmd.Context(), opts, dependsOnID)
 	if err != nil {
 		cmd.SilenceUsage = true
 		return err
-	}
-	if dependsOnID != "" {
-		if err := d.Service.AddDependency(cmd.Context(), id, dependsOnID); err != nil {
-			return err
-		}
 	}
 	return writeAddResult(d, id, asJSON)
 }
 
 func runAddNormal(cmd *cobra.Command, d *Deps, opts task.AddOptions, dependsOnID string, asJSON bool) error {
-	id, err := d.Service.AddWithOptions(cmd.Context(), opts)
+	id, err := d.Service.AddWithOptionsBlockedBy(cmd.Context(), opts, dependsOnID)
 	if err != nil {
 		return addValidationError(cmd, opts, err)
-	}
-	if dependsOnID != "" {
-		if err := d.Service.AddDependency(cmd.Context(), id, dependsOnID); err != nil {
-			return err
-		}
 	}
 	if err := writeAddTTYConfirmation(d.Stderr, id, opts, asJSON); err != nil {
 		return err

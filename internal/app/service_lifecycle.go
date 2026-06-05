@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"strings"
 	"time"
 
 	"github.com/dotcommander/afk/internal/task"
@@ -14,6 +15,9 @@ import (
 
 // Done marks a task done with an optional completion note.
 func (s *Service) Done(ctx context.Context, id, note string) error {
+	if strings.TrimSpace(note) == "" {
+		return task.ErrMissingCompletionNote
+	}
 	return s.store.Update(ctx, id, task.EventDone, note, func(t *task.Task) bool {
 		return t.MarkDone(s.now())
 	})
@@ -21,6 +25,9 @@ func (s *Service) Done(ctx context.Context, id, note string) error {
 
 // Fail marks a task failed with reason.
 func (s *Service) Fail(ctx context.Context, id, reason string) error {
+	if strings.TrimSpace(reason) == "" {
+		return task.ErrMissingCompletionNote
+	}
 	return s.store.Update(ctx, id, task.EventFailed, reason, func(t *task.Task) bool {
 		return t.MarkFailed(s.now(), reason)
 	})
@@ -28,20 +35,30 @@ func (s *Service) Fail(ctx context.Context, id, reason string) error {
 
 // SetStatus moves a task to status and records message as lifecycle context.
 func (s *Service) SetStatus(ctx context.Context, id string, status task.Status, message string) error {
-	return s.setStatus(ctx, id, status, message, nil)
+	return s.setStatus(ctx, id, status, message, nil, false)
 }
 
 // SetStatusWithStage moves a task to status and, when stage is non-nil, also
 // updates the free-form pipeline stage in the same atomic Update. A nil stage
 // leaves the existing stage unchanged.
 func (s *Service) SetStatusWithStage(ctx context.Context, id string, status task.Status, message string, stage *string) error {
-	return s.setStatus(ctx, id, status, message, stage)
+	return s.setStatus(ctx, id, status, message, stage, false)
 }
 
-func (s *Service) setStatus(ctx context.Context, id string, status task.Status, message string, stage *string) error {
+// SetStatusWithStageForce is the explicit escape hatch for terminal
+// transitions without completion evidence. Public callers should prefer
+// SetStatusWithStage; CLI --force is the intended use for this method.
+func (s *Service) SetStatusWithStageForce(ctx context.Context, id string, status task.Status, message string, stage *string) error {
+	return s.setStatus(ctx, id, status, message, stage, true)
+}
+
+func (s *Service) setStatus(ctx context.Context, id string, status task.Status, message string, stage *string, force bool) error {
 	status, ok := task.ParseStatus(string(status))
 	if !ok {
 		return task.ErrInvalidStatus
+	}
+	if !force && isTerminalStatus(status) && strings.TrimSpace(message) == "" {
+		return task.ErrMissingCompletionNote
 	}
 	event := eventForStatus(status)
 	return s.store.Update(ctx, id, event, message, func(t *task.Task) bool {
@@ -52,6 +69,10 @@ func (s *Service) setStatus(ctx context.Context, id string, status task.Status, 
 		}
 		return changed
 	})
+}
+
+func isTerminalStatus(status task.Status) bool {
+	return status == task.StatusDone || status == task.StatusFailed
 }
 
 // Remove deletes a task. The public CLI uses deleted status instead.

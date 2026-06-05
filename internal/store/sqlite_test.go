@@ -828,6 +828,31 @@ func TestSQLiteStoreReapRecoversKilledWorkerLease(t *testing.T) {
 	require.Equal(t, task.StatusDoing, reclaimed.Status)
 }
 
+func TestSQLiteStoreRequeueStaleSkipsRefreshedLease(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	s := newStore(t)
+	now := time.Date(2025, 1, 2, 4, 4, 5, 0, time.UTC)
+
+	require.NoError(t, s.Add(ctx, task.Task{ID: "inflight", Status: task.StatusTodo, Body: "inflight"}))
+	_, err := s.ClaimNextForWorker(ctx, now.Add(-time.Hour), now.Add(-30*time.Minute), "worker-1", "codex")
+	require.NoError(t, err)
+	require.NoError(t, s.Heartbeat(ctx, "inflight", "worker-1", now, now.Add(30*time.Minute)))
+
+	requeued, err := s.RequeueStale(ctx, 20*time.Minute, now)
+	require.NoError(t, err)
+	require.Empty(t, requeued)
+
+	got, err := s.Get(ctx, "inflight")
+	require.NoError(t, err)
+	require.Equal(t, task.StatusDoing, got.Status)
+	require.Equal(t, "2025-01-02T04:34:05Z", got.LeaseExpires)
+
+	events, err := s.Events(ctx, "inflight")
+	require.NoError(t, err)
+	require.Equal(t, task.EventHeartbeat, events[len(events)-1].Type)
+}
+
 func TestSQLiteStoreRemoveAndPruneRecordEvents(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()

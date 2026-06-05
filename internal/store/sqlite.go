@@ -170,6 +170,55 @@ func (s *SQLiteStore) Add(ctx context.Context, t task.Task) error {
 	}
 	defer rollback(tx)
 
+	if err := s.insertTask(ctx, tx, t); err != nil {
+		return err
+	}
+	if err := s.insertEvent(ctx, tx, t.ID, task.EventAdded, t.Created, ""); err != nil {
+		return err
+	}
+	return commit(tx)
+}
+
+// AddWithDependency inserts t and its blocking dependency in one transaction.
+// If the dependency edge cannot be recorded, the task row is not left claimable.
+func (s *SQLiteStore) AddWithDependency(ctx context.Context, t task.Task, dependsOnID string) error {
+	relType, err := validateRelation(t.ID, dependsOnID, task.RelationBlocks)
+	if err != nil {
+		return err
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("store: begin add with dependency: %w", err)
+	}
+	defer rollback(tx)
+
+	if err := s.insertTask(ctx, tx, t); err != nil {
+		return err
+	}
+	if err := s.insertEvent(ctx, tx, t.ID, task.EventAdded, t.Created, ""); err != nil {
+		return err
+	}
+	if _, err := getTask(ctx, tx, dependsOnID); err != nil {
+		return err
+	}
+	cycle, err := dependencyPathExists(ctx, tx, dependsOnID, t.ID)
+	if err != nil {
+		return err
+	}
+	if cycle {
+		return ErrDependencyCycle
+	}
+	created := s.nowString()
+	if err := s.insertRelation(ctx, tx, t.ID, dependsOnID, relType, created); err != nil {
+		return err
+	}
+	if err := s.recordRelationEvent(ctx, tx, t.ID, dependsOnID, relType, "", created); err != nil {
+		return err
+	}
+	return commit(tx)
+}
+
+func (s *SQLiteStore) insertTask(ctx context.Context, tx *sql.Tx, t task.Task) error {
 	ordinal, err := nextOrdinal(ctx, tx)
 	if err != nil {
 		return err
@@ -187,10 +236,7 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		}
 		return fmt.Errorf("store: add task %s: %w", t.ID, err)
 	}
-	if err := s.insertEvent(ctx, tx, t.ID, task.EventAdded, t.Created, ""); err != nil {
-		return err
-	}
-	return commit(tx)
+	return nil
 }
 
 // Update mutates one task. If fn returns false, no write occurs.

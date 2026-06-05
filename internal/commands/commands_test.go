@@ -916,12 +916,14 @@ func TestRunAddNormalPropagatesDependencyError(t *testing.T) {
 
 	stdout, stderr := &bytes.Buffer{}, &bytes.Buffer{}
 	d := testDepsWithWriters(stdout, stderr)
-	d.Service = app.NewService(&commandDependencyErrorStore{}, time.Now)
+	st := &commandDependencyErrorStore{}
+	d.Service = app.NewService(st, time.Now)
 
 	cmd := &cobra.Command{}
 	err := runAddNormal(cmd, d, task.AddOptions{Body: "normal"}, "dep", true)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "dependency boom")
+	require.Empty(t, st.tasks)
 }
 
 func TestRunAddNormalPropagatesResultWriteError(t *testing.T) {
@@ -1148,4 +1150,14 @@ func (s *commandDependencyErrorStore) Add(_ context.Context, t task.Task) error 
 
 func (s *commandDependencyErrorStore) AddDependency(context.Context, string, string) error {
 	return errors.New("dependency boom")
+}
+
+func (s *commandDependencyErrorStore) Delete(_ context.Context, id string) error {
+	for i, t := range s.tasks {
+		if t.ID == id {
+			s.tasks = append(s.tasks[:i], s.tasks[i+1:]...)
+			return nil
+		}
+	}
+	return app.ErrNotFound
 }

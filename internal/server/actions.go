@@ -77,6 +77,10 @@ func (s *Server) handleSetTask(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := s.svc.SetStatus(r.Context(), id, status, message); err != nil {
+		if errors.Is(err, task.ErrMissingCompletionNote) {
+			writeErr(w, http.StatusBadRequest, err)
+			return
+		}
 		writeResult(w, nil, err)
 		return
 	}

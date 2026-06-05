@@ -74,7 +74,7 @@ func newBenchStore(b *testing.B, n int) (*store.SQLiteStore, context.Context) {
 		ids = append(ids, id)
 	}
 	for i := 0; i < n-10; i++ {
-		require.NoError(b, svc.SetStatus(ctx, ids[i], task.StatusDone, ""))
+		require.NoError(b, svc.SetStatus(ctx, ids[i], task.StatusDone, "benchmark complete"))
 	}
 	return s, ctx
 }
@@ -112,7 +112,7 @@ func newBenchService(b *testing.B, n int) *app.Service {
 	}
 	// Mark all but the last 10 as done so the active head stays small.
 	for i := 0; i < n-10; i++ {
-		require.NoError(b, svc.SetStatus(ctx, ids[i], task.StatusDone, ""))
+		require.NoError(b, svc.SetStatus(ctx, ids[i], task.StatusDone, "benchmark complete"))
 	}
 	return svc
 }

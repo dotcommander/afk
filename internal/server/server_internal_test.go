@@ -64,9 +64,21 @@ func TestWriteResultErrorMapping(t *testing.T) {
 	writeResult(notFound, nil, app.ErrNotFound)
 	require.Equal(t, http.StatusNotFound, notFound.Code)
 
+	badRequest := httptest.NewRecorder()
+	writeResult(badRequest, nil, task.ErrInvalidStatus)
+	require.Equal(t, http.StatusBadRequest, badRequest.Code)
+
 	internal := httptest.NewRecorder()
 	writeResult(internal, nil, errors.New("boom"))
 	require.Equal(t, http.StatusInternalServerError, internal.Code)
+}
+
+func TestDashboardTouchdownSendsCompletionNote(t *testing.T) {
+	t.Parallel()
+
+	html := string(indexHTML)
+	require.NotContains(t, html, "doAction('done', {})")
+	require.Contains(t, html, "doAction('done', { note: 'completed from web UI' })")
 }
 
 func TestResolveIDMissing(t *testing.T) {

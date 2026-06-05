@@ -1381,7 +1381,7 @@ registerView('dossier', async (container, route) => {
 
   // done / failed — todo or doing
   if (t.status === 'todo' || t.status === 'doing') {
-    btnRow.appendChild(el('button', { class: 'push-btn btn-green', onclick: () => doAction('done', {}) }, txt('TOUCHDOWN')));
+    btnRow.appendChild(el('button', { class: 'push-btn btn-green', onclick: () => doAction('done', { note: 'completed from web UI' }) }, txt('TOUCHDOWN')));
     btnRow.appendChild(el('button', { class: 'push-btn btn-red',   onclick: () => doAction('failed', { reason: 'manual failure' }) }, txt('DECLARE ANOMALY')));
   }
   if (t.status !== 'deleted') {

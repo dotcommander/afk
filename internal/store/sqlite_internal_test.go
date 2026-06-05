@@ -285,6 +285,22 @@ func TestSQLiteStoreTriggerErrors(t *testing.T) {
 		require.Contains(t, err.Error(), "dependency blocked")
 	})
 
+	t.Run("add with dependency rolls back task on dependency insert error", func(t *testing.T) {
+		s, err := NewSQLite(ctx, Paths{SQLitePath: filepath.Join(t.TempDir(), "tasks.sqlite")})
+		require.NoError(t, err)
+		t.Cleanup(func() { require.NoError(t, s.Close()) })
+		require.NoError(t, s.Add(ctx, task.Task{ID: "prereq", Created: "2025-01-02T03:04:05Z", Status: task.StatusTodo, Body: "prereq"}))
+		_, err = s.db.ExecContext(ctx, `CREATE TRIGGER fail_dependency_insert BEFORE INSERT ON task_dependencies BEGIN SELECT RAISE(FAIL, 'dependency blocked'); END;`)
+		require.NoError(t, err)
+
+		err = s.AddWithDependency(ctx, task.Task{ID: "dependent", Created: "2025-01-02T03:04:06Z", Status: task.StatusTodo, Body: "dependent"}, "prereq")
+
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "dependency blocked")
+		_, err = s.Get(ctx, "dependent")
+		require.ErrorIs(t, err, ErrNotFound)
+	})
+
 	t.Run("attempt finish error", func(t *testing.T) {
 		s, err := NewSQLite(ctx, Paths{SQLitePath: filepath.Join(t.TempDir(), "tasks.sqlite")})
 		require.NoError(t, err)

@@ -65,6 +65,16 @@ func (s *SQLiteStore) AddRelation(ctx context.Context, taskID, relatedID string,
 	}
 
 	created := s.nowString()
+	if err := s.insertRelation(ctx, tx, taskID, relatedID, relType, created); err != nil {
+		return err
+	}
+	if err := s.recordRelationEvent(ctx, tx, taskID, relatedID, relType, prior, created); err != nil {
+		return err
+	}
+	return commit(tx)
+}
+
+func (s *SQLiteStore) insertRelation(ctx context.Context, tx *sql.Tx, taskID, relatedID string, relType task.RelationType, created string) error {
 	if _, err := tx.ExecContext(ctx, `
 INSERT INTO task_dependencies (task_id, depends_on_id, created, relation_type)
 VALUES (?, ?, ?, ?)
@@ -72,11 +82,7 @@ ON CONFLICT(task_id, depends_on_id) DO UPDATE SET relation_type = excluded.relat
 		taskID, relatedID, created, string(relType)); err != nil {
 		return fmt.Errorf("store: add relation %s -> %s: %w", taskID, relatedID, err)
 	}
-
-	if err := s.recordRelationEvent(ctx, tx, taskID, relatedID, relType, prior, created); err != nil {
-		return err
-	}
-	return commit(tx)
+	return nil
 }
 
 // validateRelation rejects empty/self relations and normalizes the relation
