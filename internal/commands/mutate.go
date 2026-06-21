@@ -19,13 +19,14 @@ func newSetCmd(d *Deps) *cobra.Command {
 	var noteFile string
 	var stage string
 	var force bool
+	var workerID string
 
 	cmd := &cobra.Command{
 		Use:   "set <id> <status> [note...]",
 		Short: "Set task status",
 		Args:  cobra.MinimumNArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runSet(cmd, args, d, &stage, noteFlag, noteFile, asJSON, summary, force)
+			return runSet(cmd, args, d, &stage, noteFlag, noteFile, asJSON, summary, force, workerID)
 		},
 	}
 	cmd.Flags().BoolVar(&asJSON, "json", false, "emit JSON output")
@@ -33,6 +34,7 @@ func newSetCmd(d *Deps) *cobra.Command {
 	cmd.Flags().StringVar(&noteFlag, "note", "", "status note text")
 	cmd.Flags().StringVar(&noteFile, "note-file", "", "read status note from file, or '-' for stdin")
 	cmd.Flags().StringVar(&stage, "stage", "", "set the free-form pipeline stage label (omit to leave unchanged)")
+	cmd.Flags().StringVar(&workerID, "worker", "", "worker id that owns the claim; fences a terminal set (done/failed) against a stale lease")
 	cmd.Flags().BoolVar(&force, "force", false, "allow done/failed without a completion note")
 	return cmd
 }
@@ -41,7 +43,7 @@ func newSetCmd(d *Deps) *cobra.Command {
 // the completion-note rule, apply the status (with optional stage), then emit
 // either JSON/summary or a plain confirmation line. Extracted from newSetCmd's
 // RunE closure to keep cognitive complexity within the linter threshold.
-func runSet(cmd *cobra.Command, args []string, d *Deps, stage *string, noteFlag, noteFile string, asJSON, summary, force bool) error {
+func runSet(cmd *cobra.Command, args []string, d *Deps, stage *string, noteFlag, noteFile string, asJSON, summary, force bool, workerID string) error {
 	status, ok := task.ParseStatus(args[1])
 	if !ok {
 		return fmt.Errorf("%w: %q", task.ErrInvalidStatus, args[1])
@@ -56,6 +58,9 @@ func runSet(cmd *cobra.Command, args []string, d *Deps, stage *string, noteFlag,
 	var stagePtr *string
 	if cmd.Flags().Changed("stage") {
 		stagePtr = stage
+	}
+	if workerID != "" && !force && (status == task.StatusDone || status == task.StatusFailed) {
+		return d.Service.SetStatusWithStageWorker(cmd.Context(), args[0], status, note, stagePtr, workerID)
 	}
 	if force {
 		err = d.Service.SetStatusWithStageForce(cmd.Context(), args[0], status, note, stagePtr)

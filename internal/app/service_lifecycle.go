@@ -35,24 +35,28 @@ func (s *Service) Fail(ctx context.Context, id, reason string) error {
 
 // SetStatus moves a task to status and records message as lifecycle context.
 func (s *Service) SetStatus(ctx context.Context, id string, status task.Status, message string) error {
-	return s.setStatus(ctx, id, status, message, nil, false)
+	return s.setStatus(ctx, id, status, message, nil, false, "")
 }
 
 // SetStatusWithStage moves a task to status and, when stage is non-nil, also
 // updates the free-form pipeline stage in the same atomic Update. A nil stage
 // leaves the existing stage unchanged.
 func (s *Service) SetStatusWithStage(ctx context.Context, id string, status task.Status, message string, stage *string) error {
-	return s.setStatus(ctx, id, status, message, stage, false)
+	return s.setStatus(ctx, id, status, message, stage, false, "")
+}
+
+func (s *Service) SetStatusWithStageWorker(ctx context.Context, id string, status task.Status, message string, stage *string, workerID string) error {
+	return s.setStatus(ctx, id, status, message, stage, false, workerID)
 }
 
 // SetStatusWithStageForce is the explicit escape hatch for terminal
 // transitions without completion evidence. Public callers should prefer
 // SetStatusWithStage; CLI --force is the intended use for this method.
 func (s *Service) SetStatusWithStageForce(ctx context.Context, id string, status task.Status, message string, stage *string) error {
-	return s.setStatus(ctx, id, status, message, stage, true)
+	return s.setStatus(ctx, id, status, message, stage, true, "")
 }
 
-func (s *Service) setStatus(ctx context.Context, id string, status task.Status, message string, stage *string, force bool) error {
+func (s *Service) setStatus(ctx context.Context, id string, status task.Status, message string, stage *string, force bool, workerID string) error {
 	status, ok := task.ParseStatus(string(status))
 	if !ok {
 		return task.ErrInvalidStatus
@@ -61,6 +65,16 @@ func (s *Service) setStatus(ctx context.Context, id string, status task.Status, 
 		return task.ErrMissingCompletionNote
 	}
 	event := eventForStatus(status)
+	if workerID != "" {
+		return s.store.UpdateFenced(ctx, id, workerID, event, message, func(t *task.Task) bool {
+			changed := t.SetStatus(status, s.now(), message)
+			if stage != nil {
+				t.Stage = *stage
+				changed = true
+			}
+			return changed
+		})
+	}
 	return s.store.Update(ctx, id, event, message, func(t *task.Task) bool {
 		changed := t.SetStatus(status, s.now(), message)
 		if stage != nil {

@@ -20,6 +20,7 @@ type Store interface {
 	ExplainNotReady(ctx context.Context) (store.NotReadyExplanation, error)
 	Add(ctx context.Context, t task.Task) error
 	Update(ctx context.Context, id string, event task.EventType, message string, fn func(*task.Task) bool) error
+	UpdateFenced(ctx context.Context, id string, expectWorker string, event task.EventType, message string, fn func(*task.Task) bool) error
 	Delete(ctx context.Context, id string) error
 	// Prune physically removes matching rows. Public callers should prefer
 	// status=deleted so task history remains inspectable.

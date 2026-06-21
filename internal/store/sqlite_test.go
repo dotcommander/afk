@@ -567,6 +567,43 @@ func TestSQLiteStoreClaimNextForWorkerRecordsAttemptOwner(t *testing.T) {
 	require.Equal(t, "codex", attempts[0].Agent)
 }
 
+func TestUpdateFencedRejectsStaleWorker(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	s := newStore(t)
+	now := time.Date(2025, 1, 2, 3, 4, 5, 0, time.UTC)
+
+	require.NoError(t, s.Add(ctx, task.Task{ID: "fenced-1", Status: task.StatusTodo, Body: "task"}))
+	_, err := s.ClaimNextForWorker(ctx, now, time.Time{}, "A", "agent")
+	require.NoError(t, err)
+	markDone := func(tk *task.Task) bool {
+		return tk.MarkDone(now.Add(time.Minute))
+	}
+	require.ErrorIs(t, s.UpdateFenced(ctx, "fenced-1", "B", task.EventDone, "wrong owner", markDone), store.ErrWorkerMismatch)
+	require.NoError(t, s.UpdateFenced(ctx, "fenced-1", "A", task.EventDone, "correct owner", markDone))
+
+	taskDone, err := s.Get(ctx, "fenced-1")
+	require.NoError(t, err)
+	require.Equal(t, task.StatusDone, taskDone.Status)
+
+	require.NoError(t, s.Add(ctx, task.Task{ID: "fenced-2", Status: task.StatusTodo, Body: "task"}))
+	_, err = s.ClaimNextForWorker(ctx, now.Add(time.Minute), time.Time{}, "A", "agent")
+	require.NoError(t, err)
+	require.NoError(t, s.Update(ctx, "fenced-2", task.EventRequeued, "stale", func(tk *task.Task) bool {
+		tk.Status = task.StatusTodo
+		return true
+	}))
+	require.ErrorIs(t, s.UpdateFenced(ctx, "fenced-2", "A", task.EventDone, "stale owner", markDone), store.ErrWorkerMismatch)
+
+	require.NoError(t, s.Add(ctx, task.Task{ID: "fenced-3", Status: task.StatusTodo, Body: "task"}))
+	_, err = s.ClaimNextForWorker(ctx, now.Add(2*time.Minute), time.Time{}, "A", "agent")
+	require.NoError(t, err)
+	require.NoError(t, s.UpdateFenced(ctx, "fenced-3", "", task.EventDone, "no fence", markDone))
+	thirdTask, err := s.Get(ctx, "fenced-3")
+	require.NoError(t, err)
+	require.Equal(t, task.StatusDone, thirdTask.Status)
+}
+
 func TestSQLiteStoreHeartbeat(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()

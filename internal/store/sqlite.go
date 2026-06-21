@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"net/url"
 	"os"
@@ -241,6 +242,10 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 
 // Update mutates one task. If fn returns false, no write occurs.
 func (s *SQLiteStore) Update(ctx context.Context, id string, event task.EventType, message string, fn func(*task.Task) bool) error {
+	return s.updateImpl(ctx, id, "", event, message, fn)
+}
+
+func (s *SQLiteStore) updateImpl(ctx context.Context, id string, expectWorker string, event task.EventType, message string, fn func(*task.Task) bool) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("store: begin update: %w", err)
@@ -250,6 +255,19 @@ func (s *SQLiteStore) Update(ctx context.Context, id string, event task.EventTyp
 	t, err := getTask(ctx, tx, id)
 	if err != nil {
 		return err
+	}
+	if expectWorker != "" {
+		if t.Status != task.StatusDoing {
+			return ErrWorkerMismatch
+		}
+		var owner string
+		err := tx.QueryRowContext(ctx, `SELECT worker_id FROM task_attempts WHERE task_id = ? AND finished = '' ORDER BY id DESC LIMIT 1`, id).Scan(&owner)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("store: fence owner lookup %s: %w", id, err)
+		}
+		if owner != expectWorker {
+			return ErrWorkerMismatch
+		}
 	}
 	if !fn(&t) {
 		return nil
@@ -271,6 +289,10 @@ WHERE id = ?`,
 		return err
 	}
 	return commit(tx)
+}
+
+func (s *SQLiteStore) UpdateFenced(ctx context.Context, id string, expectWorker string, event task.EventType, message string, fn func(*task.Task) bool) error {
+	return s.updateImpl(ctx, id, expectWorker, event, message, fn)
 }
 
 // Delete removes the task with id.
