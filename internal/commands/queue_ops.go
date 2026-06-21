@@ -80,14 +80,7 @@ func runTakeDryRun(cmd *cobra.Command, d *Deps, opts takeDryRunOptions) error {
 	if opts.limit > 0 && len(ready) > opts.limit {
 		ready = ready[:opts.limit]
 	}
-	bodyLimit := output.DefaultListBodyRunes
-	if opts.full {
-		bodyLimit = 0
-	}
-	bodyHint := ""
-	if !opts.full {
-		bodyHint = "use --full to see the complete task body"
-	}
+	bodyLimit, bodyHint := takePreviewBodyPolicy(opts.full)
 	if opts.envelope || opts.summary {
 		snapshot, err := d.Service.Status(cmd.Context())
 		if err != nil {
@@ -96,6 +89,13 @@ func runTakeDryRun(cmd *cobra.Command, d *Deps, opts takeDryRunOptions) error {
 		return output.WriteTakePreview(d.Stdout, ready, snapshot.Counts, readyCount, bodyLimit, bodyHint)
 	}
 	return output.WriteListWithBodyLimitHint(d.Stdout, ready, opts.asJSON, bodyLimit, bodyHint)
+}
+
+func takePreviewBodyPolicy(full bool) (int, string) {
+	if full {
+		return 0, ""
+	}
+	return output.DefaultListBodyRunes, "use --full to see the complete task body"
 }
 
 func runTakeClaim(cmd *cobra.Command, d *Deps, leaseDuration time.Duration, workerID string, summary, full, envelope bool) error {
@@ -160,12 +160,9 @@ func newRequeueStaleCmd(d *Deps) *cobra.Command {
 			if err := warnDeprecated(d.Stderr, "afk requeue-stale", "afk task <id>, afk set <id> failed --note <reason>, then afk add <replacement task>"); err != nil {
 				return err
 			}
-			dur, err := time.ParseDuration(olderThan)
+			dur, err := parseRequiredDuration("older-than", olderThan)
 			if err != nil {
-				return fmt.Errorf("parse older-than: %w", err)
-			}
-			if dur <= 0 {
-				return fmt.Errorf("parse older-than: duration must be positive")
+				return err
 			}
 			tasks, err := d.Service.RequeueStale(cmd.Context(), dur)
 			if err != nil {
@@ -199,12 +196,9 @@ interval, for example a cron entry:
 
 Prints the id of each requeued task to stdout, one per line.`),
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			dur, err := time.ParseDuration(olderThan)
+			dur, err := parseRequiredDuration("older-than", olderThan)
 			if err != nil {
-				return fmt.Errorf("parse older-than: %w", err)
-			}
-			if dur <= 0 {
-				return fmt.Errorf("parse older-than: duration must be positive")
+				return err
 			}
 			tasks, err := d.Service.RequeueStale(cmd.Context(), dur)
 			if err != nil {
@@ -226,6 +220,10 @@ func parseOptionalDuration(name, value string) (time.Duration, error) {
 	if value == "" {
 		return 0, nil
 	}
+	return parseRequiredDuration(name, value)
+}
+
+func parseRequiredDuration(name, value string) (time.Duration, error) {
 	dur, err := time.ParseDuration(value)
 	if err != nil {
 		return 0, fmt.Errorf("parse %s: %w", name, err)
