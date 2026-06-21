@@ -165,6 +165,17 @@ VALUES (?, ?, ?, ?, ?, ?, ?)`, t.ID, at, at, string(t.Status), message, "", "");
 				return fmt.Errorf("store: synthesize attempt %s: %w", t.ID, err)
 			}
 		}
+	case task.EventRequeued:
+		if _, err := tx.ExecContext(ctx, `
+UPDATE task_attempts SET finished = ?, status = ?, error = ?
+WHERE id = (
+	SELECT id FROM task_attempts
+	WHERE task_id = ? AND finished = ''
+	ORDER BY id DESC
+	LIMIT 1
+)`, at, string(t.Status), message, t.ID); err != nil {
+			return fmt.Errorf("store: requeue attempt %s: %w", t.ID, err)
+		}
 	}
 	return nil
 }
