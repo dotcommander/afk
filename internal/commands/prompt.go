@@ -40,15 +40,15 @@ func newPromptCmd(d *Deps) *cobra.Command {
 				cmd.SilenceUsage = true
 				return fmt.Errorf("--task and --discover are mutually exclusive")
 			}
-			body, done, err := promptBody(cmd, d, outputPath, taskID, discover, discoverFull)
-			if err != nil || done {
+			result, err := promptBody(cmd, d, outputPath, taskID, discover, discoverFull)
+			if err != nil || result.alreadyWritten {
 				return err
 			}
 			if outputPath == "" {
-				_, err := fmt.Fprint(d.Stdout, body)
+				_, err := fmt.Fprint(d.Stdout, result.body)
 				return err
 			}
-			return os.WriteFile(outputPath, []byte(body), 0o644)
+			return os.WriteFile(outputPath, []byte(result.body), 0o644)
 		},
 	}
 	cmd.Flags().StringVar(&outputPath, "output", "", "write prompt Markdown to path instead of stdout")
@@ -58,33 +58,38 @@ func newPromptCmd(d *Deps) *cobra.Command {
 	return cmd
 }
 
-// promptBody resolves the prompt Markdown for the requested mode. When done is
-// true the body was already written to d.Stdout (discover with no --output) and
-// the caller must not emit it again.
-func promptBody(cmd *cobra.Command, d *Deps, outputPath, taskID string, discover, discoverFull bool) (body string, done bool, err error) {
+type promptBodyResult struct {
+	body           string
+	alreadyWritten bool
+}
+
+// promptBody resolves the prompt Markdown for the requested mode. Discover
+// without --output writes directly to d.Stdout; alreadyWritten tells the caller
+// not to emit the body again.
+func promptBody(cmd *cobra.Command, d *Deps, outputPath, taskID string, discover, discoverFull bool) (promptBodyResult, error) {
 	const exe = "afk"
 	switch {
 	case discover:
 		if outputPath == "" {
-			return "", true, writeDiscoverPrompt(d, discoverFull)
+			return promptBodyResult{alreadyWritten: true}, writeDiscoverPrompt(d, discoverFull)
 		}
 		var stdout strings.Builder
 		promptDeps := *d
 		promptDeps.Stdout = &stdout
 		if err := writeDiscoverPrompt(&promptDeps, discoverFull); err != nil {
-			return "", false, err
+			return promptBodyResult{}, err
 		}
-		return stdout.String(), false, nil
+		return promptBodyResult{body: stdout.String()}, nil
 	case taskID != "":
 		data, err := d.Service.Explain(cmd.Context(), taskID)
 		if err != nil {
-			return "", false, err
+			return promptBodyResult{}, err
 		}
-		return prompt.Task(exe, data.Task, data.Events, data.Attempts, data.Gates), false, nil
+		return promptBodyResult{body: prompt.Task(exe, data.Task, data.Events, data.Attempts, data.Gates)}, nil
 	default:
-		return prompt.Loop(prompt.LoopOptions{
+		return promptBodyResult{body: prompt.Loop(prompt.LoopOptions{
 			ExecutablePath: exe,
 			SQLitePath:     d.QueuePaths.SQLitePath,
-		}), false, nil
+		})}, nil
 	}
 }

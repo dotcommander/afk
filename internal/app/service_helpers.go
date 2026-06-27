@@ -75,7 +75,16 @@ func validateStatusFilter(status string) error {
 }
 
 func taskMatches(t task.Task, query string) bool {
-	fields := []string{
+	for _, field := range taskSearchFields(t) {
+		if strings.Contains(strings.ToLower(field), query) {
+			return true
+		}
+	}
+	return false
+}
+
+func taskSearchFields(t task.Task) []string {
+	return []string{
 		t.ID,
 		string(task.NormalizeStatus(t.Status)),
 		t.Body,
@@ -88,12 +97,6 @@ func taskMatches(t task.Task, query string) bool {
 		t.Error,
 		strings.Join(t.Tags, " "),
 	}
-	for _, field := range fields {
-		if strings.Contains(strings.ToLower(field), query) {
-			return true
-		}
-	}
-	return false
 }
 
 func formatTime(now time.Time) string {

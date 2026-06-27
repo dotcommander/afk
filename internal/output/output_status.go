@@ -92,6 +92,14 @@ type statusDoc struct {
 	Blocked *[]blockedTaskJSON `json:"blocked,omitempty"`
 }
 
+type statusData struct {
+	tally   map[task.Status]int
+	todo    []task.Task
+	doing   []task.Task
+	blocked []task.BlockedTask
+	now     time.Time
+}
+
 type takeSummaryQueue struct {
 	QueueCounts
 	ReadyRemaining int `json:"ready_remaining"`
@@ -114,10 +122,17 @@ const unleasedStaleAfter = time.Hour
 // WriteStatus renders a queue snapshot: per-status tallies plus todo/doing task
 // lists, with optional dependency blocker details.
 func WriteStatus(w io.Writer, tally map[task.Status]int, todo, doing []task.Task, blocked []task.BlockedTask, asJSON bool, now time.Time) error {
-	if asJSON {
-		return writeStatusJSON(w, tally, todo, doing, blocked, now)
+	data := statusData{
+		tally:   tally,
+		todo:    todo,
+		doing:   doing,
+		blocked: blocked,
+		now:     now,
 	}
-	return writeStatusText(w, tally, todo, doing, blocked, now)
+	if asJSON {
+		return writeStatusJSON(w, data)
+	}
+	return writeStatusText(w, data)
 }
 
 // WriteTakeSummary renders a claimed task with queue counts after the claim.
@@ -176,34 +191,34 @@ func blockedListJSON(blocked []task.BlockedTask) []blockedTaskJSON {
 	return out
 }
 
-func writeStatusJSON(w io.Writer, tally map[task.Status]int, todo, doing []task.Task, blocked []task.BlockedTask, now time.Time) error {
+func writeStatusJSON(w io.Writer, data statusData) error {
 	var blockedDoc *[]blockedTaskJSON
-	if blocked != nil {
-		value := blockedListJSON(blocked)
+	if data.blocked != nil {
+		value := blockedListJSON(data.blocked)
 		blockedDoc = &value
 	}
 	return WriteJSONLine(w, statusDoc{
-		QueueCounts: NewQueueCounts(tally),
+		QueueCounts: NewQueueCounts(data.tally),
 		Tasks: statusTasksJSON{
-			Todo:  statusListJSON(todo),
-			Doing: statusDoingListJSON(doing, now),
+			Todo:  statusListJSON(data.todo),
+			Doing: statusDoingListJSON(data.doing, data.now),
 		},
 		Blocked: blockedDoc,
 	}, "status")
 }
 
-func writeStatusText(w io.Writer, tally map[task.Status]int, todo, doing []task.Task, blocked []task.BlockedTask, now time.Time) error {
-	if err := WriteCount(w, tally); err != nil {
+func writeStatusText(w io.Writer, data statusData) error {
+	if err := WriteCount(w, data.tally); err != nil {
 		return err
 	}
-	if err := writeStatusSection(w, "Todo:", todo, now, false); err != nil {
+	if err := writeStatusSection(w, "Todo:", data.todo, data.now, false); err != nil {
 		return err
 	}
-	if err := writeStatusSection(w, "Doing:", doing, now, true); err != nil {
+	if err := writeStatusSection(w, "Doing:", data.doing, data.now, true); err != nil {
 		return err
 	}
-	if blocked != nil {
-		return writeBlockedSection(w, blocked)
+	if data.blocked != nil {
+		return writeBlockedSection(w, data.blocked)
 	}
 	return nil
 }

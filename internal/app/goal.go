@@ -38,7 +38,7 @@ var (
 )
 
 // GoalConfig holds operator-controlled settings for the afk goal workflow.
-// Loaded from ~/.config/afk/goal.yaml; defaults written on first run (Phase B).
+// Loaded from ~/.config/afk/goal.yaml; defaults are written on first run.
 type GoalConfig struct {
 	SetupCommand        string        `yaml:"setup_command"`
 	AuditCommand        string        `yaml:"audit_command"`

@@ -14,6 +14,18 @@ type SnapshotTaskDetail struct {
 	Attempts []task.Attempt
 }
 
+// SnapshotData is the complete payload rendered by WriteSnapshot.
+type SnapshotData struct {
+	Label   string
+	Created string
+	Counts  map[task.Status]int
+	Ready   []task.Task
+	Todo    []task.Task
+	Doing   []task.Task
+	Detail  *SnapshotTaskDetail
+	Now     time.Time
+}
+
 type snapshotCounts struct {
 	QueueCounts
 	Ready int `json:"ready"`
@@ -42,25 +54,25 @@ type snapshotDoc struct {
 }
 
 // WriteSnapshot renders a read-only queue evidence snapshot.
-func WriteSnapshot(w io.Writer, label, created string, tally map[task.Status]int, ready, todo, doing []task.Task, detail *SnapshotTaskDetail, now time.Time) error {
+func WriteSnapshot(w io.Writer, data SnapshotData) error {
 	doc := snapshotDoc{
-		Label:   label,
-		Created: created,
+		Label:   data.Label,
+		Created: data.Created,
 		Counts: snapshotCounts{
-			QueueCounts: NewQueueCounts(tally),
-			Ready:       len(ready),
+			QueueCounts: NewQueueCounts(data.Counts),
+			Ready:       len(data.Ready),
 		},
 		Tasks: snapshotTasks{
-			Ready: statusListJSON(ready),
-			Todo:  statusListJSON(todo),
-			Doing: statusDoingListJSON(doing, now),
+			Ready: statusListJSON(data.Ready),
+			Todo:  statusListJSON(data.Todo),
+			Doing: statusDoingListJSON(data.Doing, data.Now),
 		},
 	}
-	if detail != nil {
-		events, eventsOmitted := limitEvents(detail.Events)
-		attempts, attemptsOmitted := limitAttempts(detail.Attempts)
+	if data.Detail != nil {
+		events, eventsOmitted := limitEvents(data.Detail.Events)
+		attempts, attemptsOmitted := limitAttempts(data.Detail.Attempts)
 		doc.Task = &snapshotTaskDetail{
-			Task:            boundTask(detail.Task, maxDetailBodyRunes),
+			Task:            boundTask(data.Detail.Task, maxDetailBodyRunes),
 			Events:          boundEvents(events),
 			Attempts:        boundAttempts(attempts),
 			EventsOmitted:   eventsOmitted,

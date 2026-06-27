@@ -9,6 +9,13 @@ import (
 	"github.com/dotcommander/afk/internal/task"
 )
 
+type relationEdge struct {
+	taskID    string
+	relatedID string
+	relType   task.RelationType
+	created   string
+}
+
 // AddDependency records that taskID is blocked by dependsOnID. It is a thin
 // wrapper over AddRelation with the blocks relation, keeping a single
 // insert/cycle/event code path.
@@ -65,22 +72,28 @@ func (s *SQLiteStore) AddRelation(ctx context.Context, taskID, relatedID string,
 	}
 
 	created := s.nowString()
-	if err := s.insertRelation(ctx, tx, taskID, relatedID, relType, created); err != nil {
+	edge := relationEdge{
+		taskID:    taskID,
+		relatedID: relatedID,
+		relType:   relType,
+		created:   created,
+	}
+	if err := s.insertRelation(ctx, tx, edge); err != nil {
 		return err
 	}
-	if err := s.recordRelationEvent(ctx, tx, taskID, relatedID, relType, prior, created); err != nil {
+	if err := s.recordRelationEvent(ctx, tx, edge, prior); err != nil {
 		return err
 	}
 	return commit(tx)
 }
 
-func (s *SQLiteStore) insertRelation(ctx context.Context, tx *sql.Tx, taskID, relatedID string, relType task.RelationType, created string) error {
+func (s *SQLiteStore) insertRelation(ctx context.Context, tx *sql.Tx, edge relationEdge) error {
 	if _, err := tx.ExecContext(ctx, `
 INSERT INTO task_dependencies (task_id, depends_on_id, created, relation_type)
 VALUES (?, ?, ?, ?)
 ON CONFLICT(task_id, depends_on_id) DO UPDATE SET relation_type = excluded.relation_type`,
-		taskID, relatedID, created, string(relType)); err != nil {
-		return fmt.Errorf("store: add relation %s -> %s: %w", taskID, relatedID, err)
+		edge.taskID, edge.relatedID, edge.created, string(edge.relType)); err != nil {
+		return fmt.Errorf("store: add relation %s -> %s: %w", edge.taskID, edge.relatedID, err)
 	}
 	return nil
 }
@@ -100,15 +113,15 @@ func validateRelation(taskID, relatedID string, relType task.RelationType) (task
 // recordRelationEvent emits the appropriate edge event, preserving the legacy
 // dependency_added event for blocks edges while other types emit relation_added.
 // A re-add that does not change the relation type is a no-op: emit no event.
-func (s *SQLiteStore) recordRelationEvent(ctx context.Context, tx *sql.Tx, taskID, relatedID string, relType task.RelationType, prior, created string) error {
-	if prior == string(relType) {
+func (s *SQLiteStore) recordRelationEvent(ctx context.Context, tx *sql.Tx, edge relationEdge, prior string) error {
+	if prior == string(edge.relType) {
 		return nil
 	}
-	if relType == task.RelationBlocks {
-		return s.insertEvent(ctx, tx, taskID, task.EventDependencyAdded, created, relatedID)
+	if edge.relType == task.RelationBlocks {
+		return s.insertEvent(ctx, tx, edge.taskID, task.EventDependencyAdded, edge.created, edge.relatedID)
 	}
-	message := fmt.Sprintf("%s %s", relType, relatedID)
-	return s.insertEvent(ctx, tx, taskID, task.EventRelationAdded, created, message)
+	message := fmt.Sprintf("%s %s", edge.relType, edge.relatedID)
+	return s.insertEvent(ctx, tx, edge.taskID, task.EventRelationAdded, edge.created, message)
 }
 
 // Dependencies returns the typed relation edges declared on taskID.

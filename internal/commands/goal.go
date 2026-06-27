@@ -34,7 +34,13 @@ func newGoalCmd(d *Deps) *cobra.Command {
 		Short: "Compile an objective into an approved task contract and queue it",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			cfg := goalConfigWithOverrides(cmd, setupCommand, auditCommand, maxTokens, maxIters, maxDuration)
+			cfg := goalConfigWithOverrides(cmd, goalOverrideFlags{
+				setupCommand: setupCommand,
+				auditCommand: auditCommand,
+				maxTokens:    maxTokens,
+				maxIters:     maxIters,
+				maxDuration:  maxDuration,
+			})
 			return runGoalCmd(cmd, d, args[0], cfg, dryRun, asJSON, cwd)
 		},
 	}
@@ -50,24 +56,32 @@ func newGoalCmd(d *Deps) *cobra.Command {
 	return cmd
 }
 
-// goalConfigWithOverrides loads goal.yaml and applies the Decision 8 flag
-// overrides, mirroring loop.go's flag.Changed pattern.
-func goalConfigWithOverrides(cmd *cobra.Command, setupCommand, auditCommand string, maxTokens, maxIters int, maxDuration time.Duration) app.GoalConfig {
+type goalOverrideFlags struct {
+	setupCommand string
+	auditCommand string
+	maxTokens    int
+	maxIters     int
+	maxDuration  time.Duration
+}
+
+// goalConfigWithOverrides loads goal.yaml and applies only explicitly supplied
+// flag overrides, mirroring loop.go's flag.Changed pattern.
+func goalConfigWithOverrides(cmd *cobra.Command, overrides goalOverrideFlags) app.GoalConfig {
 	cfg := app.LoadGoalConfig()
 	if cmd.Flags().Changed("setup-command") {
-		cfg.SetupCommand = setupCommand
+		cfg.SetupCommand = overrides.setupCommand
 	}
 	if cmd.Flags().Changed("audit-command") {
-		cfg.AuditCommand = auditCommand
+		cfg.AuditCommand = overrides.auditCommand
 	}
 	if cmd.Flags().Changed("max-tokens") {
-		cfg.MaxTokens = maxTokens
+		cfg.MaxTokens = overrides.maxTokens
 	}
 	if cmd.Flags().Changed("max-iterations") {
-		cfg.MaxIterations = maxIters
+		cfg.MaxIterations = overrides.maxIters
 	}
 	if cmd.Flags().Changed("max-duration") {
-		cfg.MaxDuration = maxDuration
+		cfg.MaxDuration = overrides.maxDuration
 	}
 	return cfg
 }

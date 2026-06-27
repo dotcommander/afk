@@ -1,10 +1,9 @@
 package app
 
-// Independent completion auditor (Decision 4 / Phase E). The auditor is a
-// separate agent invocation from the worker: it inspects real artifacts against
-// the goal's recorded objective and emits a terminal <approved/>/<disapproved/>
-// marker. Disapproval re-queues the task. Extracted from goal.go to keep both
-// files under the 300-line tripwire.
+// Independent completion auditor. The auditor is a separate agent invocation
+// from the worker: it inspects real artifacts against the goal's recorded
+// objective and emits a terminal <approved/>/<disapproved/> marker.
+// Disapproval re-queues the task.
 
 import (
 	"context"

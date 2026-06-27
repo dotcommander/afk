@@ -59,7 +59,16 @@ func writeSnapshot(cmd *cobra.Command, d *Deps, w io.Writer, label, taskID strin
 		}
 	}
 	now := d.Now().UTC()
-	return output.WriteSnapshot(w, label, now.Format(time.RFC3339), snapshot.Counts, ready, snapshot.Todo, snapshot.Doing, detail, now)
+	return output.WriteSnapshot(w, output.SnapshotData{
+		Label:   label,
+		Created: now.Format(time.RFC3339),
+		Counts:  snapshot.Counts,
+		Ready:   ready,
+		Todo:    snapshot.Todo,
+		Doing:   snapshot.Doing,
+		Detail:  detail,
+		Now:     now,
+	})
 }
 
 func snapshotWriter(stdout io.Writer, path string) (io.Writer, func() error, error) {

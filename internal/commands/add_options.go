@@ -25,12 +25,6 @@ func buildAddCommandOptions(input addCommandInput) (task.AddOptions, string, err
 	if source == "" {
 		source = "cli"
 	}
-	resourceKey := input.resourceKey
-	if strings.EqualFold(strings.TrimSpace(resourceKey), "none") {
-		resourceKey = ""
-	} else if resourceKey == "" {
-		resourceKey = defaults.ResourceKey
-	}
 	return task.AddOptions{
 		Body:        strings.Join(input.args, " "),
 		Priority:    task.Priority(input.priority),
@@ -39,7 +33,7 @@ func buildAddCommandOptions(input addCommandInput) (task.AddOptions, string, err
 		Source:      source,
 		Agent:       input.agent,
 		GroupID:     input.groupID,
-		ResourceKey: resourceKey,
+		ResourceKey: normalizeResourceKey(input.resourceKey, defaults.ResourceKey),
 		Stage:       input.stage,
 	}, dependsOnID, nil
 }
@@ -67,4 +61,14 @@ func normalizeBlockedBy(blockedBy string) string {
 		return ""
 	}
 	return blockedBy
+}
+
+func normalizeResourceKey(resourceKey, defaultResourceKey string) string {
+	if strings.EqualFold(strings.TrimSpace(resourceKey), "none") {
+		return ""
+	}
+	if resourceKey == "" {
+		return defaultResourceKey
+	}
+	return resourceKey
 }

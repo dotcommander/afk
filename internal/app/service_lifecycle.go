@@ -67,22 +67,21 @@ func (s *Service) setStatus(ctx context.Context, id string, status task.Status, 
 	event := eventForStatus(status)
 	if workerID != "" {
 		return s.store.UpdateFenced(ctx, id, workerID, event, message, func(t *task.Task) bool {
-			changed := t.SetStatus(status, s.now(), message)
-			if stage != nil {
-				t.Stage = *stage
-				changed = true
-			}
-			return changed
+			return s.applyStatusAndStage(t, status, message, stage)
 		})
 	}
 	return s.store.Update(ctx, id, event, message, func(t *task.Task) bool {
-		changed := t.SetStatus(status, s.now(), message)
-		if stage != nil {
-			t.Stage = *stage
-			changed = true
-		}
-		return changed
+		return s.applyStatusAndStage(t, status, message, stage)
 	})
+}
+
+func (s *Service) applyStatusAndStage(t *task.Task, status task.Status, message string, stage *string) bool {
+	changed := t.SetStatus(status, s.now(), message)
+	if stage != nil {
+		t.Stage = *stage
+		changed = true
+	}
+	return changed
 }
 
 func isTerminalStatus(status task.Status) bool {

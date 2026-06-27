@@ -16,7 +16,7 @@ import (
 )
 
 // maxObjectiveLen caps the free-text objective. Objectives longer than this are
-// rejected before rendering (Decision 2 / Error Model).
+// rejected before prompt rendering.
 const maxObjectiveLen = 4000
 
 // runSetupAgent is the exec seam for the setup agent. It defaults to runAgent

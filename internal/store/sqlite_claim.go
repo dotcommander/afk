@@ -143,30 +143,35 @@ ORDER BY ordinal, rowid`, string(task.StatusDoing), nowText, cutoff)
 	}
 	requeued := make([]task.Task, 0, len(stale))
 	for _, t := range stale {
-		prior, ok, err := s.requeueIfStillStale(ctx, t.ID, cutoff, nowText)
+		result, err := s.requeueIfStillStale(ctx, t.ID, cutoff, nowText)
 		if err != nil {
 			return nil, err
 		}
-		if ok {
-			requeued = append(requeued, prior)
+		if result.requeued {
+			requeued = append(requeued, result.prior)
 		}
 	}
 	return requeued, nil
 }
 
-func (s *SQLiteStore) requeueIfStillStale(ctx context.Context, id, cutoff, nowText string) (task.Task, bool, error) {
+type staleRequeueResult struct {
+	prior    task.Task
+	requeued bool
+}
+
+func (s *SQLiteStore) requeueIfStillStale(ctx context.Context, id, cutoff, nowText string) (staleRequeueResult, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		return task.Task{}, false, fmt.Errorf("store: begin requeue stale: %w", err)
+		return staleRequeueResult{}, fmt.Errorf("store: begin requeue stale: %w", err)
 	}
 	defer rollback(tx)
 
 	t, err := getTask(ctx, tx, id)
 	if err != nil {
-		return task.Task{}, false, err
+		return staleRequeueResult{}, err
 	}
 	if !taskStillStale(t, cutoff, nowText) {
-		return task.Task{}, false, nil
+		return staleRequeueResult{}, nil
 	}
 	prior := t
 	t.Reset()
@@ -177,19 +182,19 @@ SET created = ?, status = ?, body = ?, started = ?, lease_expires = ?, finished 
 WHERE id = ?`,
 		t.Created, string(t.Status), t.Body, t.Started, t.LeaseExpires, t.Finished, t.Error,
 		t.Priority, encodeTags(t.Tags), t.CWD, t.Source, t.Agent, t.GroupID, t.ResourceKey, t.Stage, t.ID); err != nil {
-		return task.Task{}, false, fmt.Errorf("store: requeue stale task %s: %w", id, err)
+		return staleRequeueResult{}, fmt.Errorf("store: requeue stale task %s: %w", id, err)
 	}
 	at := s.eventTime(t)
 	if err := s.insertEvent(ctx, tx, id, task.EventRequeued, at, "stale"); err != nil {
-		return task.Task{}, false, err
+		return staleRequeueResult{}, err
 	}
 	if err := updateAttemptForEvent(ctx, tx, t, task.EventRequeued, at, "stale"); err != nil {
-		return task.Task{}, false, err
+		return staleRequeueResult{}, err
 	}
 	if err := commit(tx); err != nil {
-		return task.Task{}, false, err
+		return staleRequeueResult{}, err
 	}
-	return prior, true, nil
+	return staleRequeueResult{prior: prior, requeued: true}, nil
 }
 
 func taskStillStale(t task.Task, cutoff, nowText string) bool {

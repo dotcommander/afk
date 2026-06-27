@@ -155,11 +155,11 @@ func (s *Service) RunLoop(
 		}
 
 		// --- Classify result ---
-		status, errText, failed, classifyErr := s.classifyRun(ctx, t.ID, runErr)
+		classification, classifyErr := s.classifyRun(ctx, t.ID, runErr)
 		if classifyErr != nil {
 			return classifyErr
 		}
-		if failed {
+		if classification.failed {
 			consecutiveFailures++
 		} else {
 			consecutiveFailures = 0
@@ -169,8 +169,8 @@ func (s *Service) RunLoop(
 
 		r := LoopResult{
 			TaskID:   t.ID,
-			Status:   status,
-			Error:    errText,
+			Status:   classification.status,
+			Error:    classification.errText,
 			Attempt:  attempt,
 			Duration: time.Since(start),
 		}
@@ -249,27 +249,32 @@ func (s *Service) startHeartbeat(ctx context.Context, cfg LoopConfig, taskID, wo
 	return hbCancel
 }
 
-// classifyRun records the task's terminal state for this attempt and returns
-// the loop-result status string, error text, and whether the attempt failed
-// (failed=true means it should count toward the consecutive-failure breaker).
-// A non-nil error is fatal to the loop (store write failed).
-func (s *Service) classifyRun(ctx context.Context, taskID string, runErr error) (status, errText string, failed bool, err error) {
+type runClassification struct {
+	status  string
+	errText string
+	failed  bool
+}
+
+// classifyRun records the task's terminal state for this attempt. failed=true
+// means it should count toward the consecutive-failure breaker. A non-nil
+// error is fatal to the loop (store write failed).
+func (s *Service) classifyRun(ctx context.Context, taskID string, runErr error) (runClassification, error) {
 	switch {
 	case runErr == nil:
 		if doneErr := s.Done(ctx, taskID, "completed by afk loop"); doneErr != nil {
-			return "", "", false, fmt.Errorf("mark done %s: %w", taskID, doneErr)
+			return runClassification{}, fmt.Errorf("mark done %s: %w", taskID, doneErr)
 		}
-		return "done", "", false, nil
+		return runClassification{status: "done"}, nil
 	case errors.Is(runErr, ErrAgentTimeout):
 		if failErr := s.Fail(ctx, taskID, "timeout"); failErr != nil {
-			return "", "", false, fmt.Errorf("mark failed %s: %w", taskID, failErr)
+			return runClassification{}, fmt.Errorf("mark failed %s: %w", taskID, failErr)
 		}
-		return "timeout", runErr.Error(), true, nil
+		return runClassification{status: "timeout", errText: runErr.Error(), failed: true}, nil
 	default:
 		if failErr := s.Fail(ctx, taskID, runErr.Error()); failErr != nil {
-			return "", "", false, fmt.Errorf("mark failed %s: %w", taskID, failErr)
+			return runClassification{}, fmt.Errorf("mark failed %s: %w", taskID, failErr)
 		}
-		return "failed", runErr.Error(), true, nil
+		return runClassification{status: "failed", errText: runErr.Error(), failed: true}, nil
 	}
 }
 

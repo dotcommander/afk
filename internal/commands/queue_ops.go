@@ -108,7 +108,7 @@ func runTakeClaim(cmd *cobra.Command, d *Deps, leaseDuration time.Duration, work
 	}
 	if err := task.ValidateAddOptions(task.AddOptionsFromTask(*claimed)); err != nil {
 		if failErr := d.Service.Fail(cmd.Context(), claimed.ID, err.Error()); failErr != nil {
-			return failErr
+			return fmt.Errorf("take %s: invalid claimed task %v; auto-fail: %w", claimed.ID, err, failErr)
 		}
 		return fmt.Errorf("take %s: %w", claimed.ID, err)
 	}
@@ -164,16 +164,7 @@ func newRequeueStaleCmd(d *Deps) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			tasks, err := d.Service.RequeueStale(cmd.Context(), dur)
-			if err != nil {
-				return err
-			}
-			for _, t := range tasks {
-				if _, err := fmt.Fprintln(d.Stdout, t.ID); err != nil {
-					return err
-				}
-			}
-			return nil
+			return runRequeueStale(cmd, d, dur)
 		},
 	}
 	cmd.Flags().StringVar(&olderThan, "older-than", "1h", "requeue doing tasks older than this duration when no lease is set")
@@ -200,20 +191,24 @@ Prints the id of each requeued task to stdout, one per line.`),
 			if err != nil {
 				return err
 			}
-			tasks, err := d.Service.RequeueStale(cmd.Context(), dur)
-			if err != nil {
-				return err
-			}
-			for _, t := range tasks {
-				if _, err := fmt.Fprintln(d.Stdout, t.ID); err != nil {
-					return err
-				}
-			}
-			return nil
+			return runRequeueStale(cmd, d, dur)
 		},
 	}
 	cmd.Flags().StringVar(&olderThan, "older-than", "20m", "requeue doing tasks older than this duration when no lease is set")
 	return cmd
+}
+
+func runRequeueStale(cmd *cobra.Command, d *Deps, olderThan time.Duration) error {
+	tasks, err := d.Service.RequeueStale(cmd.Context(), olderThan)
+	if err != nil {
+		return err
+	}
+	for _, t := range tasks {
+		if _, err := fmt.Fprintln(d.Stdout, t.ID); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func parseOptionalDuration(name, value string) (time.Duration, error) {

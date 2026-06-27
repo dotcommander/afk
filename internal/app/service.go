@@ -65,12 +65,7 @@ func (s *Service) Add(ctx context.Context, body string) (string, error) {
 // AddWithOptions appends a new todo task with metadata and returns its id.
 func (s *Service) AddWithOptions(ctx context.Context, opts task.AddOptions) (string, error) {
 	if err := task.ValidateAddOptions(opts); err != nil {
-		// Persist rejection so discovery work is not lost. Swallow sidecar
-		// errors: the validation error is the contract; masking it would
-		// be worse than losing one sidecar line.
-		if s.sidecarPath != "" {
-			_ = RecordRejection(s.sidecarPath, opts, err, s.now())
-		}
+		s.recordRejection(opts, err)
 		return "", err
 	}
 	return s.addValidated(ctx, opts)
@@ -85,9 +80,7 @@ func (s *Service) AddWithOptionsBlockedBy(ctx context.Context, opts task.AddOpti
 		return s.AddWithOptions(ctx, opts)
 	}
 	if err := task.ValidateAddOptions(opts); err != nil {
-		if s.sidecarPath != "" {
-			_ = RecordRejection(s.sidecarPath, opts, err, s.now())
-		}
+		s.recordRejection(opts, err)
 		return "", err
 	}
 	return s.addValidatedWithDependency(ctx, opts, dependsOnID)
@@ -109,9 +102,7 @@ func (s *Service) AddWithOptionsForce(ctx context.Context, opts task.AddOptions)
 		return "", err
 	}
 	// Record the rejection for audit, then proceed.
-	if s.sidecarPath != "" {
-		_ = RecordRejection(s.sidecarPath, opts, err, s.now())
-	}
+	s.recordRejection(opts, err)
 	// Tag the task so downstream consumers can see it was force-added.
 	opts.Tags = append(append([]string{}, opts.Tags...), "force-added")
 	return s.addValidated(ctx, opts)
@@ -129,11 +120,19 @@ func (s *Service) AddWithOptionsForceBlockedBy(ctx context.Context, opts task.Ad
 	if !errors.Is(err, task.ErrInvalidTask) {
 		return "", err
 	}
-	if s.sidecarPath != "" {
-		_ = RecordRejection(s.sidecarPath, opts, err, s.now())
-	}
+	s.recordRejection(opts, err)
 	opts.Tags = append(append([]string{}, opts.Tags...), "force-added")
 	return s.addValidatedWithDependency(ctx, opts, dependsOnID)
+}
+
+// recordRejection persists invalid add attempts when a sidecar is configured.
+// Sidecar write failures are intentionally non-fatal: the validation error is
+// the contract, and masking it would be worse than losing one sidecar line.
+func (s *Service) recordRejection(opts task.AddOptions, reason error) {
+	if s.sidecarPath == "" {
+		return
+	}
+	_ = RecordRejection(s.sidecarPath, opts, reason, s.now())
 }
 
 // addValidated inserts a task that has already passed (or been exempted from)

@@ -26,7 +26,15 @@ func newSetCmd(d *Deps) *cobra.Command {
 		Short: "Set task status",
 		Args:  cobra.MinimumNArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runSet(cmd, args, d, &stage, noteFlag, noteFile, asJSON, summary, force, workerID)
+			return runSet(cmd, args, d, setCommandOptions{
+				stage:    stage,
+				noteFlag: noteFlag,
+				noteFile: noteFile,
+				asJSON:   asJSON,
+				summary:  summary,
+				force:    force,
+				workerID: workerID,
+			})
 		},
 	}
 	cmd.Flags().BoolVar(&asJSON, "json", false, "emit JSON output")
@@ -39,30 +47,40 @@ func newSetCmd(d *Deps) *cobra.Command {
 	return cmd
 }
 
+type setCommandOptions struct {
+	stage    string
+	noteFlag string
+	noteFile string
+	asJSON   bool
+	summary  bool
+	force    bool
+	workerID string
+}
+
 // runSet executes the `set` command: parse status, resolve the note, enforce
 // the completion-note rule, apply the status (with optional stage), then emit
 // either JSON/summary or a plain confirmation line. Extracted from newSetCmd's
 // RunE closure to keep cognitive complexity within the linter threshold.
-func runSet(cmd *cobra.Command, args []string, d *Deps, stage *string, noteFlag, noteFile string, asJSON, summary, force bool, workerID string) error {
+func runSet(cmd *cobra.Command, args []string, d *Deps, opts setCommandOptions) error {
 	status, ok := task.ParseStatus(args[1])
 	if !ok {
 		return fmt.Errorf("%w: %q", task.ErrInvalidStatus, args[1])
 	}
-	note, err := resolveSetNote(d, args[2:], noteFlag, noteFile)
+	note, err := resolveSetNote(d, args[2:], opts.noteFlag, opts.noteFile)
 	if err != nil {
 		return err
 	}
-	if !force && (status == task.StatusDone || status == task.StatusFailed) && strings.TrimSpace(note) == "" {
+	if !opts.force && (status == task.StatusDone || status == task.StatusFailed) && strings.TrimSpace(note) == "" {
 		return fmt.Errorf("%w", task.ErrMissingCompletionNote)
 	}
 	var stagePtr *string
 	if cmd.Flags().Changed("stage") {
-		stagePtr = stage
+		stagePtr = &opts.stage
 	}
-	if workerID != "" && !force && (status == task.StatusDone || status == task.StatusFailed) {
-		return d.Service.SetStatusWithStageWorker(cmd.Context(), args[0], status, note, stagePtr, workerID)
+	if opts.workerID != "" && !opts.force && (status == task.StatusDone || status == task.StatusFailed) {
+		return d.Service.SetStatusWithStageWorker(cmd.Context(), args[0], status, note, stagePtr, opts.workerID)
 	}
-	if force {
+	if opts.force {
 		err = d.Service.SetStatusWithStageForce(cmd.Context(), args[0], status, note, stagePtr)
 	} else {
 		err = d.Service.SetStatusWithStage(cmd.Context(), args[0], status, note, stagePtr)
@@ -74,9 +92,9 @@ func runSet(cmd *cobra.Command, args []string, d *Deps, stage *string, noteFlag,
 	if err != nil {
 		return err
 	}
-	if asJSON || summary {
+	if opts.asJSON || opts.summary {
 		result := setResultFromTask(updated, note)
-		if summary {
+		if opts.summary {
 			snapshot, err := d.Service.Status(cmd.Context())
 			if err != nil {
 				return err
