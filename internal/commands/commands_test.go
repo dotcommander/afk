@@ -886,6 +886,30 @@ func TestCommandRunEPropagatesServiceErrors(t *testing.T) {
 	}
 }
 
+func TestRunTakeClaimIncludesValidationContextWhenAutoFailFails(t *testing.T) {
+	t.Parallel()
+
+	boom := errors.New("update failed")
+	claimed := task.Task{
+		ID:      "forced-invalid",
+		Created: "2025-01-02T03:04:05Z",
+		Status:  task.StatusDoing,
+		Body:    "pick my nose",
+	}
+	d := testDepsWithWriters(&bytes.Buffer{}, &bytes.Buffer{})
+	d.Service = app.NewService(&commandInvalidClaimStore{
+		commandErrorStore: commandErrorStore{err: boom},
+		claimed:           claimed,
+	}, time.Now)
+
+	err := runTakeClaim(&cobra.Command{}, d, 0, "worker-1", false, false, false)
+	require.ErrorIs(t, err, boom)
+	require.Contains(t, err.Error(), "forced-invalid")
+	require.Contains(t, err.Error(), "invalid claimed task")
+	require.Contains(t, err.Error(), "auto-fail")
+	require.Contains(t, err.Error(), "invalid task")
+}
+
 func TestRunAddForcePropagatesDependencyError(t *testing.T) {
 	stdout, stderr := &bytes.Buffer{}, &bytes.Buffer{}
 	d := testDepsWithWriters(stdout, stderr)
@@ -974,6 +998,12 @@ func TestMaintenanceCommands(t *testing.T) {
 	require.NoError(t, run("requeue-stale", "--older-than", "1ms"))
 	require.Contains(t, stdout.String(), id)
 	require.Contains(t, stderr.String(), "deprecated")
+
+	require.NoError(t, run("take", "--worker", "worker-1", "--lease", "1ms"))
+	time.Sleep(5 * time.Millisecond)
+	require.NoError(t, run("reap", "--older-than", "1ms"))
+	require.Contains(t, stdout.String(), id)
+	require.Empty(t, stderr.String())
 
 	require.NoError(t, run("take", "--worker", "worker-1", "--lease", "1m"))
 	require.NoError(t, run("heartbeat", id, "--worker", "worker-1", "--lease", "2m"))
@@ -1132,6 +1162,15 @@ func (s *commandErrorStore) Heartbeat(context.Context, string, string, time.Time
 }
 func (s *commandErrorStore) RequeueStale(context.Context, time.Duration, time.Time) ([]task.Task, error) {
 	return nil, s.err
+}
+
+type commandInvalidClaimStore struct {
+	commandErrorStore
+	claimed task.Task
+}
+
+func (s *commandInvalidClaimStore) ClaimNextForWorker(context.Context, time.Time, time.Time, string, string) (*task.Task, error) {
+	return &s.claimed, nil
 }
 
 type commandDependencyErrorStore struct {

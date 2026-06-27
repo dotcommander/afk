@@ -6,9 +6,7 @@ import (
 	"time"
 )
 
-// TestBudgetState exercises BudgetState accounting per Verification Surface §2.
-// Behavior is implemented in Phase B; these tests encode the contract and may
-// fail until then.
+// TestBudgetState exercises BudgetState accounting and cap precedence.
 func TestBudgetState(t *testing.T) {
 	t.Parallel()
 

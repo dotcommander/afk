@@ -1,9 +1,8 @@
 package app
 
 // Internal test (package app) so it can reach the unexported insertGoalTasks
-// helper per Verification Surface §4. The behavior these tests assert is
-// implemented in Phases B (config) and D (insert/rollback); the tests encode
-// the contract and may fail until then.
+// helper and package-level audit-agent seams. These tests cover goal config,
+// task insertion rollback, and audit decisions.
 
 import (
 	"context"
@@ -67,8 +66,7 @@ func TestInsertGoalTasks(t *testing.T) {
 			t.Fatalf("insertGoalTasks expected error on 3rd Add")
 		}
 		// First two inserts must be rolled back to deleted. Guard the slice
-		// bound so the assertion fails cleanly (not a panic) before Phase D
-		// gives insertGoalTasks a body that actually inserts.
+		// bound so the assertion fails cleanly instead of panicking.
 		if len(stub.added) < 2 {
 			t.Fatalf("only %d tasks inserted before failure, want >= 2 for rollback check", len(stub.added))
 		}
@@ -103,7 +101,7 @@ func TestInsertGoalTasks(t *testing.T) {
 	})
 }
 
-// --- §Phase E: RunGoalAudit / RequeueAfterAuditDisapproval ---
+// --- RunGoalAudit / RequeueAfterAuditDisapproval ---
 
 func TestRunGoalAudit(t *testing.T) {
 	t.Parallel()

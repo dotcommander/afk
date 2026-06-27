@@ -5,9 +5,7 @@ import (
 	"testing"
 )
 
-// TestParseAuditDecision exercises parseAuditDecision per Verification Surface
-// §3. Behavior is implemented in Phase E; these tests encode the contract and
-// may fail until then.
+// TestParseAuditDecision exercises parseAuditDecision's fail-safe marker rules.
 func TestParseAuditDecision(t *testing.T) {
 	t.Parallel()
 
@@ -41,9 +39,8 @@ func TestParseAuditDecision(t *testing.T) {
 	}
 }
 
-// TestBuildSetupPrompt exercises buildSetupPrompt per Verification Surface §4.
-// Behavior is implemented in Phase D; these tests encode the contract and may
-// fail until then.
+// TestBuildSetupPrompt exercises buildSetupPrompt's untrusted objective
+// interpolation contract.
 func TestBuildSetupPrompt(t *testing.T) {
 	t.Parallel()
 
@@ -63,9 +60,8 @@ func TestBuildSetupPrompt(t *testing.T) {
 	}
 }
 
-// TestParseGoalContract exercises parseGoalContract per Verification Surface §4.
-// Behavior is implemented in Phase D; these tests encode the contract and may
-// fail until then.
+// TestParseGoalContract exercises parseGoalContract's required contract block
+// shape.
 func TestParseGoalContract(t *testing.T) {
 	t.Parallel()
 

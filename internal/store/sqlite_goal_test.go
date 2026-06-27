@@ -42,10 +42,7 @@ func TestCountTasksByGroupID(t *testing.T) {
 	require.Empty(t, unknown)
 }
 
-// TestGoalGroups exercises the goal_groups store methods per Verification
-// Surface §6. The table and method bodies land in Phase C; these assertions
-// encode the contract and may fail (stub methods return "not implemented")
-// until then.
+// TestGoalGroups exercises the goal_groups store methods and query contract.
 func TestGoalGroups(t *testing.T) {
 	t.Parallel()
 

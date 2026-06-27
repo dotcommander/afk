@@ -27,7 +27,7 @@ func TestWriteStatusTextWriterErrorAfterCounts(t *testing.T) {
 	t.Parallel()
 
 	w := &countingErrWriter{failAfter: 20}
-	err := writeStatusText(w, map[task.Status]int{}, nil, nil, nil, time.Now())
+	err := writeStatusText(w, statusData{tally: map[task.Status]int{}, now: time.Now()})
 	require.Error(t, err)
 	require.True(t, errors.Is(err, errInternalWrite))
 }
