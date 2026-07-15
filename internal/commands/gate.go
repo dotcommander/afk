@@ -1,49 +1,36 @@
 package commands
 
 import (
+	"context"
 	"fmt"
-
-	"github.com/spf13/cobra"
 )
 
-func newGateCmd(d *Deps) *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   "gate",
-		Short: "Manage task gates",
-	}
-	cmd.AddCommand(
-		newGateAddCmd(d),
-		newGateSatisfyCmd(d),
-	)
-	return cmd
+type GateCmd struct {
+	Add     GateAddCmd     `cmd:"" help:"Add a named gate to a task."`
+	Satisfy GateSatisfyCmd `cmd:"" help:"Mark a task gate satisfied."`
+}
+type GateAddCmd struct {
+	ID   string `arg:"" required:""`
+	Name string `arg:"" required:""`
 }
 
-func newGateAddCmd(d *Deps) *cobra.Command {
-	return &cobra.Command{
-		Use:   "add <id> <name>",
-		Short: "Add a named gate to a task",
-		Args:  cobra.ExactArgs(2),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			if err := d.Service.AddGate(cmd.Context(), args[0], args[1]); err != nil {
-				return err
-			}
-			_, err := fmt.Fprintf(d.Stdout, "gate add %s %s\n", args[0], args[1])
-			return err
-		},
+func (c *GateAddCmd) Run(d *Deps, ctx context.Context) error {
+	if err := d.Service.AddGate(ctx, c.ID, c.Name); err != nil {
+		return err
 	}
+	_, err := fmt.Fprintf(d.Stdout, "gate add %s %s\n", c.ID, c.Name)
+	return err
 }
 
-func newGateSatisfyCmd(d *Deps) *cobra.Command {
-	return &cobra.Command{
-		Use:   "satisfy <id> <name>",
-		Short: "Mark a task gate satisfied",
-		Args:  cobra.ExactArgs(2),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			if err := d.Service.SatisfyGate(cmd.Context(), args[0], args[1]); err != nil {
-				return err
-			}
-			_, err := fmt.Fprintf(d.Stdout, "gate satisfy %s %s\n", args[0], args[1])
-			return err
-		},
+type GateSatisfyCmd struct {
+	ID   string `arg:"" required:""`
+	Name string `arg:"" required:""`
+}
+
+func (c *GateSatisfyCmd) Run(d *Deps, ctx context.Context) error {
+	if err := d.Service.SatisfyGate(ctx, c.ID, c.Name); err != nil {
+		return err
 	}
+	_, err := fmt.Fprintf(d.Stdout, "gate satisfy %s %s\n", c.ID, c.Name)
+	return err
 }

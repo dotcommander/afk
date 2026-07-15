@@ -1,75 +1,39 @@
-// Package commands wires cobra subcommands to actions for the afk CLI.
+// Package commands wires Kong command structs to AFK application actions.
 package commands
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
 	"os"
 	"strings"
 
-	"github.com/spf13/cobra"
-
 	"github.com/dotcommander/afk/internal/output"
 	"github.com/dotcommander/afk/internal/task"
 )
 
-func newAddCmd(d *Deps) *cobra.Command {
-	var tags []string
-	var priority string
-	var cwd string
-	var noCWD bool
-	var source string
-	var agent string
-	var groupID string
-	var resourceKey string
-	var stage string
-	var blockedBy string
-	var asJSON bool
-	var dryRun bool
-	var diagnose bool
-	var force bool
+type AddCmd struct {
+	Body        []string `arg:"" required:""`
+	Tags        []string `name:"tag" sep:"none" help:"Task tag (repeatable)."`
+	Priority    string   `help:"Task priority: urgent, high, normal, or low."`
+	CWD         string   `help:"Task working directory context (defaults to current directory)."`
+	NoCWD       bool     `name:"no-cwd" help:"Do not record current working directory context."`
+	Source      string   `help:"Task source (defaults to cli)."`
+	Agent       string   `help:"Preferred agent."`
+	GroupID     string   `name:"group" help:"Task group id."`
+	ResourceKey string   `name:"resource" help:"Task resource key (defaults to repo:<git-root>; use none to disable)."`
+	Stage       string   `help:"Free-form pipeline stage label."`
+	BlockedBy   string   `name:"blocked-by" help:"Task id this task is blocked by, or none."`
+	JSON        bool     `help:"Emit JSON output."`
+	DryRun      bool     `name:"dry-run" help:"Validate without adding a task."`
+	Diagnose    bool     `help:"Run all validation checks and report every failure (read-only)."`
+	Force       bool     `help:"Bypass validation rejection. Requires AFK_ALLOW_FORCE=1 in environment."`
+	RequestID   string   `name:"request-id" help:"Idempotency key for this mutation."`
+}
 
-	cmd := &cobra.Command{
-		Use:   "add <body...>",
-		Short: "Append a new todo task",
-		Args:  cobra.MinimumNArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return runAddCommand(cmd, d, addCommandInput{
-				args:        args,
-				tags:        tags,
-				priority:    priority,
-				cwd:         cwd,
-				noCWD:       noCWD,
-				source:      source,
-				agent:       agent,
-				groupID:     groupID,
-				resourceKey: resourceKey,
-				stage:       stage,
-				blockedBy:   blockedBy,
-			}, addCommandMode{
-				asJSON:   asJSON,
-				dryRun:   dryRun,
-				diagnose: diagnose,
-				force:    force,
-			})
-		},
-	}
-	cmd.Flags().StringArrayVar(&tags, "tag", nil, "task tag (repeatable)")
-	cmd.Flags().StringVar(&priority, "priority", "", "task priority: urgent, high, normal, or low")
-	cmd.Flags().StringVar(&cwd, "cwd", "", "task working directory context (defaults to current directory)")
-	cmd.Flags().BoolVar(&noCWD, "no-cwd", false, "do not record current working directory context")
-	cmd.Flags().StringVar(&source, "source", "", "task source (defaults to cli)")
-	cmd.Flags().StringVar(&agent, "agent", "", "preferred agent")
-	cmd.Flags().StringVar(&groupID, "group", "", "task group id")
-	cmd.Flags().StringVar(&resourceKey, "resource", "", "task resource key (defaults to repo:<git-root>; use none to disable)")
-	cmd.Flags().StringVar(&stage, "stage", "", "free-form pipeline stage label")
-	cmd.Flags().StringVar(&blockedBy, "blocked-by", "", "task id this task is blocked by, or none")
-	cmd.Flags().BoolVar(&asJSON, "json", false, "emit JSON output")
-	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "validate without adding a task")
-	cmd.Flags().BoolVar(&diagnose, "diagnose", false, "run all validation checks and report every failure (read-only)")
-	cmd.Flags().BoolVar(&force, "force", false, "Bypass validation rejection. Requires AFK_ALLOW_FORCE=1 in environment.")
-	return cmd
+func (c *AddCmd) Run(d *Deps, ctx context.Context) error {
+	return runAddCommand(ctx, d, addCommandInput{args: c.Body, tags: c.Tags, priority: c.Priority, cwd: c.CWD, noCWD: c.NoCWD, source: c.Source, agent: c.Agent, groupID: c.GroupID, resourceKey: c.ResourceKey, stage: c.Stage, blockedBy: c.BlockedBy, requestID: c.RequestID}, addCommandMode{asJSON: c.JSON, dryRun: c.DryRun, diagnose: c.Diagnose, force: c.Force})
 }
 
 type addCommandInput struct {
@@ -84,6 +48,7 @@ type addCommandInput struct {
 	resourceKey string
 	stage       string
 	blockedBy   string
+	requestID   string
 }
 
 type addCommandMode struct {
@@ -93,56 +58,63 @@ type addCommandMode struct {
 	force    bool
 }
 
-func runAddCommand(cmd *cobra.Command, d *Deps, input addCommandInput, mode addCommandMode) error {
+func runAddCommand(ctx context.Context, d *Deps, input addCommandInput, mode addCommandMode) error {
 	opts, dependsOnID, err := buildAddCommandOptions(input)
 	if err != nil {
-		cmd.SilenceUsage = true
 		return err
 	}
 	if mode.force && mode.diagnose {
-		cmd.SilenceUsage = true
 		return errors.New("--force and --diagnose are mutually exclusive")
 	}
+	if mode.force && input.requestID != "" {
+		return errors.New("--force and --request-id are mutually exclusive")
+	}
 	if mode.diagnose {
-		return runAddDiagnose(cmd, d, opts)
+		return runAddDiagnose(ctx, d, opts)
 	}
 	if dependsOnID != "" {
-		if _, err := d.Service.Show(cmd.Context(), dependsOnID); err != nil {
+		if _, err := d.Service.Show(ctx, dependsOnID); err != nil {
 			return err
 		}
 	}
 	if mode.dryRun {
 		if err := task.ValidateAddOptions(opts); err != nil {
-			return addValidationError(cmd, opts, err)
+			return addValidationError(ctx, opts, err)
 		}
 		return writeAddDryRunResult(d, mode.asJSON)
 	}
 	if mode.force {
-		return runAddForce(cmd, d, opts, dependsOnID, mode.asJSON)
+		return runAddForce(ctx, d, opts, dependsOnID, mode.asJSON)
 	}
-	return runAddNormal(cmd, d, opts, dependsOnID, mode.asJSON)
+	return runAddNormalRequested(ctx, d, opts, dependsOnID, input.requestID, mode.asJSON)
 }
 
-func runAddForce(cmd *cobra.Command, d *Deps, opts task.AddOptions, dependsOnID string, asJSON bool) error {
+func runAddForce(ctx context.Context, d *Deps, opts task.AddOptions, dependsOnID string, asJSON bool) error {
 	if v := os.Getenv("AFK_ALLOW_FORCE"); v != "1" {
-		cmd.SilenceUsage = true
 		return fmt.Errorf("--force requires AFK_ALLOW_FORCE=1 in environment (current: %q)", v)
 	}
 	if _, err := fmt.Fprintln(d.Stderr, "warning: --force bypassing validation"); err != nil {
 		return err
 	}
-	id, err := d.Service.AddWithOptionsForceBlockedBy(cmd.Context(), opts, dependsOnID)
+	id, err := d.Service.AddWithOptionsForceBlockedBy(ctx, opts, dependsOnID)
 	if err != nil {
-		cmd.SilenceUsage = true
 		return err
 	}
 	return writeAddResult(d, id, asJSON)
 }
 
-func runAddNormal(cmd *cobra.Command, d *Deps, opts task.AddOptions, dependsOnID string, asJSON bool) error {
-	id, err := d.Service.AddWithOptionsBlockedBy(cmd.Context(), opts, dependsOnID)
+func runAddNormal(ctx context.Context, d *Deps, opts task.AddOptions, dependsOnID string, asJSON bool) error {
+	return runAddNormalRequested(ctx, d, opts, dependsOnID, "", asJSON)
+}
+
+func runAddNormalRequested(ctx context.Context, d *Deps, opts task.AddOptions, dependsOnID, requestID string, asJSON bool) error {
+	actor := opts.Agent
+	if actor == "" {
+		actor = "afk-cli"
+	}
+	id, _, err := d.Service.AddWithRequest(ctx, actor, requestID, opts, dependsOnID)
 	if err != nil {
-		return addValidationError(cmd, opts, err)
+		return addValidationError(ctx, opts, err)
 	}
 	if err := writeAddTTYConfirmation(d.Stderr, id, opts, asJSON); err != nil {
 		return err
@@ -217,15 +189,11 @@ func fieldIfSet(name, value string) string {
 	return name + "=" + value
 }
 
-func addValidationError(cmd *cobra.Command, opts task.AddOptions, err error) error {
+func addValidationError(ctx context.Context, opts task.AddOptions, err error) error {
 	if errors.Is(err, task.ErrInvalidPriority) {
-		cmd.SilenceUsage = true
-		cmd.SilenceErrors = true
 		return err
 	}
 	if errors.Is(err, task.ErrInvalidTask) {
-		cmd.SilenceUsage = true
-		cmd.SilenceErrors = true
 		if task.IsGeneratedCandidate(opts.Source, opts.Tags) {
 			return fmt.Errorf("%w; generated/discovery tasks need the full discovery shape, run with --diagnose to see every missing field or remove --source task-discovery/--tag discovery", err)
 		}
@@ -236,7 +204,7 @@ func addValidationError(cmd *cobra.Command, opts task.AddOptions, err error) err
 // runAddDiagnose runs ValidateAddOptionsAll and reports every failure on its
 // own stderr line. Read-only: never calls Service.AddWithOptions and so never
 // writes a rejection sidecar entry or inserts a row.
-func runAddDiagnose(cmd *cobra.Command, d *Deps, opts task.AddOptions) error {
+func runAddDiagnose(ctx context.Context, d *Deps, opts task.AddOptions) error {
 	err := task.ValidateAddOptionsAll(opts)
 	if err == nil {
 		_, werr := fmt.Fprintln(d.Stdout, "task validates")
@@ -254,7 +222,5 @@ func runAddDiagnose(cmd *cobra.Command, d *Deps, opts task.AddOptions) error {
 			return werr
 		}
 	}
-	cmd.SilenceUsage = true
-	cmd.SilenceErrors = true
 	return err
 }

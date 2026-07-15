@@ -1,61 +1,44 @@
 package commands
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"strings"
 
 	"github.com/dotcommander/afk/internal/prompt"
-	"github.com/spf13/cobra"
 )
 
-func newPromptCmd(d *Deps) *cobra.Command {
-	var outputPath string
-	var taskID string
-	var discover bool
-	var discoverFull bool
+type PromptCmd struct {
+	Paths      []string `arg:"" optional:""`
+	OutputPath string   `name:"output" help:"Write prompt Markdown to path instead of stdout."`
+	Task       string   `help:"Generate a focused prompt for one task id."`
+	Discover   bool     `help:"Generate task-discovery workflow guidance."`
+	Full       bool     `help:"Print the full task-discovery policy with --discover."`
+}
 
-	cmd := &cobra.Command{
-		Use:   cmdPrompt,
-		Short: "Generate loop prompt Markdown",
-		Annotations: map[string]string{
-			skipStoreInitKey: skipStoreInitValue,
-		},
-		Args: func(cmd *cobra.Command, args []string) error {
-			if len(args) > 0 {
-				cmd.SilenceUsage = true
-				if discover {
-					return fmt.Errorf("prompt --discover does not accept path arguments")
-				}
-				return fmt.Errorf("prompt does not accept path arguments")
-			}
-			return nil
-		},
-		RunE: func(cmd *cobra.Command, _ []string) error {
-			if discoverFull && !discover {
-				cmd.SilenceUsage = true
-				return fmt.Errorf("--full requires --discover")
-			}
-			if taskID != "" && discover {
-				cmd.SilenceUsage = true
-				return fmt.Errorf("--task and --discover are mutually exclusive")
-			}
-			result, err := promptBody(cmd, d, outputPath, taskID, discover, discoverFull)
-			if err != nil || result.alreadyWritten {
-				return err
-			}
-			if outputPath == "" {
-				_, err := fmt.Fprint(d.Stdout, result.body)
-				return err
-			}
-			return os.WriteFile(outputPath, []byte(result.body), 0o644)
-		},
+func (c *PromptCmd) Run(d *Deps, ctx context.Context) error {
+	if len(c.Paths) > 0 {
+		if c.Discover {
+			return fmt.Errorf("prompt --discover does not accept path arguments")
+		}
+		return fmt.Errorf("prompt does not accept path arguments")
 	}
-	cmd.Flags().StringVar(&outputPath, "output", "", "write prompt Markdown to path instead of stdout")
-	cmd.Flags().StringVar(&taskID, "task", "", "generate a focused prompt for one task id")
-	cmd.Flags().BoolVar(&discover, "discover", false, "generate task-discovery workflow guidance")
-	cmd.Flags().BoolVar(&discoverFull, "full", false, "print the full task-discovery policy with --discover")
-	return cmd
+	if c.Full && !c.Discover {
+		return fmt.Errorf("--full requires --discover")
+	}
+	if c.Task != "" && c.Discover {
+		return fmt.Errorf("--task and --discover are mutually exclusive")
+	}
+	result, err := promptBody(ctx, d, c.OutputPath, c.Task, c.Discover, c.Full)
+	if err != nil || result.alreadyWritten {
+		return err
+	}
+	if c.OutputPath == "" {
+		_, err := fmt.Fprint(d.Stdout, result.body)
+		return err
+	}
+	return os.WriteFile(c.OutputPath, []byte(result.body), 0o644)
 }
 
 type promptBodyResult struct {
@@ -66,7 +49,7 @@ type promptBodyResult struct {
 // promptBody resolves the prompt Markdown for the requested mode. Discover
 // without --output writes directly to d.Stdout; alreadyWritten tells the caller
 // not to emit the body again.
-func promptBody(cmd *cobra.Command, d *Deps, outputPath, taskID string, discover, discoverFull bool) (promptBodyResult, error) {
+func promptBody(ctx context.Context, d *Deps, outputPath, taskID string, discover, discoverFull bool) (promptBodyResult, error) {
 	const exe = "afk"
 	switch {
 	case discover:
@@ -81,7 +64,7 @@ func promptBody(cmd *cobra.Command, d *Deps, outputPath, taskID string, discover
 		}
 		return promptBodyResult{body: stdout.String()}, nil
 	case taskID != "":
-		data, err := d.Service.Explain(cmd.Context(), taskID)
+		data, err := d.Service.Explain(ctx, taskID)
 		if err != nil {
 			return promptBodyResult{}, err
 		}

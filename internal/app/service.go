@@ -2,7 +2,11 @@ package app
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 
@@ -84,6 +88,127 @@ func (s *Service) AddWithOptionsBlockedBy(ctx context.Context, opts task.AddOpti
 		return "", err
 	}
 	return s.addValidatedWithDependency(ctx, opts, dependsOnID)
+}
+
+// AddWithRequest appends a task exactly once for an actor/request pair.
+func (s *Service) AddWithRequest(ctx context.Context, actor, requestID string, opts task.AddOptions, dependsOnID string) (string, bool, error) {
+	hasRequestID := requestID != ""
+	actor = strings.TrimSpace(actor)
+	requestID = strings.TrimSpace(requestID)
+	if hasRequestID && requestID == "" {
+		return "", false, errors.New("request id must not be blank")
+	}
+	if requestID == "" {
+		id, err := s.AddWithOptionsBlockedBy(ctx, opts, dependsOnID)
+		return id, false, err
+	}
+	if err := task.ValidateAddOptions(opts); err != nil {
+		s.recordRejection(opts, err)
+		return "", false, err
+	}
+	requested, ok := s.store.(interface {
+		AddRequested(context.Context, string, string, string, task.Task, string) (string, bool, error)
+	})
+	if !ok {
+		return "", false, errors.New("request id is unsupported by this store")
+	}
+	operation, err := requestOperation("task.add", struct {
+		Options     task.AddOptions `json:"options"`
+		DependsOnID string          `json:"depends_on_id,omitempty"`
+	}{opts, dependsOnID})
+	if err != nil {
+		return "", false, err
+	}
+	return requested.AddRequested(ctx, actor, requestID, operation, s.newTask(opts), dependsOnID)
+}
+
+func requestOperation(name string, payload any) (string, error) {
+	encoded, err := json.Marshal(payload)
+	if err != nil {
+		return "", fmt.Errorf("encode request operation: %w", err)
+	}
+	sum := sha256.Sum256(encoded)
+	return name + ":" + hex.EncodeToString(sum[:]), nil
+}
+
+// ImportVybe imports a validated Vybe archive through stores that support the
+// retirement migration contract.
+func (s *Service) ImportVybe(ctx context.Context, source string, apply bool) (store.VybeImportReport, error) {
+	importer, ok := s.store.(interface {
+		ImportVybeArchive(context.Context, store.VybeImportOptions) (store.VybeImportReport, error)
+	})
+	if !ok {
+		return store.VybeImportReport{}, errors.New("vybe import is unsupported by this store")
+	}
+	return importer.ImportVybeArchive(ctx, store.VybeImportOptions{Source: source, Apply: apply})
+}
+
+// AddCheckpoint writes one task-scoped durable progress record.
+func (s *Service) AddCheckpoint(ctx context.Context, c task.Checkpoint) (task.Checkpoint, error) {
+	writer, ok := s.store.(interface {
+		AddCheckpoint(context.Context, task.Checkpoint) (task.Checkpoint, error)
+	})
+	if !ok {
+		return task.Checkpoint{}, errors.New("checkpoints are unsupported by this store")
+	}
+	if c.CreatedAt == "" {
+		c.CreatedAt = formatTime(s.now())
+	}
+	if c.Provenance.System == "" {
+		c.Provenance.System = "afk-cli"
+	}
+	if c.Provenance.ID == "" {
+		c.Provenance.ID = uuid.NewString()
+	}
+	return writer.AddCheckpoint(ctx, c)
+}
+
+// Checkpoints returns durable progress records in insertion order.
+func (s *Service) Checkpoints(ctx context.Context, taskID string) ([]task.Checkpoint, error) {
+	reader, ok := s.store.(interface {
+		Checkpoints(context.Context, string) ([]task.Checkpoint, error)
+	})
+	if !ok {
+		return nil, errors.New("checkpoints are unsupported by this store")
+	}
+	return reader.Checkpoints(ctx, taskID)
+}
+
+// AddArtifact writes one task-owned artifact record.
+func (s *Service) AddArtifact(ctx context.Context, a task.Artifact) error {
+	writer, ok := s.store.(interface {
+		AddArtifact(context.Context, task.Artifact) error
+	})
+	if !ok {
+		return errors.New("artifacts are unsupported by this store")
+	}
+	if a.ID == "" {
+		a.ID = uuid.NewString()
+	}
+	if a.CreatedAt == "" {
+		a.CreatedAt = formatTime(s.now())
+	}
+	if a.MetadataJSON == "" {
+		a.MetadataJSON = "{}"
+	}
+	if a.Provenance.System == "" {
+		a.Provenance.System = "afk-cli"
+	}
+	if a.Provenance.ID == "" {
+		a.Provenance.ID = a.ID
+	}
+	return writer.AddArtifact(ctx, a)
+}
+
+// Artifacts returns task artifacts in source order.
+func (s *Service) Artifacts(ctx context.Context, taskID string) ([]task.Artifact, error) {
+	reader, ok := s.store.(interface {
+		Artifacts(context.Context, string) ([]task.Artifact, error)
+	})
+	if !ok {
+		return nil, errors.New("artifacts are unsupported by this store")
+	}
+	return reader.Artifacts(ctx, taskID)
 }
 
 // AddWithOptionsForce inserts a task even if validation rejects it. The

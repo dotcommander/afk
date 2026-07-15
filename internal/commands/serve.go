@@ -1,48 +1,32 @@
 package commands
 
 import (
+	"context"
 	"fmt"
-	"net"
-
-	"github.com/spf13/cobra"
-
 	"github.com/dotcommander/afk/internal/server"
+	"net"
 )
 
-// loopbackHosts is the set of host values that are considered safe/local.
-var loopbackHosts = map[string]bool{
-	"":          true,
-	"localhost": true,
-	"127.0.0.1": true,
-	"::1":       true,
+var loopbackHosts = map[string]bool{"": true, "localhost": true, "127.0.0.1": true, "::1": true}
+
+type ServeCmd struct {
+	Addr  string   `default:"127.0.0.1:1969" help:"Address to listen on."`
+	Open  bool     `default:"true" help:"Open the dashboard in a browser on start."`
+	Extra []string `arg:"" optional:"" hidden:""`
 }
 
-func newServeCmd(d *Deps) *cobra.Command {
-	var addr string
-	var open bool
-
-	cmd := &cobra.Command{
-		Use:   "serve",
-		Short: "Start the afk web dashboard",
-		RunE: func(cmd *cobra.Command, _ []string) error {
-			host, _, err := net.SplitHostPort(addr)
-			if err != nil {
-				return fmt.Errorf("serve: invalid addr %q: %w", addr, err)
-			}
-			if !loopbackHosts[host] {
-				if _, err := fmt.Fprintf(d.Stderr, "warning: dashboard exposes task bodies on non-loopback address %s\n", addr); err != nil {
-					return fmt.Errorf("serve: write warning: %w", err)
-				}
-			}
-			if _, err := fmt.Fprintf(d.Stdout, "afk dashboard: http://%s/\n", addr); err != nil {
-				return fmt.Errorf("serve: write banner: %w", err)
-			}
-			srv := server.New(d.Service, d.Logger, addr, open)
-			return srv.Run(cmd.Context())
-		},
+func (c *ServeCmd) Run(d *Deps, ctx context.Context) error {
+	host, _, err := net.SplitHostPort(c.Addr)
+	if err != nil {
+		return fmt.Errorf("serve: invalid addr %q: %w", c.Addr, err)
 	}
-
-	cmd.Flags().StringVar(&addr, "addr", "127.0.0.1:1969", "address to listen on")
-	cmd.Flags().BoolVar(&open, "open", true, "open the dashboard in a browser on start")
-	return cmd
+	if !loopbackHosts[host] {
+		if _, err = fmt.Fprintf(d.Stderr, "warning: dashboard exposes task bodies on non-loopback address %s\n", c.Addr); err != nil {
+			return fmt.Errorf("serve: write warning: %w", err)
+		}
+	}
+	if _, err = fmt.Fprintf(d.Stdout, "afk dashboard: http://%s/\n", c.Addr); err != nil {
+		return fmt.Errorf("serve: write banner: %w", err)
+	}
+	return server.New(d.Service, d.Logger, c.Addr, c.Open).Run(ctx)
 }

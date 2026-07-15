@@ -10,6 +10,7 @@ import (
 	"text/template"
 	"time"
 
+	"github.com/dotcommander/afk/internal/store"
 	"github.com/dotcommander/afk/internal/task"
 )
 
@@ -22,12 +23,6 @@ type LoopOptions struct {
 	// Worker is the worker identity string. When empty, RunLoop derives
 	// "loop-<pid>" so the caller need not construct it.
 	Worker string
-
-	// GoalBudgetCheck, when non-nil, is consulted after each iteration for any
-	// task carrying a GroupID. It accounts the iteration against the goal's
-	// budget and returns the first exceeded cap (or BudgetOK). When nil, budget
-	// checking is disabled and RunLoop behaves identically to a plain loop.
-	GoalBudgetCheck func(groupID string, r LoopResult) (BudgetLimitReason, error)
 }
 
 // LoopResult records the outcome of a single task iteration. Emitted via the
@@ -39,11 +34,8 @@ type LoopResult struct {
 	Attempt  int           `json:"attempt"`
 	Duration time.Duration `json:"duration_ns"` // nanoseconds; cheap to record
 
-	// TokensUsed is the token count parsed from the agent output for this
-	// iteration. It stays 0 unless a token_regex is configured AND the loop has
-	// access to parseable agent output; RunLoop forwards agent stdout/stderr
-	// verbatim to agentOut/agentErr without capturing it, so RunLoop itself
-	// leaves this 0. The goal loop populates it when it captures agent output.
+	// TokensUsed is the count parsed from the bounded output tail for a durable
+	// goal with a configured token cap. Agent output is still forwarded verbatim.
 	TokensUsed int `json:"tokens_used,omitempty"`
 }
 
@@ -115,6 +107,17 @@ func (s *Service) RunLoop(
 
 		attempt++
 		start := time.Now()
+		goal, goalAttemptID, budgeted, limited, err := s.prepareGoalInvocation(ctx, t)
+		if err != nil {
+			return err
+		}
+		if limited {
+			r := LoopResult{TaskID: t.ID, Status: "budget-limited", Error: goal.LimitReason, Attempt: attempt, Duration: time.Since(start)}
+			if emitErr := emit(r); emitErr != nil {
+				return emitErr
+			}
+			return nil
+		}
 
 		// --- Render prompt ---
 		var buf bytes.Buffer
@@ -147,7 +150,14 @@ func (s *Service) RunLoop(
 		hbCancel := s.startHeartbeat(ctx, cfg, t.ID, worker)
 
 		// --- Spawn agent ---
-		runErr := runAgent(ctx, cfg.Command, prompt, cfg.TaskTimeout, agentOut, agentErr)
+		stdout, stderr := agentOut, agentErr
+		var stdoutTail, stderrTail *tailWriter
+		if budgeted && goal.MaxTokens > 0 {
+			stdoutTail = newTailWriter(agentOut, goalOutputTailLimit)
+			stderrTail = newTailWriter(agentErr, goalOutputTailLimit)
+			stdout, stderr = stdoutTail, stderrTail
+		}
+		runErr := runAgent(ctx, cfg.Command, prompt, cfg.TaskTimeout, stdout, stderr)
 
 		// Stop heartbeat immediately when the task finishes.
 		if hbCancel != nil {
@@ -155,9 +165,9 @@ func (s *Service) RunLoop(
 		}
 
 		// --- Classify result ---
-		classification, classifyErr := s.classifyRun(ctx, t.ID, runErr)
-		if classifyErr != nil {
-			return classifyErr
+		classification, tokens, goalLimited, err := s.finalizeLoopInvocation(ctx, t.ID, goalAttemptID, runErr, goal, budgeted, stdoutTail, stderrTail)
+		if err != nil {
+			return err
 		}
 		if classification.failed {
 			consecutiveFailures++
@@ -168,11 +178,12 @@ func (s *Service) RunLoop(
 		tasksProcessed++
 
 		r := LoopResult{
-			TaskID:   t.ID,
-			Status:   classification.status,
-			Error:    classification.errText,
-			Attempt:  attempt,
-			Duration: time.Since(start),
+			TaskID:     t.ID,
+			Status:     classification.status,
+			Error:      classification.errText,
+			Attempt:    attempt,
+			Duration:   time.Since(start),
+			TokensUsed: int(tokens),
 		}
 		if emitErr := emit(r); emitErr != nil {
 			return emitErr
@@ -183,15 +194,7 @@ func (s *Service) RunLoop(
 			return fmt.Errorf("circuit breaker: %d consecutive failures", consecutiveFailures)
 		}
 
-		// --- Goal budget (optional; disabled when GoalBudgetCheck == nil) ---
-		// Only consulted for grouped tasks. On any exceeded cap, suspend the
-		// remaining group tasks (budget-limited) and exit cleanly so no new task
-		// is claimed.
-		halt, budgetErr := s.applyGoalBudget(ctx, t, opts, r)
-		if budgetErr != nil {
-			return budgetErr
-		}
-		if halt {
+		if goalLimited {
 			return nil
 		}
 
@@ -202,25 +205,24 @@ func (s *Service) RunLoop(
 	}
 }
 
-// applyGoalBudget consults opts.GoalBudgetCheck for grouped tasks. On any
-// exceeded cap it suspends the remaining group tasks (budget-limited) and
-// reports halt=true so RunLoop exits cleanly without claiming a new task.
-// Returns halt=false for ungrouped tasks or when no check is configured.
-func (s *Service) applyGoalBudget(ctx context.Context, t *task.Task, opts LoopOptions, r LoopResult) (halt bool, err error) {
-	if t.GroupID == "" || opts.GoalBudgetCheck == nil {
-		return false, nil
+func (s *Service) finalizeLoopInvocation(ctx context.Context, taskID string, attemptID int64, runErr error, goal task.GoalGroup, budgeted bool, stdoutTail, stderrTail *tailWriter) (runClassification, int64, bool, error) {
+	if !budgeted {
+		classification, err := s.classifyRun(ctx, taskID, runErr)
+		return classification, 0, false, err
 	}
-	reason, budgetErr := opts.GoalBudgetCheck(t.GroupID, r)
-	if budgetErr != nil {
-		return false, fmt.Errorf("goal budget check: %w", budgetErr)
+	classification := classifyAgentResult(runErr)
+	tokens, available := int64(0), true
+	if goal.MaxTokens > 0 {
+		tokens, available = parseGoalTokens(goal.TokenRegex, stdoutTail.Bytes(), stderrTail.Bytes())
 	}
-	if reason != BudgetOK {
-		if limitErr := s.store.BudgetLimitGroup(ctx, t.GroupID); limitErr != nil {
-			return false, fmt.Errorf("budget-limit group %s: %w", t.GroupID, limitErr)
-		}
-		return true, nil
+	finalized, err := s.store.FinalizeGoalInvocation(ctx, store.GoalFinalization{
+		TaskID: taskID, AttemptID: attemptID, Succeeded: !classification.failed, Error: classification.errText,
+		TokensUsed: tokens, TokensAvailable: available, Now: s.now(),
+	})
+	if err != nil {
+		return runClassification{}, 0, false, fmt.Errorf("finalize goal task %s: %w", taskID, err)
 	}
-	return false, nil
+	return classification, tokens, finalized.Limited, nil
 }
 
 // startHeartbeat launches a best-effort lease-heartbeat goroutine when
@@ -259,22 +261,32 @@ type runClassification struct {
 // means it should count toward the consecutive-failure breaker. A non-nil
 // error is fatal to the loop (store write failed).
 func (s *Service) classifyRun(ctx context.Context, taskID string, runErr error) (runClassification, error) {
-	switch {
-	case runErr == nil:
+	classification := classifyAgentResult(runErr)
+	switch classification.status {
+	case "done":
 		if doneErr := s.Done(ctx, taskID, "completed by afk loop"); doneErr != nil {
 			return runClassification{}, fmt.Errorf("mark done %s: %w", taskID, doneErr)
 		}
-		return runClassification{status: "done"}, nil
-	case errors.Is(runErr, ErrAgentTimeout):
+	case "timeout":
 		if failErr := s.Fail(ctx, taskID, "timeout"); failErr != nil {
 			return runClassification{}, fmt.Errorf("mark failed %s: %w", taskID, failErr)
 		}
-		return runClassification{status: "timeout", errText: runErr.Error(), failed: true}, nil
 	default:
 		if failErr := s.Fail(ctx, taskID, runErr.Error()); failErr != nil {
 			return runClassification{}, fmt.Errorf("mark failed %s: %w", taskID, failErr)
 		}
-		return runClassification{status: "failed", errText: runErr.Error(), failed: true}, nil
+	}
+	return classification, nil
+}
+
+func classifyAgentResult(runErr error) runClassification {
+	switch {
+	case runErr == nil:
+		return runClassification{status: "done"}
+	case errors.Is(runErr, ErrAgentTimeout):
+		return runClassification{status: "timeout", errText: runErr.Error(), failed: true}
+	default:
+		return runClassification{status: "failed", errText: runErr.Error(), failed: true}
 	}
 }
 

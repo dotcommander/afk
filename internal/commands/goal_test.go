@@ -75,7 +75,7 @@ func assertGoalDryRunGolden(t *testing.T) {
 	stdout, stderr := &bytes.Buffer{}, &bytes.Buffer{}
 	d := testDepsWithWriters(stdout, stderr)
 
-	root := NewRoot(d, "test")
+	root := newTestCLI(d, "test")
 	root.SetArgs([]string{
 		"--queue", queuePath,
 		"goal", "--dry-run", "--json",
@@ -88,7 +88,7 @@ func assertGoalDryRunGolden(t *testing.T) {
 	// Dry-run must not queue anything.
 	tasksOut := &bytes.Buffer{}
 	d2 := testDepsWithWriters(tasksOut, &bytes.Buffer{})
-	listRoot := NewRoot(d2, "test")
+	listRoot := newTestCLI(d2, "test")
 	listRoot.SetArgs([]string{"--queue", queuePath, "tasks", "--json"})
 	require.NoError(t, listRoot.Execute())
 	require.NotContains(t, tasksOut.String(), "add --csv flag to the report command")
@@ -106,7 +106,7 @@ func TestGoalApproval(t *testing.T) {
 		stdout, stderr = &bytes.Buffer{}, &bytes.Buffer{}
 		d := testDepsWithWriters(stdout, stderr)
 		d.Stdin = strings.NewReader(answer)
-		root := NewRoot(d, "test")
+		root := newTestCLI(d, "test")
 		root.SetArgs([]string{
 			"--queue", queuePath,
 			"goal",
@@ -124,7 +124,7 @@ func TestGoalApproval(t *testing.T) {
 
 		tasksOut := &bytes.Buffer{}
 		d := testDepsWithWriters(tasksOut, &bytes.Buffer{})
-		listRoot := NewRoot(d, "test")
+		listRoot := newTestCLI(d, "test")
 		listRoot.SetArgs([]string{"--queue", queuePath, "tasks", "--json"})
 		require.NoError(t, listRoot.Execute())
 		require.NotContains(t, tasksOut.String(), "add --csv flag to the report command")
@@ -137,7 +137,7 @@ func TestGoalApproval(t *testing.T) {
 
 		tasksOut := &bytes.Buffer{}
 		d := testDepsWithWriters(tasksOut, &bytes.Buffer{})
-		listRoot := NewRoot(d, "test")
+		listRoot := newTestCLI(d, "test")
 		listRoot.SetArgs([]string{"--queue", queuePath, "tasks", "--json"})
 		require.NoError(t, listRoot.Execute())
 		require.Contains(t, tasksOut.String(), "add --csv flag to the report command")

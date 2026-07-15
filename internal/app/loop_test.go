@@ -240,24 +240,18 @@ func addReadyInGroup(t *testing.T, svc *app.Service, groupID string, n int) []st
 	return ids
 }
 
-// Budget integration: GoalBudgetCheck trips after the first grouped iteration;
-// the loop halts cleanly and the remaining group tasks are tagged
-// budget-limited.
+// Durable budget integration accounts the first invocation in SQLite, then
+// limits the remaining dependency-chain members.
 func TestRunLoopBudget(t *testing.T) {
 	t.Parallel()
 	svc := newService(t)
 	ctx := context.Background()
-	ids := addReadyInGroup(t, svc, "g1", 3)
-
-	// Use the real accounting closure with MaxIterations=1 so the budget trips
-	// after exactly one iteration.
-	cfg := app.GoalConfig{MaxIterations: 1}
-	check := svc.NewGoalBudgetCheck(cfg)
+	require.NoError(t, svc.CreateGoal(ctx, "g1", "objective", app.GoalContract{Outcome: "done", Tasks: []string{"one", "two", "three"}}, "", app.GoalConfig{MaxIterations: 1}))
 
 	var results []app.LoopResult
 	err := svc.RunLoop(
 		ctx, minCfg("/usr/bin/true"),
-		app.LoopOptions{Worker: "w", GoalBudgetCheck: check},
+		app.LoopOptions{Worker: "w"},
 		nil, nil,
 		func(r app.LoopResult) error { results = append(results, r); return nil },
 	)
@@ -265,19 +259,17 @@ func TestRunLoopBudget(t *testing.T) {
 	require.Len(t, results, 1, "loop halts after the first iteration trips the budget")
 	require.Equal(t, "done", results[0].Status)
 
-	// First task completed; the remaining two are suspended budget-limited.
-	first, showErr := svc.Show(ctx, ids[0])
-	require.NoError(t, showErr)
-	require.Equal(t, task.StatusDone, first.Status)
-	for _, id := range ids[1:] {
-		got, e := svc.Show(ctx, id)
-		require.NoError(t, e)
-		require.Equal(t, task.StatusBudgetLimited, got.Status)
-	}
+	counts, countErr := svc.CountTasksByGroupID(ctx, "g1")
+	require.NoError(t, countErr)
+	require.Equal(t, 1, counts[string(task.StatusDone)])
+	require.Equal(t, 2, counts[string(task.StatusBudgetLimited)])
+	goal, goalErr := svc.GetGoalGroup(ctx, "g1")
+	require.NoError(t, goalErr)
+	require.Equal(t, int64(1), goal.IterationsUsed)
+	require.Equal(t, "max-iterations", goal.LimitReason)
 }
 
-// Nil-check path: when GoalBudgetCheck == nil the loop behaves identically to a
-// plain loop — all grouped tasks are processed, none budget-limited.
+// A plain non-goal group remains outside durable budget accounting.
 func TestRunLoopNoBudget(t *testing.T) {
 	t.Parallel()
 	svc := newService(t)

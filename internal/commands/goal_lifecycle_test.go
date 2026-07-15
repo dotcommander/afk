@@ -67,7 +67,7 @@ func TestGoalLifecycleApprovePath(t *testing.T) {
 		if stdin != "" {
 			d.Stdin = strings.NewReader(stdin)
 		}
-		root := NewRoot(d, "test")
+		root := newTestCLI(d, "test")
 		root.SetArgs(append([]string{"--queue", queuePath}, args...))
 		err := root.Execute()
 		return stdout.String(), stderr.String(), err
@@ -115,6 +115,19 @@ func TestGoalLifecycleApprovePath(t *testing.T) {
 	require.Contains(t, statusOut, "add CSV export to the report command") // raw objective
 	require.Contains(t, statusOut, "report command supports CSV export")   // contract outcome (in outcome field)
 	require.Contains(t, statusOut, "todo")
+	var statusReceipt struct {
+		Budget struct {
+			MaxTokens      int64 `json:"max_tokens"`
+			MaxIterations  int64 `json:"max_iterations"`
+			TokensUsed     int64 `json:"tokens_used"`
+			IterationsUsed int64 `json:"iterations_used"`
+		} `json:"budget"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(strings.TrimSpace(statusOut)), &statusReceipt))
+	require.Zero(t, statusReceipt.Budget.MaxTokens)
+	require.Zero(t, statusReceipt.Budget.MaxIterations)
+	require.Zero(t, statusReceipt.Budget.TokensUsed)
+	require.Zero(t, statusReceipt.Budget.IterationsUsed)
 
 	// Step 4: audit approve — output contains approved:true and disapproved:false.
 	auditOut, _, err := execCmd("", "goal", "audit", targetID, "--audit-command", approveAudit)
@@ -133,6 +146,57 @@ func TestGoalLifecycleApprovePath(t *testing.T) {
 		}
 	}
 	t.Fatalf("task %s not found after audit approve", targetID)
+}
+
+func TestGoalResumeCommandRequiresChangeAndReturnsBudget(t *testing.T) {
+	t.Parallel()
+	queuePath := filepath.Join(t.TempDir(), "tasks.sqlite")
+	setup := writeStubSetupAgent(t)
+	execCmd := func(stdin string, args ...string) (string, string, error) {
+		t.Helper()
+		stdout, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+		d := testDepsWithWriters(stdout, stderr)
+		if stdin != "" {
+			d.Stdin = strings.NewReader(stdin)
+		}
+		root := newTestCLI(d, "test")
+		root.SetArgs(append([]string{"--queue", queuePath}, args...))
+		err := root.Execute()
+		return stdout.String(), stderr.String(), err
+	}
+
+	_, stderr, err := execCmd("yes\n", "goal", "--setup-command", setup, "--max-iterations", "1", "bounded goal")
+	require.NoError(t, err, stderr)
+	tasksOut, _, err := execCmd("", "tasks", "--json")
+	require.NoError(t, err)
+	rows := parseGoalTaskRows(t, tasksOut)
+	require.NotEmpty(t, rows)
+	goalID := rows[0].GroupID
+
+	_, _, err = execCmd("", "goal", "resume", goalID)
+	require.ErrorContains(t, err, "at least one explicit budget change")
+	_, stderr, err = execCmd("", "loop", "--command", "/usr/bin/true", "--max-tasks", "1")
+	require.NoError(t, err, stderr)
+
+	resumeOut, stderr, err := execCmd("", "goal", "resume", goalID, "--max-iterations", "2")
+	require.NoError(t, err, stderr)
+	var receipt struct {
+		GoalID       string `json:"goal_id"`
+		ResumedTasks int    `json:"resumed_tasks"`
+		Budget       struct {
+			MaxIterations  int64  `json:"max_iterations"`
+			IterationsUsed int64  `json:"iterations_used"`
+			EpochStarted   string `json:"epoch_started"`
+			Reason         string `json:"reason"`
+		} `json:"budget"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(strings.TrimSpace(resumeOut)), &receipt))
+	require.Equal(t, goalID, receipt.GoalID)
+	require.Equal(t, 2, receipt.ResumedTasks)
+	require.Equal(t, int64(2), receipt.Budget.MaxIterations)
+	require.Equal(t, int64(1), receipt.Budget.IterationsUsed)
+	require.Empty(t, receipt.Budget.EpochStarted)
+	require.Empty(t, receipt.Budget.Reason)
 }
 
 // TestGoalLifecycleDisapproveRequeues proves that audit disapprove moves a
@@ -154,7 +218,7 @@ func TestGoalLifecycleDisapproveRequeues(t *testing.T) {
 		if stdin != "" {
 			d.Stdin = strings.NewReader(stdin)
 		}
-		root := NewRoot(d, "test")
+		root := newTestCLI(d, "test")
 		root.SetArgs(append([]string{"--queue", queuePath}, args...))
 		err := root.Execute()
 		return stdout.String(), stderr.String(), err

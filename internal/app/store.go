@@ -21,6 +21,7 @@ type Store interface {
 	Add(ctx context.Context, t task.Task) error
 	Update(ctx context.Context, id string, event task.EventType, message string, fn func(*task.Task) bool) error
 	UpdateFenced(ctx context.Context, id string, expectWorker string, event task.EventType, message string, fn func(*task.Task) bool) error
+	UpdateFencedTask(ctx context.Context, id string, expectWorker string, event task.EventType, message string, fn func(*task.Task) bool) (task.Task, error)
 	Delete(ctx context.Context, id string) error
 	// Prune physically removes matching rows. Public callers should prefer
 	// status=deleted so task history remains inspectable.
@@ -41,6 +42,7 @@ type Store interface {
 	// alphabetically. limit <= 0 means no limit.
 	RecentDistinctCWDs(ctx context.Context, limit int) ([]string, error)
 	AddGoalGroup(ctx context.Context, g task.GoalGroup) error
+	CreateGoal(ctx context.Context, g task.GoalGroup, tasks []task.Task) error
 	GetGoalGroup(ctx context.Context, id string) (task.GoalGroup, error)
 	UpdateGoalGroupStatus(ctx context.Context, id, status string) error
 	// CountTasksByGroupID returns per-status task counts for a single goal group.
@@ -49,6 +51,9 @@ type Store interface {
 	// setting their status to budget-limited. Done/failed/deleted tasks are left
 	// untouched.
 	BudgetLimitGroup(ctx context.Context, groupID string) error
+	PrepareGoalInvocation(ctx context.Context, taskID string, now time.Time) (task.GoalGroup, int64, bool, error)
+	FinalizeGoalInvocation(ctx context.Context, in store.GoalFinalization) (store.GoalFinalizeResult, error)
+	ResumeGoal(ctx context.Context, goalID string, changes store.GoalResumeChanges, now time.Time) (store.GoalResumeResult, error)
 }
 
 var _ Store = (*store.SQLiteStore)(nil)

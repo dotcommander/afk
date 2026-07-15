@@ -1,54 +1,46 @@
 package commands
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os"
 	"time"
 
-	"github.com/spf13/cobra"
-
 	"github.com/dotcommander/afk/internal/output"
 )
 
-func newSnapshotCmd(d *Deps) *cobra.Command {
-	var label string
-	var taskID string
-	var outputPath string
-
-	cmd := &cobra.Command{
-		Use:   "snapshot",
-		Short: "Export a read-only queue evidence snapshot",
-		RunE: func(cmd *cobra.Command, _ []string) error {
-			w, closeFn, err := snapshotWriter(d.Stdout, outputPath)
-			if err != nil {
-				return err
-			}
-			if err := writeSnapshot(cmd, d, w, label, taskID); err != nil {
-				_ = closeFn()
-				return err
-			}
-			return closeFn()
-		},
-	}
-	cmd.Flags().StringVar(&label, "label", "", "snapshot label, for example before or after")
-	cmd.Flags().StringVar(&taskID, "task", "", "include task details, events, and attempts")
-	cmd.Flags().StringVar(&outputPath, "output", "", "write snapshot JSON to path instead of stdout")
-	return cmd
+type SnapshotCmd struct {
+	Label      string   `help:"Snapshot label, for example before or after."`
+	TaskID     string   `name:"task" help:"Include task details, events, and attempts."`
+	OutputPath string   `name:"output" help:"Write snapshot JSON to path instead of stdout."`
+	Extra      []string `arg:"" optional:"" hidden:""`
 }
 
-func writeSnapshot(cmd *cobra.Command, d *Deps, w io.Writer, label, taskID string) error {
-	snapshot, err := d.Service.Status(cmd.Context())
+func (c *SnapshotCmd) Run(d *Deps, ctx context.Context) error {
+	w, closeFn, err := snapshotWriter(d.Stdout, c.OutputPath)
 	if err != nil {
 		return err
 	}
-	ready, err := d.Service.Ready(cmd.Context())
+	if err := writeSnapshot(ctx, d, w, c.Label, c.TaskID); err != nil {
+		_ = closeFn()
+		return err
+	}
+	return closeFn()
+}
+
+func writeSnapshot(ctx context.Context, d *Deps, w io.Writer, label, taskID string) error {
+	snapshot, err := d.Service.Status(ctx)
+	if err != nil {
+		return err
+	}
+	ready, err := d.Service.Ready(ctx)
 	if err != nil {
 		return err
 	}
 	var detail *output.SnapshotTaskDetail
 	if taskID != "" {
-		data, err := d.Service.Explain(cmd.Context(), taskID)
+		data, err := d.Service.Explain(ctx, taskID)
 		if err != nil {
 			return err
 		}

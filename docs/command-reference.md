@@ -10,25 +10,44 @@ The public command surface is intentionally small.
 
 | Command | Behavior |
 |---|---|
-| `afk add <body...>` | Append a new `todo` task and print its id. |
+| `afk add <body...> [--request-id ID]` | Append a new `todo` task and print its id. A request id replays the original result for identical actor and inputs. |
 | `afk add --dry-run [--json] <body...>` | Validate task shape and metadata without mutating the queue. |
 | `afk tasks [--status STATUS] [--stage VALUE] [--json]` | List tasks. Default hides `deleted`; use `--status deleted` or `--status all` when needed. `--stage` filters by pipeline label. |
 | `afk task <id> [--json]` | Show one task with metadata, dependencies, events, and attempts. |
 | `afk status [--summary] [--blocked] [--json]` | Print queue counts; without `--summary`, also includes `todo` and `doing` task lists. `--blocked` adds dependency blocker details. |
 | `afk find <query> [--status STATUS] [--json]` | Search id, body, status, cwd, source, tags, resource, agent, group, and error text. |
-| `afk take [--dry-run] [--limit N] [--lease DURATION] [--worker ID] [--json] [--summary] [--full] [--envelope]` | Preview or atomically claim the first ready task. |
-| `afk set <id> <status> [note...] [--note TEXT] [--note-file PATH|-] [--stage VALUE] [--json] [--summary]` | Move a task to `todo`, `doing`, `done`, `failed`, or `deleted`. |
+| `afk take [--dry-run] [--task ID] [--satisfy-gate NAME] [--limit N] [--lease DURATION] [--worker ID] [--json] [--summary] [--full] [--envelope]` | Preview or atomically claim ready work; exact owner claims can satisfy approved gates in the claim transaction. |
+| `afk set <id> <status> [note...] [--note TEXT] [--note-file PATH|-] [--stage VALUE] [--json] [--summary] [--request-id ID]` | Move a task to `todo`, `doing`, `done`, `failed`, or `deleted`. `--request-id` cannot be combined with `--summary` or any worker-fenced update. |
 | `afk relate <task-id> <related-id> [--type TYPE]` | Record a typed relation between two tasks. |
 | `afk gate add <task-id> <name>` | Add a named boolean precondition to a task. |
 | `afk gate satisfy <task-id> <name>` | Mark a named precondition satisfied. |
 | `afk retry <id> [--reason TEXT] [--json]` | Convenience command for reopening a failed task as `doing` with a new attempt. |
 | `afk snapshot [--label LABEL] [--task ID] [--output PATH]` | Export a read-only JSON evidence snapshot for before/after comparisons. |
-| `afk goal <objective> [--dry-run] [--json] [--cwd PATH] [--setup-command TEMPLATE] [--audit-command TEMPLATE] [--max-tokens N] [--max-iterations N] [--max-duration DURATION]` | Compile a free-text objective into an approved task contract and queue it as a dependency chain. |
-| `afk goal status <goalID>` | Show a goal group's durable record and member-task counts. |
+| `afk checkpoint add|list ...` | Append or list task-scoped progress records with immutable source metadata. |
+| `afk artifact add|list ...` | Append or list task-owned artifacts with immutable source metadata. |
+| `afk import vybe --source DIR --dry-run\|--apply` | Reconcile or atomically import operational state from a frozen `vybe-archive-v1` export. |
+| `afk goal <objective> [--dry-run] [--json] [--cwd PATH] [--setup-command TEMPLATE] [--audit-command TEMPLATE] [--max-tokens N] [--max-iterations N] [--max-duration DURATION] [--token-regex REGEX]` | Compile a free-text objective and atomically queue its group, tasks, events, dependency chain, and durable budgets. |
+| `afk goal status <goalID>` | Show a goal group's durable record, member-task counts, limits, cumulative usage, epoch, and limit reason/time. |
+| `afk goal resume <goalID> [--max-tokens N] [--max-iterations N] [--max-duration DURATION] [--token-regex REGEX]` | Explicitly change a budget, reset its duration epoch, and atomically requeue budget-limited members. |
 | `afk goal audit <taskID> [--audit-command TEMPLATE]` | Run the independent completion auditor on a task; re-queue on disapproval. |
 | `afk loop [--command TEMPLATE] [--worker ID] [--lease DURATION] [--timeout DURATION] [--cooldown DURATION] [--heartbeat DURATION] [--max-failures N] [--max-tasks N]` | Autonomous worker-driver: claim ready tasks and run an agent command per task. |
 | `afk prompt [--task ID] [--discover] [--output PATH]` | Emit LLM-agent instruction prompts. |
 | `afk serve [--addr HOST:PORT]` | Start the local web UI and API. |
+
+## idempotent mutations and Vybe import
+
+`--request-id` uses `(actor, request_id)` as the ledger key. `afk add --agent`
+supplies the actor; otherwise the CLI actor is `afk-cli`. The target and
+mutation parameters are hashed into the operation identity, so changed input
+collides instead of silently replaying another mutation. Successful replay
+returns the stored result.
+
+`afk import vybe --dry-run` parses and validates the archive before opening the
+transaction, produces the same reconciliation as `--apply`, and rolls back all
+task, event, checkpoint, artifact, gate, and receipt writes. `--apply` commits
+those writes and a source-SHA receipt together. Re-running an applied source
+returns its stored report. Historical telemetry, old receipts, non-task memory,
+and records outside active-task history remain in the immutable archive.
 
 ## take readiness
 
@@ -40,6 +59,12 @@ all hold:
 3. it has no unsatisfied gate
 
 `store.Ready` (SQL) is the single authority for readiness.
+
+An owner adapter with an explicit mapping can use `--task <id>`. Repeated
+`--satisfy-gate <name>` values are applied in the same transaction before the
+readiness predicate; if the task remains blocked, the transaction rolls back.
+Retrying with the same `--worker` returns that worker's active claim without
+adding a second attempt.
 
 Preview ready tasks without claiming:
 
@@ -100,7 +125,7 @@ afk tasks --stage triage
 ```
 
 `--stage` is a free-form human pipeline label (e.g. `triage`, `in-review`),
-independent of the five execution states; it does not affect readiness.
+independent of execution state; it does not affect readiness.
 `afk set <id> <status> --stage <value>` sets stage alongside the status change;
 omitting `--stage` leaves the existing stage unchanged. `afk tasks --stage <value>`
 filters by stage.
@@ -150,7 +175,11 @@ afk goal audit <taskID> --audit-command 'claude -p {{.Prompt}}'
 `goal status` shows the goal group's durable record and a count of its member
 tasks by status. The JSON response includes both the raw `objective` (as
 originally submitted by the user) and the contract `outcome` (the setup agent's
-restatement), plus status, creation time, and member-task counts by status.
+restatement), plus status, creation time, member-task counts, and a nested
+durable `budget` object.
+`goal resume` requires at least one explicit change. Resulting nonzero token
+and iteration caps must exceed recorded cumulative usage; token accounting
+also requires a regex with exactly one decimal capture group.
 `goal audit` runs the independent completion auditor on a task; it inspects real
 artifacts against the **raw user objective** (not the contract restatement), so
 it can catch setup-agent misinterpretation. It emits a terminal
@@ -199,6 +228,12 @@ exits cleanly (`0` = unlimited). Flags override the config file per run:
 Loop results are emitted as JSONL on stdout; agent output goes to stderr. See
 runner.md for the full driver workflow and how it compares to the external
 `afk take`/`afk set` loop.
+
+Grouped invocations are finalized and accounted transactionally by attempt.
+The loop preflights expired duration caps after claim and before spawn. When a
+token cap is active it streams output unchanged while retaining a bounded 1 MiB
+tail per stream, parses the last usable stdout match and then stderr, and fails
+closed as `token-usage-unavailable` when usage is absent or overflows.
 
 ## status diagnostics
 

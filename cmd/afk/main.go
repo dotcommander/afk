@@ -4,6 +4,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -31,13 +32,16 @@ func exitCode(err error) int {
 func run() error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	return execute(ctx, os.Args[1:], os.Stdout, os.Stderr)
+}
 
+func execute(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	d := &commands.Deps{
-		Logger: slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn})),
+		Logger: slog.New(slog.NewTextHandler(stderr, &slog.HandlerOptions{Level: slog.LevelWarn})),
 		Stdin:  os.Stdin,
-		Stdout: os.Stdout,
-		Stderr: os.Stderr,
+		Stdout: stdout,
+		Stderr: stderr,
 		Now:    time.Now,
 	}
-	return commands.NewRoot(d, version).ExecuteContext(ctx)
+	return commands.Execute(ctx, args, stdout, stderr, d, version)
 }

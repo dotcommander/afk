@@ -23,7 +23,7 @@ func TestLoopCommandFailsClosedWithNoCommand(t *testing.T) {
 	stdout, stderr := &bytes.Buffer{}, &bytes.Buffer{}
 	d := testDepsWithWriters(stdout, stderr)
 
-	root := NewRoot(d, "test")
+	root := newTestCLI(d, "test")
 	root.SetArgs([]string{"--queue", queuePath, "loop", "--command", ""})
 	err := root.Execute()
 	require.Error(t, err)

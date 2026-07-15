@@ -9,12 +9,15 @@ package app
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sync"
 	"time"
 
+	storepkg "github.com/dotcommander/afk/internal/store"
 	"github.com/dotcommander/afk/internal/task"
 	"gopkg.in/yaml.v3"
 )
@@ -202,6 +205,50 @@ func (s *Service) InsertGoalTasks(ctx context.Context, goalID string, contract G
 	return s.insertGoalTasks(ctx, goalID, contract.Tasks, cwd)
 }
 
+// ValidateGoalConfig checks durable budget invariants before any goal rows are
+// written. Token accounting is fail-closed whenever a token cap is configured.
+func ValidateGoalConfig(cfg GoalConfig) error {
+	if cfg.MaxTokens < 0 || cfg.MaxIterations < 0 || cfg.MaxDuration < 0 {
+		return errors.New("goal budget limits must be nonnegative")
+	}
+	if cfg.MaxTokens == 0 {
+		return nil
+	}
+	re, err := regexp.Compile(cfg.TokenRegex)
+	if err != nil {
+		return fmt.Errorf("compile token regex: %w", err)
+	}
+	if re.NumSubexp() != 1 {
+		return errors.New("token regex must contain exactly one decimal capture group")
+	}
+	return nil
+}
+
+// CreateGoal atomically persists the approved group, all task rows/events, and
+// its ordered dependency chain.
+func (s *Service) CreateGoal(ctx context.Context, goalID, objective string, contract GoalContract, cwd string, cfg GoalConfig) error {
+	if len(contract.Tasks) == 0 {
+		return ErrGoalNoTasks
+	}
+	if err := ValidateGoalConfig(cfg); err != nil {
+		return err
+	}
+	created := formatTime(s.now())
+	members := make([]task.Task, 0, len(contract.Tasks))
+	for _, body := range contract.Tasks {
+		opts := task.AddOptions{Body: body, GroupID: goalID, Source: "goal:" + goalID, CWD: cwd}
+		if err := task.ValidateAddOptions(opts); err != nil {
+			return err
+		}
+		members = append(members, s.newTask(opts))
+	}
+	return s.store.CreateGoal(ctx, task.GoalGroup{
+		ID: goalID, Objective: objective, Outcome: contract.Outcome, Status: "active",
+		CreatedAt: created, GroupID: goalID, MaxTokens: int64(cfg.MaxTokens),
+		MaxIterations: int64(cfg.MaxIterations), MaxDuration: cfg.MaxDuration, TokenRegex: cfg.TokenRegex,
+	}, members)
+}
+
 // insertGoalTasks inserts each task body in order, blocking task N on task N-1
 // (the contract DAG) and tagging each with GroupID=goalID. On any failure it
 // rolls back the already-inserted tasks by marking them deleted, so a partial
@@ -253,25 +300,33 @@ func (s *Service) CountTasksByGroupID(ctx context.Context, groupID string) (map[
 	return s.store.CountTasksByGroupID(ctx, groupID)
 }
 
-// NewGoalBudgetCheck returns a LoopOptions.GoalBudgetCheck closure that tracks
-// a per-group BudgetState in an in-memory map keyed by GroupID and reports the
-// first exceeded cap against cfg. It accounts each iteration (incrementing the
-// iteration count and adding r.TokensUsed) before evaluating the caps.
-//
-// No mutex guards the map: RunLoop drives iterations sequentially (single
-// goroutine), so the closure is never called concurrently.
-func (s *Service) NewGoalBudgetCheck(cfg GoalConfig) func(string, LoopResult) (BudgetLimitReason, error) {
-	states := make(map[string]*BudgetState)
-	return func(groupID string, r LoopResult) (BudgetLimitReason, error) {
-		st := states[groupID]
-		if st == nil {
-			st = &BudgetState{}
-			states[groupID] = st
-		}
-		now := s.now()
-		st.AccountIteration(r, r.TokensUsed, now)
-		return st.BudgetExceeded(cfg, now), nil
+// ResumeGoal validates explicit durable budget changes before requeueing the
+// goal's suspended members transactionally.
+func (s *Service) ResumeGoal(ctx context.Context, goalID string, changes storepkg.GoalResumeChanges) (storepkg.GoalResumeResult, error) {
+	if changes.MaxTokens == nil && changes.MaxIterations == nil && changes.MaxDuration == nil && changes.TokenRegex == nil {
+		return storepkg.GoalResumeResult{}, errors.New("goal resume requires at least one explicit budget change")
 	}
+	goal, err := s.GetGoalGroup(ctx, goalID)
+	if err != nil {
+		return storepkg.GoalResumeResult{}, err
+	}
+	cfg := GoalConfig{MaxTokens: int(goal.MaxTokens), MaxIterations: int(goal.MaxIterations), MaxDuration: goal.MaxDuration, TokenRegex: goal.TokenRegex}
+	if changes.MaxTokens != nil {
+		cfg.MaxTokens = int(*changes.MaxTokens)
+	}
+	if changes.MaxIterations != nil {
+		cfg.MaxIterations = int(*changes.MaxIterations)
+	}
+	if changes.MaxDuration != nil {
+		cfg.MaxDuration = *changes.MaxDuration
+	}
+	if changes.TokenRegex != nil {
+		cfg.TokenRegex = *changes.TokenRegex
+	}
+	if err := ValidateGoalConfig(cfg); err != nil {
+		return storepkg.GoalResumeResult{}, err
+	}
+	return s.store.ResumeGoal(ctx, goalID, changes, s.now())
 }
 
 // RecordGoalGroup persists the goal group row after user approval. The RAW

@@ -18,7 +18,7 @@ func TestPromptCommandWritesStdoutWithoutCreatingQueue(t *testing.T) {
 	queuePath := filepath.Join(dir, "tasks.sqlite")
 	var stdout bytes.Buffer
 	d := testDeps(&stdout)
-	root := NewRoot(d, "test")
+	root := newTestCLI(d, "test")
 	root.SetArgs([]string{"--queue", queuePath, "prompt"})
 
 	require.NoError(t, root.Execute())
@@ -41,7 +41,7 @@ func TestPromptCommandWritesOutputFile(t *testing.T) {
 	outputPath := filepath.Join(dir, "loop.md")
 	var stdout bytes.Buffer
 	d := testDeps(&stdout)
-	root := NewRoot(d, "test")
+	root := newTestCLI(d, "test")
 	root.SetArgs([]string{"--queue", queuePath, "prompt", "--output", outputPath})
 
 	require.NoError(t, root.Execute())
@@ -62,7 +62,7 @@ func TestPromptCmd_ExeNotAbsolute(t *testing.T) {
 	queuePath := filepath.Join(dir, "tasks.sqlite")
 	var stdout bytes.Buffer
 	d := testDeps(&stdout)
-	root := NewRoot(d, "test")
+	root := newTestCLI(d, "test")
 	root.SetArgs([]string{"--queue", queuePath, "prompt"})
 
 	require.NoError(t, root.Execute())
@@ -79,7 +79,7 @@ func TestPromptCommandDiscoverWritesStdoutWithoutCreatingQueue(t *testing.T) {
 	queuePath := filepath.Join(dir, "tasks.sqlite")
 	var stdout bytes.Buffer
 	d := testDeps(&stdout)
-	root := NewRoot(d, "test")
+	root := newTestCLI(d, "test")
 	root.SetArgs([]string{"--queue", queuePath, "prompt", "--discover"})
 
 	require.NoError(t, root.Execute())
@@ -107,7 +107,7 @@ func TestPromptCommandDiscoverFullWritesPolicy(t *testing.T) {
 	queuePath := filepath.Join(dir, "tasks.sqlite")
 	var stdout bytes.Buffer
 	d := testDeps(&stdout)
-	root := NewRoot(d, "test")
+	root := newTestCLI(d, "test")
 	root.SetArgs([]string{"--queue", queuePath, "prompt", "--discover", "--full"})
 
 	require.NoError(t, root.Execute())
@@ -138,7 +138,7 @@ func TestPromptCommandDiscoverRejectsPathArgument(t *testing.T) {
 	queuePath := filepath.Join(dir, "tasks.sqlite")
 	var stdout bytes.Buffer
 	d := testDeps(&stdout)
-	root := NewRoot(d, "test")
+	root := newTestCLI(d, "test")
 	root.SetArgs([]string{"--queue", queuePath, "prompt", "--discover", filepath.Join(dir, "project")})
 
 	err := root.Execute()
@@ -155,7 +155,7 @@ func TestPromptCommandDiscoverConflictsWithTask(t *testing.T) {
 	queuePath := filepath.Join(dir, "tasks.sqlite")
 	var stdout bytes.Buffer
 	d := testDeps(&stdout)
-	root := NewRoot(d, "test")
+	root := newTestCLI(d, "test")
 	root.SetArgs([]string{"--queue", queuePath, "prompt", "--discover", "--task", "1"})
 
 	err := root.Execute()
@@ -172,7 +172,7 @@ func TestPromptCommandFullRequiresDiscover(t *testing.T) {
 	queuePath := filepath.Join(dir, "tasks.sqlite")
 	var stdout bytes.Buffer
 	d := testDeps(&stdout)
-	root := NewRoot(d, "test")
+	root := newTestCLI(d, "test")
 	root.SetArgs([]string{"--queue", queuePath, "prompt", "--full"})
 
 	err := root.Execute()

@@ -17,10 +17,16 @@ const sqliteBusyRetryDelay = 25 * time.Millisecond
 // migration function is added below.
 const (
 	schemaVersionKey     = "schema_version"
-	currentSchemaVersion = 8
+	currentSchemaVersion = 11
+	schemaTableTasks     = "tasks"
+	canonicalStatusTodo  = "todo"
+	canonicalStatusDoing = "doing"
 )
 
 func (s *SQLiteStore) init(ctx context.Context) error {
+	if err := s.rejectNewerSchema(ctx); err != nil {
+		return err
+	}
 	if err := s.createBaseSchema(ctx); err != nil {
 		return err
 	}
@@ -50,7 +56,8 @@ CREATE TABLE IF NOT EXISTS tasks (
 	group_id TEXT NOT NULL DEFAULT '',
 	resource_key TEXT NOT NULL DEFAULT '',
 	stage TEXT NOT NULL DEFAULT '',
-	ordinal INTEGER NOT NULL
+	ordinal INTEGER NOT NULL,
+	revision INTEGER NOT NULL DEFAULT 1
 );
 CREATE INDEX IF NOT EXISTS tasks_status_order_idx ON tasks(status, ordinal);
 CREATE INDEX IF NOT EXISTS tasks_group_id_status_idx ON tasks(group_id, status);
@@ -94,14 +101,74 @@ CREATE TABLE IF NOT EXISTS task_gates (
 	PRIMARY KEY (task_id, name)
 );
 CREATE INDEX IF NOT EXISTS task_gates_task_idx ON task_gates(task_id, satisfied);
+CREATE TABLE IF NOT EXISTS request_ledger (
+	actor TEXT NOT NULL,
+	request_id TEXT NOT NULL,
+	operation TEXT NOT NULL,
+	state TEXT NOT NULL,
+	result_json TEXT NOT NULL DEFAULT '',
+	created_at TEXT NOT NULL,
+	completed_at TEXT NOT NULL DEFAULT '',
+	PRIMARY KEY (actor, request_id)
+);
+CREATE TABLE IF NOT EXISTS task_checkpoints (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	task_id TEXT NOT NULL,
+	kind TEXT NOT NULL,
+	checkpoint_key TEXT NOT NULL DEFAULT '',
+	value_json TEXT NOT NULL,
+	source_system TEXT NOT NULL,
+	source_id TEXT NOT NULL,
+	source_event_id INTEGER,
+	created_at TEXT NOT NULL,
+	UNIQUE(task_id, source_system, source_id)
+);
+CREATE INDEX IF NOT EXISTS task_checkpoints_task_idx ON task_checkpoints(task_id, id);
+CREATE TABLE IF NOT EXISTS task_artifacts (
+	id TEXT PRIMARY KEY,
+	task_id TEXT NOT NULL,
+	path TEXT NOT NULL,
+	content_type TEXT NOT NULL DEFAULT '',
+	metadata_json TEXT NOT NULL DEFAULT '{}',
+	source_system TEXT NOT NULL,
+	source_id TEXT NOT NULL,
+	source_event_id INTEGER,
+	created_at TEXT NOT NULL,
+	UNIQUE(task_id, source_system, source_id)
+);
+CREATE INDEX IF NOT EXISTS task_artifacts_task_idx ON task_artifacts(task_id, created_at, id);
+CREATE TABLE IF NOT EXISTS vybe_imports (
+	source_sha256 TEXT PRIMARY KEY,
+	cutover_id TEXT NOT NULL,
+	report_json TEXT NOT NULL,
+	imported_at TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS goal_groups (
 	id TEXT PRIMARY KEY,
 	objective TEXT NOT NULL DEFAULT '',
 	outcome TEXT NOT NULL DEFAULT '',
 	status TEXT NOT NULL DEFAULT '',
 	created TEXT NOT NULL DEFAULT '',
-	group_id TEXT NOT NULL DEFAULT ''
+	group_id TEXT NOT NULL DEFAULT '',
+	max_tokens INTEGER NOT NULL DEFAULT 0,
+	max_iterations INTEGER NOT NULL DEFAULT 0,
+	max_duration_ns INTEGER NOT NULL DEFAULT 0,
+	token_regex TEXT NOT NULL DEFAULT '',
+	budget_epoch_started TEXT NOT NULL DEFAULT '',
+	tokens_used INTEGER NOT NULL DEFAULT 0,
+	iterations_used INTEGER NOT NULL DEFAULT 0,
+	limit_reason TEXT NOT NULL DEFAULT '',
+	limited_at TEXT NOT NULL DEFAULT ''
 );
+CREATE TABLE IF NOT EXISTS goal_iterations (
+	goal_id TEXT NOT NULL,
+	attempt_id INTEGER NOT NULL,
+	task_id TEXT NOT NULL,
+	tokens_used INTEGER NOT NULL DEFAULT 0,
+	completed_at TEXT NOT NULL,
+	PRIMARY KEY (goal_id, attempt_id)
+);
+CREATE INDEX IF NOT EXISTS goal_iterations_task_idx ON goal_iterations(task_id);
 CREATE VIRTUAL TABLE IF NOT EXISTS tasks_fts USING fts5(
 	id UNINDEXED,
 	status,
@@ -145,7 +212,10 @@ func (s *SQLiteStore) runMigrationsIfNeeded(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	if version >= currentSchemaVersion {
+	if version > currentSchemaVersion {
+		return fmt.Errorf("store: schema version %d is newer than supported version %d", version, currentSchemaVersion)
+	}
+	if version == currentSchemaVersion {
 		return nil
 	}
 	if err := s.migrateTaskMetadata(ctx); err != nil {
@@ -169,7 +239,107 @@ func (s *SQLiteStore) runMigrationsIfNeeded(ctx context.Context) error {
 	if err := s.migrateV8FTSUpdateScope(ctx); err != nil {
 		return err
 	}
+	if err := s.migrateV9RequestLedger(ctx); err != nil {
+		return err
+	}
+	if err := s.migrateV10RetirementState(ctx); err != nil {
+		return err
+	}
+	if err := s.migrateV11DurableGoals(ctx); err != nil {
+		return err
+	}
 	return s.writeSchemaVersion(ctx, currentSchemaVersion)
+}
+
+// rejectNewerSchema runs before bootstrap DDL so opening a database produced by
+// a newer AFK binary is fail-closed and side-effect free.
+func (s *SQLiteStore) rejectNewerSchema(ctx context.Context) error {
+	var metadataExists int
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='metadata'`).Scan(&metadataExists); err != nil {
+		return fmt.Errorf("store: create schema preflight: %w", err)
+	}
+	if metadataExists == 0 {
+		return nil
+	}
+	version, err := s.readSchemaVersion(ctx)
+	if err != nil {
+		return err
+	}
+	if version > currentSchemaVersion {
+		return fmt.Errorf("store: schema version %d is newer than supported version %d", version, currentSchemaVersion)
+	}
+	return nil
+}
+
+func (s *SQLiteStore) migrateV11DurableGoals(ctx context.Context) error {
+	columns := []string{
+		`ALTER TABLE goal_groups ADD COLUMN max_tokens INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE goal_groups ADD COLUMN max_iterations INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE goal_groups ADD COLUMN max_duration_ns INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE goal_groups ADD COLUMN token_regex TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE goal_groups ADD COLUMN budget_epoch_started TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE goal_groups ADD COLUMN tokens_used INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE goal_groups ADD COLUMN iterations_used INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE goal_groups ADD COLUMN limit_reason TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE goal_groups ADD COLUMN limited_at TEXT NOT NULL DEFAULT ''`,
+	}
+	for _, statement := range columns {
+		if _, err := s.db.ExecContext(ctx, statement); err != nil && !isDuplicateColumn(err) {
+			return fmt.Errorf("store: migrate durable goal column: %w", err)
+		}
+	}
+	if _, err := s.db.ExecContext(ctx, `
+CREATE TABLE IF NOT EXISTS goal_iterations (
+	goal_id TEXT NOT NULL,
+	attempt_id INTEGER NOT NULL,
+	task_id TEXT NOT NULL,
+	tokens_used INTEGER NOT NULL DEFAULT 0,
+	completed_at TEXT NOT NULL,
+	PRIMARY KEY (goal_id, attempt_id)
+);
+CREATE INDEX IF NOT EXISTS goal_iterations_task_idx ON goal_iterations(task_id);
+CREATE TRIGGER IF NOT EXISTS tasks_revision_au AFTER UPDATE ON tasks
+WHEN new.revision = old.revision
+BEGIN
+	UPDATE tasks SET revision = old.revision + 1 WHERE id = old.id;
+END;`); err != nil {
+		return fmt.Errorf("store: migrate durable goals: %w", err)
+	}
+	return nil
+}
+
+func (s *SQLiteStore) migrateV10RetirementState(ctx context.Context) error {
+	statements := []string{
+		`ALTER TABLE tasks ADD COLUMN revision INTEGER NOT NULL DEFAULT 1`,
+		`CREATE TABLE IF NOT EXISTS task_checkpoints (id INTEGER PRIMARY KEY AUTOINCREMENT, task_id TEXT NOT NULL, kind TEXT NOT NULL, checkpoint_key TEXT NOT NULL DEFAULT '', value_json TEXT NOT NULL, source_system TEXT NOT NULL, source_id TEXT NOT NULL, source_event_id INTEGER, created_at TEXT NOT NULL, UNIQUE(task_id, source_system, source_id))`,
+		`CREATE INDEX IF NOT EXISTS task_checkpoints_task_idx ON task_checkpoints(task_id, id)`,
+		`CREATE TABLE IF NOT EXISTS task_artifacts (id TEXT PRIMARY KEY, task_id TEXT NOT NULL, path TEXT NOT NULL, content_type TEXT NOT NULL DEFAULT '', metadata_json TEXT NOT NULL DEFAULT '{}', source_system TEXT NOT NULL, source_id TEXT NOT NULL, source_event_id INTEGER, created_at TEXT NOT NULL, UNIQUE(task_id, source_system, source_id))`,
+		`CREATE INDEX IF NOT EXISTS task_artifacts_task_idx ON task_artifacts(task_id, created_at, id)`,
+		`CREATE TABLE IF NOT EXISTS vybe_imports (source_sha256 TEXT PRIMARY KEY, cutover_id TEXT NOT NULL, report_json TEXT NOT NULL, imported_at TEXT NOT NULL)`,
+	}
+	for i, statement := range statements {
+		if _, err := s.db.ExecContext(ctx, statement); err != nil && (i != 0 || !strings.Contains(err.Error(), "duplicate column name")) {
+			return fmt.Errorf("store: migrate retirement state: %w", err)
+		}
+	}
+	return nil
+}
+
+func (s *SQLiteStore) migrateV9RequestLedger(ctx context.Context) error {
+	if _, err := s.db.ExecContext(ctx, `
+CREATE TABLE IF NOT EXISTS request_ledger (
+	actor TEXT NOT NULL,
+	request_id TEXT NOT NULL,
+	operation TEXT NOT NULL,
+	state TEXT NOT NULL,
+	result_json TEXT NOT NULL DEFAULT '',
+	created_at TEXT NOT NULL,
+	completed_at TEXT NOT NULL DEFAULT '',
+	PRIMARY KEY (actor, request_id)
+)`); err != nil {
+		return fmt.Errorf("store: migrate request ledger: %w", err)
+	}
+	return nil
 }
 
 // readSchemaVersion returns the recorded schema_version. A missing row
@@ -264,10 +434,10 @@ func (s *SQLiteStore) migrateStatusNames(ctx context.Context) error {
 		to    string
 		query string
 	}{
-		{table: "tasks", from: legacyStatusPending, to: "todo", query: `UPDATE tasks SET status = ? WHERE status = ?`},
-		{table: "tasks", from: legacyStatusWorking, to: "doing", query: `UPDATE tasks SET status = ? WHERE status = ?`},
-		{table: "task_attempts", from: legacyStatusPending, to: "todo", query: `UPDATE task_attempts SET status = ? WHERE status = ?`},
-		{table: "task_attempts", from: legacyStatusWorking, to: "doing", query: `UPDATE task_attempts SET status = ? WHERE status = ?`},
+		{table: schemaTableTasks, from: legacyStatusPending, to: canonicalStatusTodo, query: `UPDATE tasks SET status = ? WHERE status = ?`},
+		{table: schemaTableTasks, from: legacyStatusWorking, to: canonicalStatusDoing, query: `UPDATE tasks SET status = ? WHERE status = ?`},
+		{table: "task_attempts", from: legacyStatusPending, to: canonicalStatusTodo, query: `UPDATE task_attempts SET status = ? WHERE status = ?`},
+		{table: "task_attempts", from: legacyStatusWorking, to: canonicalStatusDoing, query: `UPDATE task_attempts SET status = ? WHERE status = ?`},
 	}
 	for _, update := range updates {
 		if _, err := s.db.ExecContext(ctx, update.query, update.to, update.from); err != nil {

@@ -68,7 +68,7 @@ afk goal status e74d05ef-0819-4dbe-990b-568936b6c369
 ```
 
 ```json
-{"id":"e74d05ef-0819-4dbe-990b-568936b6c369","objective":"add CSV export to the report command","outcome":"report command supports CSV export","status":"active","created_at":"2026-06-03T20:31:38Z","group_id":"e74d05ef-0819-4dbe-990b-568936b6c369","task_counts":{"todo":3}}
+{"id":"e74d05ef-0819-4dbe-990b-568936b6c369","objective":"add CSV export to the report command","outcome":"report command supports CSV export","status":"active","created_at":"2026-06-03T20:31:38Z","group_id":"e74d05ef-0819-4dbe-990b-568936b6c369","task_counts":{"todo":3},"budget":{"max_tokens":0,"max_iterations":0,"max_duration_ns":0,"token_regex":"","tokens_used":0,"iterations_used":0,"epoch_started":"","reason":"","limited_at":""}}
 ```
 
 - `objective` — your **raw** words, exactly as typed.
@@ -110,7 +110,22 @@ afk goal audit 1f1c995d-462c-41fc-a9ba-5ac90e6d5589
 |------|-----|
 | `--max-iterations N` | stop after N agent iterations (0 = unlimited) |
 | `--max-duration D` | wall-clock cap, e.g. `30m` (0 = unlimited) |
-| `--max-tokens N` | token budget — only enforced when `token_regex` can parse a count from agent output (0 = unlimited) |
+| `--max-tokens N` | cumulative token budget; requires `token_regex` and fails closed when usage is unavailable (0 = unlimited) |
+
+Limits and usage are stored in SQLite. Iterations and tokens remain cumulative
+across restarts; duration begins at the first invocation in an epoch. A
+nonzero token cap requires `token_regex` with exactly one decimal capture group.
+If the bounded output tail contains no parseable usage, AFK fails closed with
+`token-usage-unavailable` and marks remaining members `budget-limited`.
+
+Resume after explicitly raising or changing at least one cap:
+
+```sh
+afk goal resume <goalID> --max-iterations 20
+```
+
+Resume resets the duration epoch and atomically requeues every limited member;
+cumulative token and iteration usage is preserved.
 
 The objective is HTML-escaped before it reaches the prompt (it is untrusted data) and is capped at 4000 characters.
 
@@ -135,6 +150,7 @@ The objective is HTML-escaped before it reaches the prompt (it is untrusted data
 | `--json` | print the contract as JSON and skip approval (does not queue) |
 | `--cwd PATH` | working directory recorded on queued tasks |
 | `--max-tokens N` / `--max-iterations N` / `--max-duration D` | per-goal caps |
+| `--token-regex REGEX` | exactly one decimal capture group for token usage |
 | `--queue PATH` | queue DB path (or `AFK_QUEUE`) |
 
 See also: [`afk loop`](using-loop.md) · [command reference](command-reference.md#goal) · [configuration](configuration.md).

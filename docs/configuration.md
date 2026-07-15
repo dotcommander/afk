@@ -76,7 +76,11 @@ Both `setup_command` and `audit_command` are empty by default: the workflow is
 fail-closed, so `afk goal` errors until you configure a setup command and
 `afk goal audit` errors until an audit command is configured.
 
-The token budget (`max_tokens`) only trips when the agent emits a count that
-`token_regex` can parse; with the default empty `token_regex`, recorded token
-usage stays `0` and the token cap never fires. The iteration
-(`max_iterations`) and wall-clock (`max_duration`) caps always apply.
+A nonzero token budget requires a compilable `token_regex` with exactly one
+decimal capture group. During grouped invocations, AFK streams agent output
+unchanged and retains only a 1 MiB tail per stream for accounting. It uses the
+last parseable stdout match, then stderr; missing or overflowing usage fails
+closed as `token-usage-unavailable`. Iteration and token usage are cumulative
+and restart-persistent. Duration is measured from the first invocation in the
+current epoch; `afk goal resume` resets that epoch without clearing cumulative
+usage.

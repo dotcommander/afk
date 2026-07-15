@@ -28,7 +28,7 @@ func (s *SQLiteStore) SatisfyGate(ctx context.Context, taskID, name string) erro
 	satisfiedAt := s.nowString()
 	res, err := s.db.ExecContext(ctx, `
 UPDATE task_gates
-SET satisfied = 1, satisfied_at = ?
+SET satisfied = 1, satisfied_at = COALESCE(satisfied_at, ?)
 WHERE task_id = ? AND name = ?`, satisfiedAt, taskID, name)
 	if err != nil {
 		return fmt.Errorf("store: satisfy gate %q on task %s: %w", name, taskID, err)

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -14,10 +15,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/require"
 
 	"github.com/dotcommander/afk/internal/app"
+	"github.com/dotcommander/afk/internal/store"
 	"github.com/dotcommander/afk/internal/task"
 )
 
@@ -32,7 +33,7 @@ func TestCommandsLifecycleThroughRoot(t *testing.T) {
 		t.Helper()
 		stdout.Reset()
 		stderr.Reset()
-		root := NewRoot(d, "test")
+		root := newTestCLI(d, "test")
 		root.SetArgs(append([]string{"--queue", queuePath}, args...))
 		require.NoError(t, root.Execute(), "stderr: %s", stderr.String())
 		return stdout.String()
@@ -69,6 +70,27 @@ func TestCommandsLifecycleThroughRoot(t *testing.T) {
 	require.Contains(t, run("tasks", "--status", "deleted"), failedID)
 }
 
+func TestFormatVybeImportReportIsCompleteAndDeterministic(t *testing.T) {
+	t.Parallel()
+	report := store.VybeImportReport{
+		SourceSHA256:        "abc123",
+		CutoverID:           "cutover-1",
+		DryRun:              true,
+		AlreadyImported:     false,
+		SourceRows:          map[string]int64{"tasks": 3, "artifacts": 1},
+		ImportedTasks:       2,
+		ImportedEvents:      4,
+		ImportedCheckpoints: 5,
+		ImportedArtifacts:   1,
+		ArchivedOnly:        map[string]int64{"projects": 2, "events": 1},
+		ArchivedOrphans:     map[string]int64{"events": 1},
+	}
+	require.Equal(t,
+		"vybe import source_sha256=abc123 cutover_id=cutover-1 mode=dry-run replay=false source_rows={artifacts=1,tasks=3} imported={artifacts=1,checkpoints=5,events=4,tasks=2} archived_only={agent_state=0,artifacts=0,events=1,idempotency=0,memory=0,projects=2} archived_orphans={artifacts=0,events=1,memory=0}",
+		formatVybeImportReport(report),
+	)
+}
+
 func TestTakeDryRunFullAndEnvelope(t *testing.T) {
 	t.Parallel()
 
@@ -80,7 +102,7 @@ func TestTakeDryRunFullAndEnvelope(t *testing.T) {
 		t.Helper()
 		stdout.Reset()
 		stderr.Reset()
-		root := NewRoot(d, "test")
+		root := newTestCLI(d, "test")
 		root.SetArgs(append([]string{"--queue", queuePath}, args...))
 		require.NoError(t, root.Execute(), "stderr: %s", stderr.String())
 		return stdout.String()
@@ -127,7 +149,7 @@ func TestTakeHelpIncludesAgentLoop(t *testing.T) {
 
 	stdout, stderr := &bytes.Buffer{}, &bytes.Buffer{}
 	d := testDepsWithWriters(stdout, stderr)
-	root := NewRoot(d, "test")
+	root := newTestCLI(d, "test")
 	root.SetOut(stdout)
 	root.SetErr(stderr)
 	root.SetArgs([]string{"take", "--help"})
@@ -152,7 +174,7 @@ func TestTakeDryRunLimitZeroReturnsAllReadyTasks(t *testing.T) {
 		t.Helper()
 		stdout.Reset()
 		stderr.Reset()
-		root := NewRoot(d, "test")
+		root := newTestCLI(d, "test")
 		root.SetArgs(append([]string{"--queue", queuePath}, args...))
 		require.NoError(t, root.Execute(), "stderr: %s", stderr.String())
 		return stdout.String()
@@ -177,7 +199,7 @@ func TestTakeExplainsNoReadyTasksBlockedByResourceLock(t *testing.T) {
 		t.Helper()
 		stdout.Reset()
 		stderr.Reset()
-		root := NewRoot(d, "test")
+		root := newTestCLI(d, "test")
 		root.SetArgs(append([]string{"--queue", queuePath}, args...))
 		return root.Execute()
 	}
@@ -203,7 +225,7 @@ func TestTakeSummaryJSON(t *testing.T) {
 		t.Helper()
 		stdout.Reset()
 		stderr.Reset()
-		root := NewRoot(d, "test")
+		root := newTestCLI(d, "test")
 		root.SetArgs(append([]string{"--queue", queuePath}, args...))
 		require.NoError(t, root.Execute(), "stderr: %s", stderr.String())
 		return stdout.String()
@@ -244,14 +266,14 @@ func TestTakeUsesCurrentCommandNameInWriteErrors(t *testing.T) {
 		t.Helper()
 		d.Stdout = stdout
 		stdout.Reset()
-		root := NewRoot(d, "test")
+		root := newTestCLI(d, "test")
 		root.SetArgs(append([]string{"--queue", queuePath}, args...))
 		return root.Execute()
 	}
 
 	require.NoError(t, run("add", "--no-cwd", "take write error task"))
 	d.Stdout = commandFailWriter{}
-	root := NewRoot(d, "test")
+	root := newTestCLI(d, "test")
 	root.SetArgs([]string{"--queue", queuePath, "take"})
 	err := root.Execute()
 	require.Error(t, err)
@@ -268,7 +290,7 @@ func TestTakeRejectsInvalidClaimWithCurrentCommandName(t *testing.T) {
 		t.Helper()
 		stdout.Reset()
 		stderr.Reset()
-		root := NewRoot(d, "test")
+		root := newTestCLI(d, "test")
 		root.SetArgs(append([]string{"--queue", queuePath}, args...))
 		return root.Execute()
 	}
@@ -292,7 +314,7 @@ func TestSetNoteFlagsAndSummary(t *testing.T) {
 		t.Helper()
 		stdout.Reset()
 		stderr.Reset()
-		root := NewRoot(d, "test")
+		root := newTestCLI(d, "test")
 		root.SetArgs(append([]string{"--queue", queuePath}, args...))
 		require.NoError(t, root.Execute(), "stderr: %s", stderr.String())
 		return stdout.String()
@@ -320,7 +342,7 @@ func TestSetDoingCreatesRetryAttempt(t *testing.T) {
 		t.Helper()
 		stdout.Reset()
 		stderr.Reset()
-		root := NewRoot(d, "test")
+		root := newTestCLI(d, "test")
 		root.SetArgs(append([]string{"--queue", queuePath}, args...))
 		require.NoError(t, root.Execute(), "stderr: %s", stderr.String())
 		return stdout.String()
@@ -354,7 +376,7 @@ func TestSetTerminalRequiresCompletionNote(t *testing.T) {
 		t.Helper()
 		stdout.Reset()
 		stderr.Reset()
-		root := NewRoot(d, "test")
+		root := newTestCLI(d, "test")
 		root.SetArgs(append([]string{"--queue", queuePath}, args...))
 		return root.Execute()
 	}
@@ -388,10 +410,31 @@ func TestSetTerminalRequiresCompletionNote(t *testing.T) {
 	require.Equal(t, "done", currentStatus(t, d, queuePath, noteID))
 }
 
+func TestSetForcePreservesWorkerFenceAndReceipt(t *testing.T) {
+	t.Parallel()
+	queuePath := filepath.Join(t.TempDir(), "tasks.sqlite")
+	stdout, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	d := testDepsWithWriters(stdout, stderr)
+	exec := func(args ...string) error {
+		stdout.Reset()
+		stderr.Reset()
+		root := newTestCLI(d, "test")
+		root.SetArgs(append([]string{"--queue", queuePath}, args...))
+		return root.Execute()
+	}
+	require.NoError(t, exec("add", "--no-cwd", "worker task"))
+	id := strings.TrimSpace(stdout.String())
+	require.NoError(t, exec("take", "--worker", "owner", "--lease", "30m"))
+	require.ErrorIs(t, exec("set", id, "todo", "--worker", "stale", "--json"), store.ErrWorkerMismatch)
+	require.ErrorIs(t, exec("set", id, "done", "--force", "--worker", "stale", "--json"), store.ErrWorkerMismatch)
+	require.NoError(t, exec("set", id, "done", "--force", "--worker", "owner", "--json"))
+	require.JSONEq(t, `{"id":"`+id+`","status":"done","title":"worker task"}`, stdout.String())
+}
+
 func currentStatus(t *testing.T, d *Deps, queuePath, id string) string {
 	t.Helper()
 	buf := &bytes.Buffer{}
-	root := NewRoot(d, "test")
+	root := newTestCLI(d, "test")
 	saved := d.Stdout
 	d.Stdout = buf
 	defer func() { d.Stdout = saved }()
@@ -413,7 +456,7 @@ func TestRetryCommandCreatesRetryAttempt(t *testing.T) {
 		t.Helper()
 		stdout.Reset()
 		stderr.Reset()
-		root := NewRoot(d, "test")
+		root := newTestCLI(d, "test")
 		root.SetArgs(append([]string{"--queue", queuePath}, args...))
 		require.NoError(t, root.Execute(), "stderr: %s", stderr.String())
 		return stdout.String()
@@ -448,7 +491,7 @@ func TestRetryCommandDefaultReason(t *testing.T) {
 		t.Helper()
 		stdout.Reset()
 		stderr.Reset()
-		root := NewRoot(d, "test")
+		root := newTestCLI(d, "test")
 		root.SetArgs(append([]string{"--queue", queuePath}, args...))
 		require.NoError(t, root.Execute(), "stderr: %s", stderr.String())
 		return stdout.String()
@@ -471,7 +514,7 @@ func TestSnapshotCommandJSONAndOutputFile(t *testing.T) {
 		t.Helper()
 		stdout.Reset()
 		stderr.Reset()
-		root := NewRoot(d, "test")
+		root := newTestCLI(d, "test")
 		root.SetArgs(append([]string{"--queue", queuePath}, args...))
 		require.NoError(t, root.Execute(), "stderr: %s", stderr.String())
 		return stdout.String()
@@ -524,7 +567,7 @@ func TestStatusSummaryJSON(t *testing.T) {
 		t.Helper()
 		stdout.Reset()
 		stderr.Reset()
-		root := NewRoot(d, "test")
+		root := newTestCLI(d, "test")
 		root.SetArgs(append([]string{"--queue", queuePath}, args...))
 		require.NoError(t, root.Execute(), "stderr: %s", stderr.String())
 		return stdout.String()
@@ -557,7 +600,7 @@ func TestStatusShowsClaimDiagnostics(t *testing.T) {
 		t.Helper()
 		stdout.Reset()
 		stderr.Reset()
-		root := NewRoot(d, "test")
+		root := newTestCLI(d, "test")
 		root.SetArgs(append([]string{"--queue", queuePath}, args...))
 		require.NoError(t, root.Execute(), "stderr: %s", stderr.String())
 		return stdout.String()
@@ -594,7 +637,7 @@ func TestStatusBlockedExplainsDependencyBlockers(t *testing.T) {
 		t.Helper()
 		stdout.Reset()
 		stderr.Reset()
-		root := NewRoot(d, "test")
+		root := newTestCLI(d, "test")
 		root.SetArgs(append([]string{"--queue", queuePath}, args...))
 		require.NoError(t, root.Execute(), "stderr: %s", stderr.String())
 		return stdout.String()
@@ -633,7 +676,7 @@ func TestOldCommandsAreNotPublic(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			stdout, stderr := &bytes.Buffer{}, &bytes.Buffer{}
-			root := NewRoot(testDepsWithWriters(stdout, stderr), "test")
+			root := newTestCLI(testDepsWithWriters(stdout, stderr), "test")
 			root.SetArgs([]string{"--queue", filepath.Join(t.TempDir(), "tasks.sqlite"), name})
 			err := root.Execute()
 			require.Error(t, err)
@@ -646,7 +689,7 @@ func TestStatusCommandEmptyQueue(t *testing.T) {
 	t.Parallel()
 
 	stdout, stderr := &bytes.Buffer{}, &bytes.Buffer{}
-	root := NewRoot(testDepsWithWriters(stdout, stderr), "test")
+	root := newTestCLI(testDepsWithWriters(stdout, stderr), "test")
 	root.SetArgs([]string{"--queue", filepath.Join(t.TempDir(), "tasks.sqlite"), "status"})
 	require.NoError(t, root.Execute(), "stderr: %s", stderr.String())
 
@@ -686,7 +729,7 @@ func TestCommandVariantsAndErrorPaths(t *testing.T) {
 		t.Helper()
 		stdout.Reset()
 		stderr.Reset()
-		root := NewRoot(d, "test")
+		root := newTestCLI(d, "test")
 		root.SetArgs(append([]string{"--queue", queuePath}, args...))
 		return root.Execute()
 	}
@@ -732,7 +775,7 @@ func TestAddDryRunDiagnoseForceAndDefaults(t *testing.T) {
 		t.Helper()
 		stdout.Reset()
 		stderr.Reset()
-		root := NewRoot(d, "test")
+		root := newTestCLI(d, "test")
 		root.SetArgs(append([]string{"--queue", queuePath}, args...))
 		return root.Execute()
 	}
@@ -786,7 +829,7 @@ func TestAddCommandOptionErrorsAndBlockedBy(t *testing.T) {
 		t.Helper()
 		stdout.Reset()
 		stderr.Reset()
-		root := NewRoot(d, "test")
+		root := newTestCLI(d, "test")
 		root.SetArgs(append([]string{"--queue", queuePath}, args...))
 		return root.Execute()
 	}
@@ -829,28 +872,9 @@ func TestAddCommandHelpers(t *testing.T) {
 	require.NoError(t, writeAddDryRunResult(d, true))
 	require.JSONEq(t, `{"valid":true}`, strings.TrimSpace(stdout.String()))
 
-	cmd := &cobra.Command{}
-	err := addValidationError(cmd, task.AddOptions{Source: "task-discovery"}, task.ErrInvalidTask)
+	err := addValidationError(context.Background(), task.AddOptions{Source: "task-discovery"}, task.ErrInvalidTask)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "generated/discovery tasks")
-	require.True(t, cmd.SilenceUsage)
-	require.True(t, cmd.SilenceErrors)
-}
-
-func TestJSONByIDCommandPassesIDAndJSONFlag(t *testing.T) {
-	t.Parallel()
-
-	var gotID string
-	var gotJSON bool
-	cmd := newJSONByIDCmd("thing <id>", "show thing", "emit json", func(_ context.Context, id string, asJSON bool) error {
-		gotID = id
-		gotJSON = asJSON
-		return nil
-	})
-	cmd.SetArgs([]string{"abc", "--json"})
-	require.NoError(t, cmd.Execute())
-	require.Equal(t, "abc", gotID)
-	require.True(t, gotJSON)
 }
 
 func TestCommandRunEPropagatesServiceErrors(t *testing.T) {
@@ -862,25 +886,23 @@ func TestCommandRunEPropagatesServiceErrors(t *testing.T) {
 
 	for _, tc := range []struct {
 		name string
-		cmd  *cobra.Command
 		args []string
 	}{
-		{name: "tasks", cmd: newTasksCmd(d)},
-		{name: "find", cmd: newFindCmd(d), args: []string{"x"}},
-		{name: "status", cmd: newStatusCmd(d)},
-		{name: "task", cmd: newTaskCmd(d), args: []string{"id"}},
-		{name: "set", cmd: newSetCmd(d), args: []string{"id", "done", "--force"}},
-		{name: "take dry-run", cmd: newTakeCmd(d), args: []string{"--dry-run"}},
-		{name: "take claim", cmd: newTakeCmd(d)},
-		{name: "retry", cmd: newRetryCmd(d), args: []string{"id"}},
-		{name: "snapshot", cmd: newSnapshotCmd(d)},
-		{name: "requeue", cmd: newRequeueStaleCmd(d), args: []string{"--older-than", "1s"}},
-		{name: "heartbeat", cmd: newHeartbeatCmd(d), args: []string{"id", "--worker", "worker"}},
+		{name: "tasks", args: []string{"tasks"}},
+		{name: "find", args: []string{"find", "x"}},
+		{name: "status", args: []string{"status"}},
+		{name: "task", args: []string{"task", "id"}},
+		{name: "set", args: []string{"set", "id", "done", "--force"}},
+		{name: "take dry-run", args: []string{"take", "--dry-run"}},
+		{name: "take claim", args: []string{"take"}},
+		{name: "retry", args: []string{"retry", "id"}},
+		{name: "snapshot", args: []string{"snapshot"}},
+		{name: "requeue", args: []string{"requeue-stale", "--older-than", "1s"}},
+		{name: "heartbeat", args: []string{"heartbeat", "id", "--worker", "worker"}},
 	} {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
-			tc.cmd.SetArgs(tc.args)
-			err := tc.cmd.Execute()
+			err := Execute(context.Background(), tc.args, d.Stdout, d.Stderr, d, "test")
 			require.ErrorIs(t, err, boom)
 		})
 	}
@@ -902,7 +924,7 @@ func TestRunTakeClaimIncludesValidationContextWhenAutoFailFails(t *testing.T) {
 		claimed:           claimed,
 	}, time.Now)
 
-	err := runTakeClaim(&cobra.Command{}, d, 0, "worker-1", false, false, false)
+	err := runTakeClaim(context.Background(), d, 0, "worker-1", "", nil, false, false, false)
 	require.ErrorIs(t, err, boom)
 	require.Contains(t, err.Error(), "forced-invalid")
 	require.Contains(t, err.Error(), "invalid claimed task")
@@ -916,8 +938,7 @@ func TestRunAddForcePropagatesDependencyError(t *testing.T) {
 	d.Service = app.NewService(&commandDependencyErrorStore{}, time.Now)
 	t.Setenv("AFK_ALLOW_FORCE", "1")
 
-	cmd := &cobra.Command{}
-	err := runAddForce(cmd, d, task.AddOptions{Body: "forced"}, "dep", true)
+	err := runAddForce(context.Background(), d, task.AddOptions{Body: "forced"}, "dep", true)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "dependency boom")
 	require.Contains(t, stderr.String(), "warning: --force")
@@ -930,7 +951,7 @@ func TestRunAddForcePropagatesWarningWriteError(t *testing.T) {
 	d.Service = app.NewService(&commandDependencyErrorStore{}, time.Now)
 	t.Setenv("AFK_ALLOW_FORCE", "1")
 
-	err := runAddForce(&cobra.Command{}, d, task.AddOptions{Body: "forced"}, "", true)
+	err := runAddForce(context.Background(), d, task.AddOptions{Body: "forced"}, "", true)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "write failed")
 }
@@ -943,8 +964,7 @@ func TestRunAddNormalPropagatesDependencyError(t *testing.T) {
 	st := &commandDependencyErrorStore{}
 	d.Service = app.NewService(st, time.Now)
 
-	cmd := &cobra.Command{}
-	err := runAddNormal(cmd, d, task.AddOptions{Body: "normal"}, "dep", true)
+	err := runAddNormal(context.Background(), d, task.AddOptions{Body: "normal"}, "dep", true)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "dependency boom")
 	require.Empty(t, st.tasks)
@@ -957,7 +977,7 @@ func TestRunAddNormalPropagatesResultWriteError(t *testing.T) {
 	d.Stdout = commandFailWriter{}
 	d.Service = app.NewService(&commandDependencyErrorStore{}, time.Now)
 
-	err := runAddNormal(&cobra.Command{}, d, task.AddOptions{Body: "normal"}, "", true)
+	err := runAddNormal(context.Background(), d, task.AddOptions{Body: "normal"}, "", true)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "write failed")
 }
@@ -967,7 +987,7 @@ func TestRunAddDiagnosePropagatesWriterError(t *testing.T) {
 
 	d := testDepsWithWriters(&bytes.Buffer{}, &bytes.Buffer{})
 	d.Stderr = commandFailWriter{}
-	err := runAddDiagnose(&cobra.Command{}, d, task.AddOptions{
+	err := runAddDiagnose(context.Background(), d, task.AddOptions{
 		Body:   "",
 		Source: "task-discovery",
 	})
@@ -986,7 +1006,7 @@ func TestMaintenanceCommands(t *testing.T) {
 		t.Helper()
 		stdout.Reset()
 		stderr.Reset()
-		root := NewRoot(d, "test")
+		root := newTestCLI(d, "test")
 		root.SetArgs(append([]string{"--queue", queuePath}, args...))
 		return root.Execute()
 	}
@@ -1045,7 +1065,7 @@ func TestTakeRejectsInvalidClaimAndServeValidation(t *testing.T) {
 		t.Helper()
 		stdout.Reset()
 		stderr.Reset()
-		root := NewRoot(d, "test")
+		root := newTestCLI(d, "test")
 		root.SetArgs(append([]string{"--queue", queuePath}, args...))
 		return root.Execute()
 	}
@@ -1065,7 +1085,7 @@ func TestTakeRejectsInvalidClaimAndServeValidation(t *testing.T) {
 	serveOut := &lockedBuffer{}
 	serveErr := &lockedBuffer{}
 	ctx, cancel := context.WithCancel(context.Background())
-	root := NewRoot(&Deps{
+	root := newTestCLI(&Deps{
 		Logger: slog.New(slog.NewTextHandler(&bytes.Buffer{}, nil)),
 		Stdout: serveOut,
 		Stderr: serveErr,
@@ -1087,9 +1107,7 @@ func TestTakeRejectsInvalidClaimAndServeValidation(t *testing.T) {
 	badStderrDeps := testDepsWithWriters(&bytes.Buffer{}, &bytes.Buffer{})
 	badStderrDeps.Service = d.Service
 	badStderrDeps.Stderr = commandFailWriter{}
-	serve := newServeCmd(badStderrDeps)
-	serve.SetArgs([]string{"--addr", "0.0.0.0:0"})
-	err = serve.Execute()
+	err = Execute(context.Background(), []string{"--queue", queuePath, "serve", "--addr", "0.0.0.0:0"}, badStderrDeps.Stdout, badStderrDeps.Stderr, badStderrDeps, "test")
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "write warning")
 }
@@ -1110,6 +1128,45 @@ func testDepsWithWriters(stdout, stderr *bytes.Buffer) *Deps {
 		Stderr: stderr,
 		Now:    func() time.Time { return time.Date(2025, 1, 2, 3, 4, 5, 0, time.UTC) },
 	}
+}
+
+// testCLI keeps invocation setup concise while exercising the real Kong parser.
+type testCLI struct {
+	d       *Deps
+	version string
+	ctx     context.Context
+	args    []string
+	stdout  io.Writer
+	stderr  io.Writer
+}
+
+func newTestCLI(d *Deps, version string) *testCLI {
+	return &testCLI{d: d, version: version, ctx: context.Background()}
+}
+
+func (c *testCLI) SetArgs(args []string)          { c.args = args }
+func (c *testCLI) SetOut(w io.Writer)             { c.stdout = w }
+func (c *testCLI) SetErr(w io.Writer)             { c.stderr = w }
+func (c *testCLI) SetContext(ctx context.Context) { c.ctx = ctx }
+func (c *testCLI) Execute() error {
+	stdout, stderr := c.stdout, c.stderr
+	if stdout == nil {
+		stdout = c.d.Stdout
+	}
+	if stderr == nil {
+		stderr = c.d.Stderr
+	}
+	return Execute(c.ctx, c.args, stdout, stderr, c.d, c.version)
+}
+func (c *testCLI) ExecuteContext(ctx context.Context) error {
+	stdout, stderr := c.stdout, c.stderr
+	if stdout == nil {
+		stdout = c.d.Stdout
+	}
+	if stderr == nil {
+		stderr = c.d.Stderr
+	}
+	return Execute(ctx, c.args, stdout, stderr, c.d, c.version)
 }
 
 type commandErrorStore struct {

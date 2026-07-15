@@ -183,10 +183,6 @@ func (s *SQLiteStore) Add(ctx context.Context, t task.Task) error {
 // AddWithDependency inserts t and its blocking dependency in one transaction.
 // If the dependency edge cannot be recorded, the task row is not left claimable.
 func (s *SQLiteStore) AddWithDependency(ctx context.Context, t task.Task, dependsOnID string) error {
-	relType, err := validateRelation(t.ID, dependsOnID, task.RelationBlocks)
-	if err != nil {
-		return err
-	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("store: begin add with dependency: %w", err)
@@ -199,26 +195,7 @@ func (s *SQLiteStore) AddWithDependency(ctx context.Context, t task.Task, depend
 	if err := s.insertEvent(ctx, tx, t.ID, task.EventAdded, t.Created, ""); err != nil {
 		return err
 	}
-	if _, err := getTask(ctx, tx, dependsOnID); err != nil {
-		return err
-	}
-	cycle, err := dependencyPathExists(ctx, tx, dependsOnID, t.ID)
-	if err != nil {
-		return err
-	}
-	if cycle {
-		return ErrDependencyCycle
-	}
-	edge := relationEdge{
-		taskID:    t.ID,
-		relatedID: dependsOnID,
-		relType:   relType,
-		created:   s.nowString(),
-	}
-	if err := s.insertRelation(ctx, tx, edge); err != nil {
-		return err
-	}
-	if err := s.recordRelationEvent(ctx, tx, edge, ""); err != nil {
+	if err := s.addDependencyInTx(ctx, tx, t.ID, dependsOnID); err != nil {
 		return err
 	}
 	return commit(tx)
@@ -247,12 +224,13 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 
 // Update mutates one task. If fn returns false, no write occurs.
 func (s *SQLiteStore) Update(ctx context.Context, id string, event task.EventType, message string, fn func(*task.Task) bool) error {
-	return s.updateImpl(ctx, taskUpdate{
+	_, err := s.updateImpl(ctx, taskUpdate{
 		id:      id,
 		event:   event,
 		message: message,
 		mutate:  fn,
 	})
+	return err
 }
 
 type taskUpdate struct {
@@ -263,53 +241,66 @@ type taskUpdate struct {
 	mutate       func(*task.Task) bool
 }
 
-func (s *SQLiteStore) updateImpl(ctx context.Context, update taskUpdate) error {
+func (s *SQLiteStore) updateImpl(ctx context.Context, update taskUpdate) (task.Task, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		return fmt.Errorf("store: begin update: %w", err)
+		return task.Task{}, fmt.Errorf("store: begin update: %w", err)
 	}
 	defer rollback(tx)
 
 	t, err := getTask(ctx, tx, update.id)
 	if err != nil {
-		return err
+		return task.Task{}, err
 	}
 	if update.expectWorker != "" {
 		if t.Status != task.StatusDoing {
-			return ErrWorkerMismatch
+			return task.Task{}, ErrWorkerMismatch
 		}
 		var owner string
 		err := tx.QueryRowContext(ctx, `SELECT worker_id FROM task_attempts WHERE task_id = ? AND finished = '' ORDER BY id DESC LIMIT 1`, update.id).Scan(&owner)
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {
-			return fmt.Errorf("store: fence owner lookup %s: %w", update.id, err)
+			return task.Task{}, fmt.Errorf("store: fence owner lookup %s: %w", update.id, err)
 		}
 		if owner != update.expectWorker {
-			return ErrWorkerMismatch
+			return task.Task{}, ErrWorkerMismatch
 		}
 	}
 	if !update.mutate(&t) {
-		return nil
+		return t, nil
 	}
 	if _, err := tx.ExecContext(ctx, `
 UPDATE tasks
 SET created = ?, status = ?, body = ?, started = ?, lease_expires = ?, finished = ?, error = ?,
-	priority = ?, tags = ?, cwd = ?, source = ?, agent = ?, group_id = ?, resource_key = ?, stage = ?
+	priority = ?, tags = ?, cwd = ?, source = ?, agent = ?, group_id = ?, resource_key = ?, stage = ?, revision = revision + 1
 WHERE id = ?`,
 		t.Created, string(t.Status), t.Body, t.Started, t.LeaseExpires, t.Finished, t.Error,
 		t.Priority, encodeTags(t.Tags), t.CWD, t.Source, t.Agent, t.GroupID, t.ResourceKey, t.Stage, t.ID); err != nil {
-		return fmt.Errorf("store: update task %s: %w", update.id, err)
+		return task.Task{}, fmt.Errorf("store: update task %s: %w", update.id, err)
 	}
 	at := s.eventTime(t)
 	if err := s.insertEvent(ctx, tx, update.id, update.event, at, update.message); err != nil {
-		return err
+		return task.Task{}, err
 	}
 	if err := updateAttemptForEvent(ctx, tx, t, update.event, at, update.message); err != nil {
-		return err
+		return task.Task{}, err
 	}
-	return commit(tx)
+	if err := refreshGoalStatus(ctx, tx, t.GroupID); err != nil {
+		return task.Task{}, err
+	}
+	if err := commit(tx); err != nil {
+		return task.Task{}, err
+	}
+	return t, nil
 }
 
+// UpdateFenced mutates a task only when expectWorker owns its active attempt.
 func (s *SQLiteStore) UpdateFenced(ctx context.Context, id string, expectWorker string, event task.EventType, message string, fn func(*task.Task) bool) error {
+	_, err := s.UpdateFencedTask(ctx, id, expectWorker, event, message, fn)
+	return err
+}
+
+// UpdateFencedTask mutates a worker-owned task and returns the committed snapshot.
+func (s *SQLiteStore) UpdateFencedTask(ctx context.Context, id string, expectWorker string, event task.EventType, message string, fn func(*task.Task) bool) (task.Task, error) {
 	return s.updateImpl(ctx, taskUpdate{
 		id:           id,
 		expectWorker: expectWorker,
@@ -327,6 +318,10 @@ func (s *SQLiteStore) Delete(ctx context.Context, id string) error {
 	}
 	defer rollback(tx)
 
+	t, err := getTask(ctx, tx, id)
+	if err != nil {
+		return err
+	}
 	res, err := tx.ExecContext(ctx, `DELETE FROM tasks WHERE id = ?`, id)
 	if err != nil {
 		return fmt.Errorf("store: delete task %s: %w", id, err)
@@ -340,6 +335,11 @@ func (s *SQLiteStore) Delete(ctx context.Context, id string) error {
 	}
 	if err := s.insertEvent(ctx, tx, id, task.EventRemoved, "", ""); err != nil {
 		return err
+	}
+	if t.GroupID != "" {
+		if err := refreshGoalStatusWithFallback(ctx, tx, t.GroupID, "failed"); err != nil {
+			return err
+		}
 	}
 	return commit(tx)
 }

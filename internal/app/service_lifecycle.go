@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"time"
 
@@ -45,8 +46,24 @@ func (s *Service) SetStatusWithStage(ctx context.Context, id string, status task
 	return s.setStatus(ctx, id, status, message, stage, false, "")
 }
 
+// SetStatusWithStageWorker applies a worker-fenced lifecycle transition.
 func (s *Service) SetStatusWithStageWorker(ctx context.Context, id string, status task.Status, message string, stage *string, workerID string) error {
-	return s.setStatus(ctx, id, status, message, stage, false, workerID)
+	_, err := s.SetStatusWithStageWorkerTask(ctx, id, status, message, stage, false, workerID)
+	return err
+}
+
+// SetStatusWithStageWorkerTask applies a worker-fenced transition and returns its committed snapshot.
+func (s *Service) SetStatusWithStageWorkerTask(ctx context.Context, id string, status task.Status, message string, stage *string, force bool, workerID string) (task.Task, error) {
+	status, ok := task.ParseStatus(string(status))
+	if !ok {
+		return task.Task{}, task.ErrInvalidStatus
+	}
+	if !force && isTerminalStatus(status) && strings.TrimSpace(message) == "" {
+		return task.Task{}, task.ErrMissingCompletionNote
+	}
+	return s.store.UpdateFencedTask(ctx, id, workerID, eventForStatus(status), message, func(t *task.Task) bool {
+		return s.applyStatusAndStage(t, status, message, stage)
+	})
 }
 
 // SetStatusWithStageForce is the explicit escape hatch for terminal
@@ -54,6 +71,50 @@ func (s *Service) SetStatusWithStageWorker(ctx context.Context, id string, statu
 // SetStatusWithStage; CLI --force is the intended use for this method.
 func (s *Service) SetStatusWithStageForce(ctx context.Context, id string, status task.Status, message string, stage *string) error {
 	return s.setStatus(ctx, id, status, message, stage, true, "")
+}
+
+// SetStatusWithRequest performs a lifecycle mutation exactly once.
+func (s *Service) SetStatusWithRequest(ctx context.Context, actor, requestID, id string, status task.Status, message string, stage *string, force bool) (task.Task, bool, error) {
+	hasRequestID := requestID != ""
+	actor = strings.TrimSpace(actor)
+	requestID = strings.TrimSpace(requestID)
+	if hasRequestID && requestID == "" {
+		return task.Task{}, false, errors.New("request id must not be blank")
+	}
+	if requestID == "" {
+		err := s.setStatus(ctx, id, status, message, stage, force, "")
+		if err != nil {
+			return task.Task{}, false, err
+		}
+		updated, err := s.store.Get(ctx, id)
+		return updated, false, err
+	}
+	status, ok := task.ParseStatus(string(status))
+	if !ok {
+		return task.Task{}, false, task.ErrInvalidStatus
+	}
+	if !force && isTerminalStatus(status) && strings.TrimSpace(message) == "" {
+		return task.Task{}, false, task.ErrMissingCompletionNote
+	}
+	requested, ok := s.store.(interface {
+		UpdateRequested(context.Context, string, string, string, string, task.EventType, string, func(*task.Task) bool) (task.Task, bool, error)
+	})
+	if !ok {
+		return task.Task{}, false, errors.New("request id is unsupported by this store")
+	}
+	operation, err := requestOperation("task.set", struct {
+		ID      string      `json:"id"`
+		Status  task.Status `json:"status"`
+		Message string      `json:"message"`
+		Stage   *string     `json:"stage,omitempty"`
+		Force   bool        `json:"force"`
+	}{id, status, message, stage, force})
+	if err != nil {
+		return task.Task{}, false, err
+	}
+	return requested.UpdateRequested(ctx, actor, requestID, operation, id, eventForStatus(status), message, func(t *task.Task) bool {
+		return s.applyStatusAndStage(t, status, message, stage)
+	})
 }
 
 func (s *Service) setStatus(ctx context.Context, id string, status task.Status, message string, stage *string, force bool, workerID string) error {
@@ -111,6 +172,19 @@ func (s *Service) Prune(ctx context.Context, statuses []task.Status) (int, error
 func (s *Service) Take(ctx context.Context, lease time.Duration, workerID, agent string) (*task.Task, error) {
 	now := s.now()
 	return s.store.ClaimNextForWorker(ctx, now, leaseExpires(now, lease), workerOrDefault(workerID), agent)
+}
+
+// TakeTask atomically claims one explicit ready task and optionally satisfies
+// owner-approved gates in the same transaction.
+func (s *Service) TakeTask(ctx context.Context, id string, lease time.Duration, workerID, agent string, satisfyGates []string) (*task.Task, error) {
+	claimer, ok := s.store.(interface {
+		ClaimTaskForWorker(context.Context, string, time.Time, time.Time, string, string, []string) (*task.Task, error)
+	})
+	if !ok {
+		return nil, errors.New("explicit task claim is unsupported by this store")
+	}
+	now := s.now()
+	return claimer.ClaimTaskForWorker(ctx, id, now, leaseExpires(now, lease), workerOrDefault(workerID), agent, satisfyGates)
 }
 
 // Heartbeat extends a worker-owned active claim lease.

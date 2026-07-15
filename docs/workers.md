@@ -21,14 +21,14 @@ the receipt also includes queue counts and `ready_remaining`. Use the task
 Finalize explicitly:
 
 ```sh
-afk set 1 done --note "verified" --summary
-afk set 1 failed --note "missing credentials" --summary
+afk set 1 done --note "verified" --worker codex:1 --summary
+afk set 1 failed --note "missing credentials" --worker codex:1 --summary
 ```
 
 Use `--note-file -` when evidence contains shell-awkward characters:
 
 ```sh
-printf '%s\n' "$evidence" | afk set 1 done --note-file - --summary
+printf '%s\n' "$evidence" | afk set 1 done --note-file - --worker codex:1 --summary
 ```
 
 Retry one specific failed task by opening a new attempt directly:
@@ -57,14 +57,19 @@ afk add "resume the abandoned work from task 1"
 There is no built-in `afk run` process supervisor. To automate execution, wrap the same primitives:
 
 ```sh
-while task_json=$(afk take --lease 30m --worker "worker:$$" --summary); do
+worker="worker:$$"
+while task_json=$(afk take --lease 30m --worker "$worker" --summary); do
   test -n "$task_json" || break
   id=$(printf '%s\n' "$task_json" | jq -r .task.id)
   body=$(printf '%s\n' "$task_json" | jq -r .task.body)
   if agent-command "$body"; then
-    afk set "$id" done --note "agent-command completed" --summary
+    afk set "$id" done --note "agent-command completed" --worker "$worker" --summary
   else
-    afk set "$id" failed --note "agent-command failed" --summary
+    afk set "$id" failed --note "agent-command failed" --worker "$worker" --summary
   fi
 done
 ```
+
+`--force` bypasses only the terminal completion-note requirement. When
+`--worker` is supplied, ownership fencing remains mandatory even with
+`--force`.

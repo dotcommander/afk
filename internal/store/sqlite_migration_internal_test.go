@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/dotcommander/afk/internal/task"
 	"github.com/stretchr/testify/require"
 )
 
@@ -75,6 +76,69 @@ func TestMigrationAppliesOnFreshDBMissingMetadataRow(t *testing.T) {
 	require.Equal(t, currentSchemaVersion, version)
 }
 
+func TestSchemaV11RejectsNewerDatabaseBeforeBootstrapMutation(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "tasks.sqlite")
+	s, err := NewSQLite(ctx, Paths{SQLitePath: path})
+	require.NoError(t, err)
+	require.NoError(t, s.writeSchemaVersion(ctx, currentSchemaVersion+1))
+	require.NoError(t, s.Close())
+
+	raw, err := sql.Open("sqlite", sqliteDSN(path))
+	require.NoError(t, err)
+	_, err = raw.ExecContext(ctx, `DROP TABLE goal_iterations`)
+	require.NoError(t, err)
+	require.NoError(t, raw.Close())
+
+	_, err = NewSQLite(ctx, Paths{SQLitePath: path})
+	require.ErrorContains(t, err, "newer than supported")
+	check, err := sql.Open("sqlite", sqliteDSN(path))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = check.Close() })
+	var count int
+	require.NoError(t, check.QueryRowContext(ctx, `SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='goal_iterations'`).Scan(&count))
+	require.Zero(t, count, "forward-schema rejection must happen before bootstrap DDL")
+}
+
+func TestSchemaV11RevisionTriggerCatchesLegacyWriter(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "tasks.sqlite")
+	s, err := NewSQLite(ctx, Paths{SQLitePath: path})
+	require.NoError(t, err)
+	require.NoError(t, s.Add(ctx, task.Task{ID: "legacy", Status: task.StatusTodo, Body: "before"}))
+	require.NoError(t, s.Close())
+	raw, err := sql.Open("sqlite", sqliteDSN(path))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = raw.Close() })
+	_, err = raw.ExecContext(ctx, `UPDATE tasks SET body='after' WHERE id='legacy'`)
+	require.NoError(t, err)
+	var revision int64
+	require.NoError(t, raw.QueryRowContext(ctx, `SELECT revision FROM tasks WHERE id='legacy'`).Scan(&revision))
+	require.Equal(t, int64(2), revision)
+}
+
+func TestSchemaV11UpgradeKeepsLegacyGoalsUnlimited(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "tasks.sqlite")
+	s, err := NewSQLite(ctx, Paths{SQLitePath: path})
+	require.NoError(t, err)
+	_, err = s.db.ExecContext(ctx, `DROP TABLE goal_groups; CREATE TABLE goal_groups (id TEXT PRIMARY KEY, objective TEXT NOT NULL DEFAULT '', outcome TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT '', created TEXT NOT NULL DEFAULT '', group_id TEXT NOT NULL DEFAULT ''); INSERT INTO goal_groups(id,status,group_id) VALUES ('goal','active','goal')`)
+	require.NoError(t, err)
+	require.NoError(t, s.writeSchemaVersion(ctx, 10))
+	require.NoError(t, s.Close())
+	reopened, err := NewSQLite(ctx, Paths{SQLitePath: path})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = reopened.Close() })
+	goal, err := reopened.GetGoalGroup(ctx, "goal")
+	require.NoError(t, err)
+	require.Zero(t, goal.MaxTokens)
+	require.Zero(t, goal.MaxIterations)
+	require.Zero(t, goal.MaxDuration)
+}
+
 // TestMigrationV5ToV6 confirms that a DB recorded at schema version 5 is
 // migrated cleanly to version 6 on the next open. Version 6 is a no-op slot
 // (StatusBudgetLimited adds no columns), so the only observable change is the
@@ -102,7 +166,7 @@ func TestMigrationV5ToV6(t *testing.T) {
 	version, err := s2.readSchemaVersion(ctx)
 	require.NoError(t, err)
 	require.Equal(t, currentSchemaVersion, version)
-	require.Equal(t, 8, currentSchemaVersion)
+	require.Equal(t, 11, currentSchemaVersion)
 }
 
 // TestMigrationV7ToV8FTSUpdateScope confirms that a DB recorded at schema
@@ -130,7 +194,7 @@ func TestMigrationV7ToV8FTSUpdateScope(t *testing.T) {
 	version, err := s2.readSchemaVersion(ctx)
 	require.NoError(t, err)
 	require.Equal(t, currentSchemaVersion, version)
-	require.Equal(t, 8, currentSchemaVersion)
+	require.Equal(t, 11, currentSchemaVersion)
 
 	// Drive raw UPDATEs through a probe connection and assert FTS contents
 	// via the matchinfo-free count of rows whose body matches.

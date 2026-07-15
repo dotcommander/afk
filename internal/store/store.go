@@ -3,6 +3,7 @@ package store
 
 import (
 	"errors"
+	"fmt"
 )
 
 // ErrNotFound is returned when a task id is absent.
@@ -25,3 +26,17 @@ var ErrDuplicateTask = errors.New("duplicate task")
 
 // ErrWorkerMismatch is returned when worker-owned state is modified by another worker.
 var ErrWorkerMismatch = errors.New("worker mismatch")
+
+// ErrRequestCollision reports reuse of one actor/request id for a different operation.
+var ErrRequestCollision = errors.New("request id collision")
+
+// ConflictError reports a failed optimistic write against a stale task revision.
+type ConflictError struct {
+	TaskID   string
+	Expected int64
+	Current  int64
+}
+
+func (e *ConflictError) Error() string {
+	return fmt.Sprintf("task %s revision conflict: expected %d, current %d", e.TaskID, e.Expected, e.Current)
+}

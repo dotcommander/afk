@@ -30,7 +30,7 @@ func (s *SQLiteStore) ClaimNextForWorker(ctx context.Context, now time.Time, lea
 
 	row := tx.QueryRowContext(ctx, `
 UPDATE tasks
-SET status = ?, started = ?, lease_expires = ?
+SET status = ?, started = ?, lease_expires = ?, revision = revision + 1
 WHERE id = (
 	SELECT id
 	FROM tasks
@@ -56,10 +56,86 @@ INSERT INTO task_attempts (task_id, started, status, error, worker_id, agent)
 VALUES (?, ?, ?, ?, ?, ?)`, t.ID, started, string(task.StatusDoing), "", workerID, agent); err != nil {
 		return nil, fmt.Errorf("store: insert attempt: %w", err)
 	}
+	if err := refreshGoalStatus(ctx, tx, t.GroupID); err != nil {
+		return nil, err
+	}
 	if err := commit(tx); err != nil {
 		return nil, err
 	}
 	return &t, nil
+}
+
+// ClaimTaskForWorker atomically satisfies the named gates and claims one
+// explicit task only when the resulting task is ready. A retry by the same
+// worker returns its existing active claim without adding another attempt.
+func (s *SQLiteStore) ClaimTaskForWorker(ctx context.Context, id string, now, leaseExpires time.Time, workerID, agent string, satisfyGates []string) (*task.Task, error) {
+	started := now.UTC().Format(time.RFC3339)
+	lease := ""
+	if !leaseExpires.IsZero() {
+		lease = leaseExpires.UTC().Format(time.RFC3339)
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("store: begin explicit claim: %w", err)
+	}
+	defer rollback(tx)
+	for _, gate := range satisfyGates {
+		if _, err := tx.ExecContext(ctx, `UPDATE task_gates SET satisfied=1, satisfied_at=? WHERE task_id=? AND name=? AND satisfied=0`, started, id, gate); err != nil {
+			return nil, fmt.Errorf("store: satisfy claim gate %q: %w", gate, err)
+		}
+	}
+	row := tx.QueryRowContext(ctx, `
+UPDATE tasks
+SET status=?, started=?, lease_expires=?, revision=revision+1
+WHERE id=? AND status=?`+readyWhereSQL+`
+RETURNING id, created, status, body, started, lease_expires, finished, error,
+	priority, tags, cwd, source, agent, group_id, resource_key, stage`,
+		string(task.StatusDoing), started, lease, id, string(task.StatusTodo), string(task.StatusDone), string(task.StatusDoing))
+	claimed, err := scanTask(row)
+	if errors.Is(err, sql.ErrNoRows) {
+		existing, replayErr := explicitClaimReplay(ctx, tx, id, workerID)
+		if replayErr != nil {
+			return nil, replayErr
+		}
+		if err := commit(tx); err != nil {
+			return nil, err
+		}
+		return &existing, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if err := s.insertEvent(ctx, tx, claimed.ID, task.EventClaimed, started, ""); err != nil {
+		return nil, err
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO task_attempts (task_id,started,status,error,worker_id,agent) VALUES (?,?,?,?,?,?)`, claimed.ID, started, string(task.StatusDoing), "", workerID, agent); err != nil {
+		return nil, fmt.Errorf("store: insert explicit claim attempt: %w", err)
+	}
+	if err := refreshGoalStatus(ctx, tx, claimed.GroupID); err != nil {
+		return nil, err
+	}
+	if err := commit(tx); err != nil {
+		return nil, err
+	}
+	return &claimed, nil
+}
+
+func explicitClaimReplay(ctx context.Context, tx *sql.Tx, id, workerID string) (task.Task, error) {
+	existing, err := getTask(ctx, tx, id)
+	if err != nil {
+		return task.Task{}, err
+	}
+	if existing.Status != task.StatusDoing {
+		return task.Task{}, ErrInvalidState
+	}
+	var owner string
+	if err := tx.QueryRowContext(ctx, `SELECT worker_id FROM task_attempts WHERE task_id=? AND finished='' ORDER BY id DESC LIMIT 1`, id).Scan(&owner); err != nil {
+		return task.Task{}, fmt.Errorf("store: explicit claim owner: %w", err)
+	}
+	if owner != workerID {
+		return task.Task{}, ErrWorkerMismatch
+	}
+	return existing, nil
 }
 
 // Heartbeat extends the lease for a worker-owned active attempt.
@@ -99,7 +175,7 @@ LIMIT 1`, taskID).Scan(&owner)
 	}
 	if _, err := tx.ExecContext(ctx, `
 UPDATE tasks
-SET lease_expires = ?
+SET lease_expires = ?, revision = revision + 1
 WHERE id = ?`, lease, taskID); err != nil {
 		return fmt.Errorf("store: heartbeat update %s: %w", taskID, err)
 	}
@@ -178,7 +254,7 @@ func (s *SQLiteStore) requeueIfStillStale(ctx context.Context, id, cutoff, nowTe
 	if _, err := tx.ExecContext(ctx, `
 UPDATE tasks
 SET created = ?, status = ?, body = ?, started = ?, lease_expires = ?, finished = ?, error = ?,
-	priority = ?, tags = ?, cwd = ?, source = ?, agent = ?, group_id = ?, resource_key = ?, stage = ?
+	priority = ?, tags = ?, cwd = ?, source = ?, agent = ?, group_id = ?, resource_key = ?, stage = ?, revision = revision + 1
 WHERE id = ?`,
 		t.Created, string(t.Status), t.Body, t.Started, t.LeaseExpires, t.Finished, t.Error,
 		t.Priority, encodeTags(t.Tags), t.CWD, t.Source, t.Agent, t.GroupID, t.ResourceKey, t.Stage, t.ID); err != nil {
@@ -189,6 +265,9 @@ WHERE id = ?`,
 		return staleRequeueResult{}, err
 	}
 	if err := updateAttemptForEvent(ctx, tx, t, task.EventRequeued, at, "stale"); err != nil {
+		return staleRequeueResult{}, err
+	}
+	if err := refreshGoalStatus(ctx, tx, t.GroupID); err != nil {
 		return staleRequeueResult{}, err
 	}
 	if err := commit(tx); err != nil {

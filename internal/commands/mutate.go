@@ -1,101 +1,97 @@
 package commands
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os"
 	"strings"
 
-	"github.com/spf13/cobra"
-
 	"github.com/dotcommander/afk/internal/output"
 	"github.com/dotcommander/afk/internal/task"
 )
 
-func newSetCmd(d *Deps) *cobra.Command {
-	var asJSON bool
-	var summary bool
-	var noteFlag string
-	var noteFile string
-	var stage string
-	var force bool
-	var workerID string
+type SetCmd struct {
+	ID        string   `arg:"" required:""`
+	Status    string   `arg:"" required:""`
+	NoteArgs  []string `arg:"" optional:""`
+	JSON      bool     `help:"Emit JSON output."`
+	Summary   bool     `help:"Emit JSON output with queue counts."`
+	Note      string   `help:"Status note text."`
+	NoteFile  string   `name:"note-file" help:"Read status note from file, or '-' for stdin."`
+	Stage     *string  `help:"Set the free-form pipeline stage label (omit to leave unchanged)."`
+	Worker    string   `help:"Worker id that owns the claim; fences a terminal set against a stale lease."`
+	Force     bool     `help:"Allow done/failed without a completion note."`
+	RequestID string   `name:"request-id" help:"Idempotency key for this mutation."`
+}
 
-	cmd := &cobra.Command{
-		Use:   "set <id> <status> [note...]",
-		Short: "Set task status",
-		Args:  cobra.MinimumNArgs(2),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return runSet(cmd, args, d, setCommandOptions{
-				stage:    stage,
-				noteFlag: noteFlag,
-				noteFile: noteFile,
-				asJSON:   asJSON,
-				summary:  summary,
-				force:    force,
-				workerID: workerID,
-			})
-		},
-	}
-	cmd.Flags().BoolVar(&asJSON, "json", false, "emit JSON output")
-	cmd.Flags().BoolVar(&summary, "summary", false, "emit JSON output with queue counts")
-	cmd.Flags().StringVar(&noteFlag, "note", "", "status note text")
-	cmd.Flags().StringVar(&noteFile, "note-file", "", "read status note from file, or '-' for stdin")
-	cmd.Flags().StringVar(&stage, "stage", "", "set the free-form pipeline stage label (omit to leave unchanged)")
-	cmd.Flags().StringVar(&workerID, "worker", "", "worker id that owns the claim; fences a terminal set (done/failed) against a stale lease")
-	cmd.Flags().BoolVar(&force, "force", false, "allow done/failed without a completion note")
-	return cmd
+func (c *SetCmd) Run(d *Deps, ctx context.Context) error {
+	return runSet(ctx, append([]string{c.ID, c.Status}, c.NoteArgs...), d, setCommandOptions{stage: c.Stage, noteFlag: c.Note, noteFile: c.NoteFile, asJSON: c.JSON, summary: c.Summary, force: c.Force, workerID: c.Worker, requestID: c.RequestID})
 }
 
 type setCommandOptions struct {
-	stage    string
-	noteFlag string
-	noteFile string
-	asJSON   bool
-	summary  bool
-	force    bool
-	workerID string
+	stage     *string
+	noteFlag  string
+	noteFile  string
+	asJSON    bool
+	summary   bool
+	force     bool
+	workerID  string
+	requestID string
 }
 
 // runSet executes the `set` command: parse status, resolve the note, enforce
 // the completion-note rule, apply the status (with optional stage), then emit
 // either JSON/summary or a plain confirmation line. Extracted from newSetCmd's
 // RunE closure to keep cognitive complexity within the linter threshold.
-func runSet(cmd *cobra.Command, args []string, d *Deps, opts setCommandOptions) error {
+func runSet(ctx context.Context, args []string, d *Deps, opts setCommandOptions) error {
+	status, note, stagePtr, err := prepareSet(args, d, opts)
+	if err != nil {
+		return err
+	}
+	if opts.workerID != "" {
+		updated, err := d.Service.SetStatusWithStageWorkerTask(ctx, args[0], status, note, stagePtr, opts.force, opts.workerID)
+		if err != nil {
+			return err
+		}
+		return writeSetResult(ctx, d, opts, updated, status, note)
+	}
+	updated, err := applySetMutation(ctx, d, opts, args[0], status, note, stagePtr)
+	if err != nil {
+		return err
+	}
+	return writeSetResult(ctx, d, opts, updated, status, note)
+}
+
+func prepareSet(args []string, d *Deps, opts setCommandOptions) (task.Status, string, *string, error) {
 	status, ok := task.ParseStatus(args[1])
 	if !ok {
-		return fmt.Errorf("%w: %q", task.ErrInvalidStatus, args[1])
+		return "", "", nil, fmt.Errorf("%w: %q", task.ErrInvalidStatus, args[1])
 	}
 	note, err := resolveSetNote(d, args[2:], opts.noteFlag, opts.noteFile)
 	if err != nil {
-		return err
+		return "", "", nil, err
 	}
 	if !opts.force && (status == task.StatusDone || status == task.StatusFailed) && strings.TrimSpace(note) == "" {
-		return fmt.Errorf("%w", task.ErrMissingCompletionNote)
+		return "", "", nil, fmt.Errorf("%w", task.ErrMissingCompletionNote)
 	}
-	var stagePtr *string
-	if cmd.Flags().Changed("stage") {
-		stagePtr = &opts.stage
+	if opts.requestID != "" && opts.summary {
+		return "", "", nil, fmt.Errorf("--request-id cannot be combined with --summary")
 	}
-	if opts.workerID != "" && !opts.force && (status == task.StatusDone || status == task.StatusFailed) {
-		return d.Service.SetStatusWithStageWorker(cmd.Context(), args[0], status, note, stagePtr, opts.workerID)
+	if opts.requestID != "" && opts.workerID != "" {
+		return "", "", nil, fmt.Errorf("--request-id cannot be combined with --worker")
 	}
-	if opts.force {
-		err = d.Service.SetStatusWithStageForce(cmd.Context(), args[0], status, note, stagePtr)
-	} else {
-		err = d.Service.SetStatusWithStage(cmd.Context(), args[0], status, note, stagePtr)
+	if opts.stage != nil {
+		return status, note, opts.stage, nil
 	}
-	if err != nil {
-		return err
-	}
-	updated, err := d.Service.Show(cmd.Context(), args[0])
-	if err != nil {
-		return err
-	}
+	return status, note, nil, nil
+}
+
+func writeSetResult(ctx context.Context, d *Deps, opts setCommandOptions, updated task.Task, status task.Status, note string) error {
 	if opts.asJSON || opts.summary {
 		result := setResultFromTask(updated, note)
 		if opts.summary {
-			snapshot, err := d.Service.Status(cmd.Context())
+			snapshot, err := d.Service.Status(ctx)
 			if err != nil {
 				return err
 			}
@@ -103,37 +99,47 @@ func runSet(cmd *cobra.Command, args []string, d *Deps, opts setCommandOptions) 
 		}
 		return output.WriteJSONLine(d.Stdout, result, "set")
 	}
-	_, err = fmt.Fprintf(d.Stdout, "set %s %s\n", args[0], status)
+	_, err := fmt.Fprintf(d.Stdout, "set %s %s\n", updated.ID, status)
 	return err
 }
 
-func newRetryCmd(d *Deps) *cobra.Command {
-	var asJSON bool
-	var reason string
-
-	cmd := &cobra.Command{
-		Use:   "retry <id>",
-		Short: "Open a new attempt for a failed task",
-		Args:  cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			note := retryNote(reason)
-			if err := d.Service.SetStatus(cmd.Context(), args[0], task.StatusDoing, note); err != nil {
-				return err
-			}
-			if asJSON {
-				return output.WriteJSONLine(d.Stdout, setResult{
-					ID:     args[0],
-					Status: task.StatusDoing,
-					Note:   note,
-				}, "retry")
-			}
-			_, err := fmt.Fprintf(d.Stdout, "retry %s doing\n", args[0])
-			return err
-		},
+func applySetMutation(ctx context.Context, d *Deps, opts setCommandOptions, id string, status task.Status, note string, stage *string) (task.Task, error) {
+	switch {
+	case opts.requestID != "":
+		updated, _, err := d.Service.SetStatusWithRequest(ctx, "afk-cli", opts.requestID, id, status, note, stage, opts.force)
+		return updated, err
+	case opts.force:
+		if err := d.Service.SetStatusWithStageForce(ctx, id, status, note, stage); err != nil {
+			return task.Task{}, err
+		}
+	default:
+		if err := d.Service.SetStatusWithStage(ctx, id, status, note, stage); err != nil {
+			return task.Task{}, err
+		}
 	}
-	cmd.Flags().StringVar(&reason, "reason", "", "one-line reason the task is ready to retry")
-	cmd.Flags().BoolVar(&asJSON, "json", false, "emit JSON output")
-	return cmd
+	return d.Service.Show(ctx, id)
+}
+
+type RetryCmd struct {
+	ID     string `arg:"" required:""`
+	Reason string `help:"One-line reason the task is ready to retry."`
+	JSON   bool   `help:"Emit JSON output."`
+}
+
+func (c *RetryCmd) Run(d *Deps, ctx context.Context) error {
+	note := retryNote(c.Reason)
+	if err := d.Service.SetStatus(ctx, c.ID, task.StatusDoing, note); err != nil {
+		return err
+	}
+	if c.JSON {
+		return output.WriteJSONLine(d.Stdout, setResult{
+			ID:     c.ID,
+			Status: task.StatusDoing,
+			Note:   note,
+		}, "retry")
+	}
+	_, err := fmt.Fprintf(d.Stdout, "retry %s doing\n", c.ID)
+	return err
 }
 
 func retryNote(reason string) string {

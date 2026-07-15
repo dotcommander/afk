@@ -30,34 +30,24 @@ then propagate wording to Codex, Claude, and Pi surfaces.
 
 ### Codex AFK surfaces
 
-- `/Users/vampire/.codex/skills/afk-queue-worker/SKILL.md`
-- `/Users/vampire/.codex/skills/afk-queue-worker/references/commands.md`
-- `/Users/vampire/.codex/skills/afk-queue-worker/references/discovery-checklist.md`
-- `/Users/vampire/.codex/skills/afk-queue-worker/agents/openai.yaml`
-- `/Users/vampire/.codex/skills/afk-discovery/SKILL.md`
-- `/Users/vampire/.codex/skills/afk-discovery/agents/openai.yaml`
-- AFK planning helpers such as `bulk-afk-planner` and `project-manager` if
-  queue, import, add, or planning contracts changed.
+- `/Users/vampire/.codex/skills/afk-operational-workflows/SKILL.md`
+- `/Users/vampire/.codex/skills/afk-operational-workflows/references/legacy/afk-queue-worker/references/legacy-workflow.md`
+- `/Users/vampire/.codex/skills/afk-operational-workflows/references/legacy/afk-queue-worker/workflows/*.md`
 
 ### Claude AFK surfaces
 
-- `/Users/vampire/.claude/agents/afk-agent.md`
-- `/Users/vampire/.claude/commands/afk.md` if present
-- `/Users/vampire/.claude/skills/afk-loop/SKILL.md`
-- historical or related AFK skills such as `afk-tasks` if present
-- `/Users/vampire/.claude/hooks/afk-perpetuate.sh`
 - `/Users/vampire/.claude/kb/claude-code/afk-task-authoring.md`
-- `/Users/vampire/.claude/CLAUDE.md` if it documents AFK behavior
 
 ### Pi AFK surfaces
 
-- `/Users/vampire/go/src/pi-extensions/extensions/dc-work/features/dc-afk/index.ts`
-- `/Users/vampire/go/src/pi-extensions/extensions/dc-work/features/dc-afk/lib/command.ts`
-- `/Users/vampire/go/src/pi-extensions/extensions/dc-work/features/dc-afk/lib/tools.ts`
-- `/Users/vampire/go/src/pi-extensions/extensions/dc-work/features/dc-afk/lib/afk-cli.ts`
-- `/Users/vampire/go/src/pi-extensions/extensions/dc-work/features/dc-afk/index.test.ts`
-- `/Users/vampire/go/src/pi-extensions/extensions/dc-work/lib/registrations/dc-afk.ts`
-- `/Users/vampire/go/src/pi-extensions/extensions/dc-work/README.md`
+- `/Users/vampire/code/ts/pi-extensions/extensions/dc-app/features/afk/index.ts`
+- `/Users/vampire/code/ts/pi-extensions/extensions/dc-app/features/afk/lib/command.ts`
+- `/Users/vampire/code/ts/pi-extensions/extensions/dc-app/features/afk/lib/tools.ts`
+- `/Users/vampire/code/ts/pi-extensions/extensions/dc-app/features/afk/lib/afk-cli.ts`
+- `/Users/vampire/code/ts/pi-extensions/extensions/dc-app/features/afk/index.test.ts`
+- `/Users/vampire/code/ts/pi-extensions/extensions/dc-app/lib/work/registrations/index.ts`
+- `/Users/vampire/code/ts/pi-extensions/extensions/dc-app/lib/knowledge/skill-vault/afk-queue-worker/SKILL.md`
+- `/Users/vampire/code/ts/pi-extensions/README.md`
 - relevant Pi smoke tests and changelog entries
 
 ### Search patterns
