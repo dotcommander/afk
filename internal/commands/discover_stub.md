@@ -36,6 +36,9 @@ Mine concrete AFK-ready candidate tasks from the material the user wants reviewe
 
   Treat this as an evidence budget proportional to the target's surface area, not a mandatory fixed run against every target: a small single-purpose target needs only the cheap rungs plus one source surface and one scoped check; a large or mixed target climbs further.
 
+  Resolve before promote:
+  Treat each lead as a hypothesis. Before accepting it, state and test the strongest plausible benign, stale, already-fixed, prior-art, duplicate, or intentional explanation. When source, runtime output, docs, tests, generated artifacts, and config disagree, identify the authority for the disputed behavior and explain the arbitration. Probe guards, list/help output, config loading, and test ownership only when they can resolve the hypothesis; these are conditional probes, not a fixed checklist. If a named environment or evidence gap prevents resolution, keep the lead as residual instead of promoting or silently rejecting it.
+
   No Shallow Batch Passes:
   For batch discovery, coverage is not completion. Do not treat "every directory has an artifact" or "the batch audit script has no structural errors" as proof that discovery was done.
 
@@ -105,6 +108,16 @@ Mine concrete AFK-ready candidate tasks from the material the user wants reviewe
 
 5. Rank by impact and reject before enqueueing.
 
+  Classify every discovered lead exactly once:
+  - accepted: current evidence proves queueable work
+  - prior-art: the same observable change is already handled, documented, or queued
+  - refuted: the resolving check shows the suspected defect is not present
+  - rejected: the issue may be real, but it fails scope, value, risk, or queueability gates
+  - residual: a named environment or evidence gap prevents resolution
+
+  Total accounting is required: discovered leads must equal accepted + prior-art + refuted + rejected + residual.
+  Classification is exclusive. Prior-art takes precedence when an existing artifact or queue entry already handles the same observable change. Use refuted only when no prior-art match exists and the resolving check shows the hypothesis is false.
+
   First ask: is this value or churn?
   Value changes remove a real bug, unblock a workflow, prevent a plausible failure mode, reduce operator pain, or make future work less ambiguous with measured payoff.
   Churn changes are style-only, cosmetic polish, generic cleanup, speculative abstraction, pure test/docs padding, or "nice to have" work without current proof.
@@ -121,12 +134,14 @@ Mine concrete AFK-ready candidate tasks from the material the user wants reviewe
   Show rejected stale, broad, duplicate, risky, unverified, or churn leads.
   When candidates must run in order, enqueue the prerequisite first and pass its created id with --blocked-by to the dependent afk add command.
 
-  If every lead is low-impact or uncorroborated, say "no strong candidate" and explain what was inspected. Do not pad the output with easy TODO cleanup, docs polish, dependency drift, or generic tests.
+  If every lead is low-impact, refuted, prior-art, residual, or uncorroborated, say "no strong candidate" affirmatively and report the checks performed plus all five lead counts. Do not pad the output with easy TODO cleanup, docs polish, dependency drift, or generic tests, and do not ask for enqueue confirmation.
 
   Early-stop: once you have 1-3 strong, non-duplicate candidates that meet every section-4 acceptance criterion (current evidence, atomic scope, exact verification command, value not churn), stop probing — unless the user explicitly asked for broad mining, batch coverage, or a full repo review. The early-stop bar is the section-4 acceptance criteria, not merely "the dry-run passed" — dry-run only proves task-body shape. Do not keep probing to satisfy a breadth checklist after a strong candidate is proven. This does not relax the anti-shallow guardrails: a pass with no acceptance-criteria-meeting candidate is not finished.
 
   If a declared local gate fails, first ask whether a small fix can make the gate pass without product choices or broad refactoring. Broken declared checks are often better AFK candidates than TODO markers because they have exact verification.
-  If a TODO or product promise points at a missing behavior but the destination/provider/architecture is absent, reject or mark provisional rather than forcing an ambiguous task. Prefer the narrower failing check when one exists.
+  If a TODO or product promise points at a missing behavior but the destination/provider/architecture is absent, reject it, or classify it residual when a named evidence gap prevents resolution, rather than forcing an ambiguous task. Prefer the narrower failing check when one exists.
+
+  Before concluding "no strong candidate", or before completing a broad pass, run one adversarial second pass against the highest-risk assumption or least-corroborated surface. Record the alternative explanation it tried to prove and the evidence that survived or changed classification.
 
 6. Validate task bodies with dry-run.
 
@@ -148,11 +163,15 @@ afk add --dry-run --source task-discovery --tag discovery --resource "<kind>:<ta
 
 Dry-run validation proves that a task body is admissible. It does not prove that discovery was deep, complete, or valuable.
 
+Immediately before dry-run and again before enqueue, recheck the candidate's current evidence, prior-art and queue duplicate state, and Reject-if condition. If the task body or its cwd, source, tags, resource, evidence, relevant worktree state, or duplicate context changed, rerun validation; do not reuse the stale result.
+If material evidence, body, scope, success, or verification changes after presentation, re-present the candidate and require fresh confirmation before mutation. The original confirmation applies only to the candidate as presented.
+
 For batch discovery, freeze the target manifest first and apply the chosen evidence budget per target. Before declaring completion, report:
   - target count and artifact count
   - accepted candidate count and no-strong-candidate count
   - generic no-candidate artifact count
-  - rejected or provisional lead count
+  - rejected and residual lead counts
+  - accepted, prior-art, refuted, rejected, and residual counts whose sum equals total leads
   - deterministic checks run and checks skipped with reasons
   - low-confidence or triage-only targets
   - whether validation covered task shape only, artifact shape only, or actual behavior
@@ -168,6 +187,6 @@ When comparing a focused pass with an earlier breadth pass, preserve the earlier
 
 7. Ask one enqueue confirmation.
 
-Ask exactly one question such as: add all, add 1 3, or no. Queue only the confirmed candidates that pass dry-run validation.
+When at least one candidate survives, ask exactly one question such as: add all, add 1 3, or no. Queue only the confirmed candidates that pass freshness revalidation. When no candidate survives, report the affirmative zero result and do not ask an enqueue question.
 
 Queue inspection commands such as afk status, afk take --dry-run --limit 0 --json --full, and afk tasks may initialize the configured queue if it does not exist yet.
