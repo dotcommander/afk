@@ -13,7 +13,12 @@ Useful metadata:
 afk add --tag repo:afk --priority high --source roadmap.md "review scheduler indexes"
 afk add --cwd /path/to/repo --resource repo:/path/to/repo "run the local smoke test"
 afk add --blocked-by 123 "update docs after task 123 lands"
+afk add --available-at 2026-07-18T13:00:00Z "run after the maintenance window opens"
 ```
+
+`--available-at` accepts an RFC3339 timestamp and stores it in UTC. The task
+remains `todo`, but readiness previews and both exact and next-task claims skip
+it until that time.
 
 List and search:
 

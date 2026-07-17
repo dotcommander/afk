@@ -456,8 +456,16 @@ afk retry "$id" --reason "fixed the blocker"
 afk set "$id" done --note "verified" --summary
 ```
 
-`retry` moves the task to `doing`, clears stale task-level error text, and opens
-a new attempt. Prior failed attempts remain in history.
+The default manual `retry` moves the task to `doing`, clears stale task-level
+error text, and opens a new attempt. Prior failed attempts remain in history.
+To schedule the same failed task for later instead, use:
+
+```sh
+afk retry "$id" --disposition deferred --available-at 2026-07-18T13:00:00Z --reason "wait for maintenance window"
+```
+
+Deferred retry returns the task to `todo` and does not open an attempt until a
+worker claims it after `available_at`.
 
 ### Why is `afk retry` a command if retry is just `doing`?
 

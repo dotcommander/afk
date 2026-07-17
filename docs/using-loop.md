@@ -47,7 +47,7 @@ Each tick:
 
 1. **Claim** the next ready task and take an exclusive **lease**, so two workers never grab the same task.
 2. **Render** the prompt from `prompt_template` and run `command`.
-3. **Record** the outcome by the agent's exit status: exit 0 marks the task `done` (via `s.Done`); a timeout marks it `failed` via `s.Fail` and emits result status `"timeout"`; any other non-zero exit marks it `failed`. The lease is extended every `heartbeat_interval` while the agent runs.
+3. **Record** the outcome by the agent's exit status: exit 0 marks the task `done`; a timeout marks it `failed` and emits result status `"timeout"`; any other non-zero exit marks it `failed`. Terminal writes are fenced by the claiming worker. The lease is extended every `heartbeat_interval` while the agent runs; definitive ownership loss or lease expiry cancels the child and prevents stale finalization.
 4. **Cooldown** after each task, then loop again.
 
 After `max_consecutive_failures` failures in a row, the loop halts so a broken agent doesn't burn the whole backlog.

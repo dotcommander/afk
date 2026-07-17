@@ -16,9 +16,11 @@ Tasks move through `todo`, `doing`, `done`, `failed`, `deleted`, and the
 goal-only suspension state `budget-limited`.
 Readiness is narrower than `todo`: a task is claimable only when every
 `blocks` relation is `done`, no other active `doing` task holds its resource
-key, and no gate is unsatisfied.
-`afk status --blocked` explains dependency blockers; `doing` task status output
-also shows claim age and stale lease diagnostics.
+key, no gate is unsatisfied, and its optional `available_at` time has arrived.
+Full `afk status` includes a bounded 24-hour health summary and active task
+details. `afk status --blocked` explains dependency blockers; `doing` task
+status output also shows claim age and stale lease diagnostics. Counts-only
+`afk status --summary` keeps its compact contract.
 
 `--stage` is a free-form human pipeline state (e.g. `triage`, `in-review`),
 independent of execution state; it does not affect readiness.
@@ -27,17 +29,17 @@ independent of execution state; it does not affect readiness.
 
 | Command | Purpose |
 |---|---|
-| `afk add <body...> [--stage VALUE] [--request-id ID]` | Add a task. Use `--dry-run --json` to validate without writing. A request id replays the original result for the same actor and inputs. |
+| `afk add <body...> [--available-at RFC3339] [--stage VALUE] [--request-id ID]` | Add a task. `--available-at` defers claim eligibility without changing `todo` status. Use `--dry-run --json` to validate without writing. A request id replays the original result for the same actor and inputs. |
 | `afk tasks [--status STATUS] [--stage VALUE] [--json]` | List tasks. Deleted tasks are hidden unless requested. `--stage` filters by pipeline state. |
 | `afk task <id> [--json]` | Show one full task with events and attempts. |
-| `afk status [--summary] [--blocked] [--json]` | Get queue counts, plus active task lists by default. `--blocked` explains dependency-blocked todo tasks. |
+| `afk status [--summary] [--blocked] [--json]` | Get queue counts. Full status also includes active task lists and 24-hour queue-health signals; `--blocked` explains dependency-blocked todo tasks. |
 | `afk find <query> [--json]` | Search task text and metadata for duplicate checks. |
 | `afk take [--dry-run] [--task ID] [--satisfy-gate NAME] [--lease DURATION] [--worker ID] [--summary] [--full] [--envelope]` | Preview or claim ready work; exact owner claims can satisfy approved gates atomically. |
 | `afk set <id> <status> [note...] [--note TEXT] [--note-file PATH|-] [--stage VALUE] [--json] [--summary] [--request-id ID]` | Set `todo`, `doing`, `done`, `failed`, or `deleted`. Request-id replay is incompatible with `--summary` and any worker-fenced update. |
-| `afk retry <id> [--reason TEXT] [--json]` | Open a new attempt for a failed task. |
+| `afk retry <id> [--disposition manual\|deferred] [--available-at RFC3339] [--reason TEXT] [--json]` | Open an attempt now (`manual`, default) or return failed work to `todo` until a required future eligibility time (`deferred`). |
 | `afk relate <task-id> <related-id> [--type blocks\|relates\|duplicates\|parent]` | Record a typed relation between tasks. Defaults to `blocks`. Only `blocks` edges gate readiness; `relates`/`duplicates`/`parent` are informational. |
 | `afk gate add <id> <name>` / `afk gate satisfy <id> <name>` | Named boolean preconditions. A task with any unsatisfied gate is not claimable until every gate is satisfied. Satisfy is one-way. |
-| `afk snapshot [--label LABEL] [--task ID] [--output PATH]` | Export read-only JSON evidence for before/after comparisons. |
+| `afk snapshot [--label LABEL] [--task ID] [--output PATH]` | Export read-only JSON evidence, including queue health, for before/after comparisons. |
 | `afk checkpoint add|list ...` | Append or list task-scoped progress records with immutable provenance. |
 | `afk artifact add|list ...` | Append or list task-owned artifact records with immutable provenance. |
 | `afk import vybe --source DIR --dry-run|--apply` | Reconcile or atomically import operational state from a frozen `vybe-archive-v1` export. |

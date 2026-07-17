@@ -10,18 +10,18 @@ The public command surface is intentionally small.
 
 | Command | Behavior |
 |---|---|
-| `afk add <body...> [--request-id ID]` | Append a new `todo` task and print its id. A request id replays the original result for identical actor and inputs. |
+| `afk add <body...> [--available-at RFC3339] [--request-id ID]` | Append a new `todo` task and print its id. `--available-at` defers claim eligibility. A request id replays the original result for identical actor and inputs. |
 | `afk add --dry-run [--json] <body...>` | Validate task shape and metadata without mutating the queue. |
 | `afk tasks [--status STATUS] [--stage VALUE] [--json]` | List tasks. Default hides `deleted`; use `--status deleted` or `--status all` when needed. `--stage` filters by pipeline label. |
 | `afk task <id> [--json]` | Show one task with metadata, dependencies, events, and attempts. |
-| `afk status [--summary] [--blocked] [--json]` | Print queue counts; without `--summary`, also includes `todo` and `doing` task lists. `--blocked` adds dependency blocker details. |
+| `afk status [--summary] [--blocked] [--json]` | Print queue counts; without `--summary`, also includes `todo` and `doing` task lists plus bounded queue-health signals. `--blocked` adds dependency blocker details. |
 | `afk find <query> [--status STATUS] [--json]` | Search id, body, status, cwd, source, tags, resource, agent, group, and error text. |
 | `afk take [--dry-run] [--task ID] [--satisfy-gate NAME] [--limit N] [--lease DURATION] [--worker ID] [--json] [--summary] [--full] [--envelope]` | Preview or atomically claim ready work; exact owner claims can satisfy approved gates in the claim transaction. |
 | `afk set <id> <status> [note...] [--note TEXT] [--note-file PATH|-] [--stage VALUE] [--json] [--summary] [--request-id ID]` | Move a task to `todo`, `doing`, `done`, `failed`, or `deleted`. `--request-id` cannot be combined with `--summary` or any worker-fenced update. |
 | `afk relate <task-id> <related-id> [--type TYPE]` | Record a typed relation between two tasks. |
 | `afk gate add <task-id> <name>` | Add a named boolean precondition to a task. |
 | `afk gate satisfy <task-id> <name>` | Mark a named precondition satisfied. |
-| `afk retry <id> [--reason TEXT] [--json]` | Convenience command for reopening a failed task as `doing` with a new attempt. |
+| `afk retry <id> [--disposition manual\|deferred] [--available-at RFC3339] [--reason TEXT] [--json]` | Reopen failed work now, or defer it as `todo` until a required future eligibility time. |
 | `afk snapshot [--label LABEL] [--task ID] [--output PATH]` | Export a read-only JSON evidence snapshot for before/after comparisons. |
 | `afk checkpoint add|list ...` | Append or list task-scoped progress records with immutable source metadata. |
 | `afk artifact add|list ...` | Append or list task-owned artifacts with immutable source metadata. |
@@ -101,6 +101,10 @@ afk relate "$id" "$other" --type blocks
 ```sh
 afk add --blocked-by 42 "corrected dependent task"
 ```
+
+`afk add --available-at <RFC3339>` records a UTC eligibility time. Before that
+time, the task remains `todo` but is excluded from readiness previews, next-task
+claims, and exact claims.
 
 Self-relation is rejected. Re-relating the same pair updates the type.
 
@@ -221,7 +225,7 @@ exits cleanly (`0` = unlimited). Flags override the config file per run:
 | `--lease DURATION` | Exclusive claim duration taken on each task. |
 | `--timeout DURATION` | Per-task execution timeout. |
 | `--cooldown DURATION` | Pause between ticks when no task is found. |
-| `--heartbeat DURATION` | Interval for extending the lease while running. |
+| `--heartbeat DURATION` | Interval for extending the lease while running; definitive renewal or ownership loss cancels the child process. |
 | `--max-failures N` | Halt after this many consecutive task failures. |
 | `--max-tasks N` | Exit cleanly after N tasks (`0` = unlimited). |
 
@@ -234,6 +238,11 @@ The loop preflights expired duration caps after claim and before spawn. When a
 token cap is active it streams output unchanged while retaining a bounded 1 MiB
 tail per stream, parses the last usable stdout match and then stderr, and fails
 closed as `token-usage-unavailable` when usage is absent or overflows.
+
+Non-goal loop finalization is fenced by the worker that claimed the task. If a
+heartbeat proves that ownership was lost, or the last confirmed lease expires
+while SQLite remains busy, AFK cancels the child and leaves terminal state for
+the current owner or stale-work recovery instead of overwriting it.
 
 ## status diagnostics
 
@@ -248,6 +257,15 @@ afk status --blocked
 Without `--summary`, status output includes active `todo` and `doing` lists.
 For `doing` tasks, AFK derives claim diagnostics from persisted timestamps
 without changing the queue.
+
+Full text and JSON status also include a `health` section over a fixed 24-hour
+window: oldest currently-ready and active ages, stale requeue count, retry
+attempt count, and terminal failure rate. Empty age/rate values are `null` in
+JSON and `n/a` in text. `stale_requeues` counts the existing `requeued`/`stale`
+ledger event, which can represent an expired lease or an age-based unleased
+requeue; it is deliberately not labeled as exact lease loss. Retry attempts are
+attempts beyond a task's first attempt. `--summary` and `--summary --json`
+remain counts-only.
 
 In text output, doing rows include fields such as:
 
@@ -350,9 +368,11 @@ afk retry "$id" --reason "fixed the blocker"
 afk set "$id" done --note "verified" --summary
 ```
 
-`afk retry <id>` is equivalent to `afk set <id> doing --note "retrying: <reason>"`.
-Use `afk set <id> todo --note <note>` instead when you are not retrying it now and
-only want to return it to the ready queue.
+The default `afk retry <id>` disposition is `manual`, equivalent to
+`afk set <id> doing --note "retrying: <reason>"`. It opens an attempt now.
+Use `afk retry <id> --disposition deferred --available-at <RFC3339>` to return
+the task to `todo` without opening an attempt; normal readiness and claim logic
+will admit it after the future UTC eligibility time.
 
 `afk set <id> done` and `afk set <id> failed` always leave attempt history
 coherent. If there is no open attempt, AFK records a synthetic terminal attempt
