@@ -368,6 +368,38 @@ func TestSQLiteStoreReadyAgreesWithClaimNext(t *testing.T) {
 	require.Equal(t, ready[0].ID, claimed.ID)
 }
 
+func TestSQLiteStoreAvailableAtControlsReadyAndClaims(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	s := newStore(t)
+	now := time.Date(2026, 7, 17, 12, 0, 0, 0, time.UTC)
+	s.SetClock(func() time.Time { return now })
+
+	require.NoError(t, s.Add(ctx, task.Task{ID: "immediate", Status: task.StatusTodo, Body: "immediate"}))
+	require.NoError(t, s.Add(ctx, task.Task{ID: "future", Status: task.StatusTodo, Body: "future", AvailableAt: now.Add(time.Hour).Format(time.RFC3339)}))
+
+	ready, err := s.Ready(ctx)
+	require.NoError(t, err)
+	requireIDs(t, ready, "immediate")
+	claimed, err := s.ClaimNext(ctx, now, time.Time{})
+	require.NoError(t, err)
+	require.Equal(t, "immediate", claimed.ID)
+
+	claimed, err = s.ClaimNext(ctx, now.Add(59*time.Minute), time.Time{})
+	require.NoError(t, err)
+	require.Nil(t, claimed)
+	_, err = s.ClaimTaskForWorker(ctx, "future", now.Add(59*time.Minute), time.Time{}, "worker", "", nil)
+	require.ErrorIs(t, err, store.ErrInvalidState)
+
+	now = now.Add(time.Hour)
+	ready, err = s.Ready(ctx)
+	require.NoError(t, err)
+	requireIDs(t, ready, "future")
+	claimed, err = s.ClaimTaskForWorker(ctx, "future", now, time.Time{}, "worker", "", nil)
+	require.NoError(t, err)
+	require.Equal(t, "future", claimed.ID)
+}
+
 func TestSQLiteStoreReadyExcludesUnfinishedDependencies(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -602,6 +634,26 @@ func TestUpdateFencedRejectsStaleWorker(t *testing.T) {
 	thirdTask, err := s.Get(ctx, "fenced-3")
 	require.NoError(t, err)
 	require.Equal(t, task.StatusDone, thirdTask.Status)
+}
+
+func TestUpdateFencedRejectsExpiredLease(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	s := newStore(t)
+	claimedAt := time.Date(2025, 1, 2, 3, 4, 5, 0, time.UTC)
+
+	require.NoError(t, s.Add(ctx, task.Task{ID: "expired-fence", Status: task.StatusTodo, Body: "task"}))
+	_, err := s.ClaimNextForWorker(ctx, claimedAt, claimedAt.Add(time.Minute), "worker", "agent")
+	require.NoError(t, err)
+	s.SetClock(func() time.Time { return claimedAt.Add(2 * time.Minute) })
+
+	err = s.UpdateFenced(ctx, "expired-fence", "worker", task.EventDone, "too late", func(tk *task.Task) bool {
+		return tk.MarkDone(claimedAt.Add(2 * time.Minute))
+	})
+	require.ErrorIs(t, err, store.ErrWorkerMismatch)
+	got, err := s.Get(ctx, "expired-fence")
+	require.NoError(t, err)
+	require.Equal(t, task.StatusDoing, got.Status)
 }
 
 func TestSQLiteStoreHeartbeat(t *testing.T) {

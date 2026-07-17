@@ -45,7 +45,7 @@ func TestGoalIterationLimitPersistsAndResumeRequeues(t *testing.T) {
 	_, attemptID, limited, err := s.PrepareGoalInvocation(ctx, claimed.ID, now)
 	require.NoError(t, err)
 	require.False(t, limited)
-	result, err := s.FinalizeGoalInvocation(ctx, store.GoalFinalization{TaskID: claimed.ID, AttemptID: attemptID, Succeeded: true, TokensAvailable: true, Now: now.Add(time.Second)})
+	result, err := s.FinalizeGoalInvocation(ctx, store.GoalFinalization{TaskID: claimed.ID, AttemptID: attemptID, WorkerID: "worker", Succeeded: true, TokensAvailable: true, Now: now.Add(time.Second)})
 	require.NoError(t, err)
 	require.True(t, result.Limited)
 	require.Equal(t, store.LimitReasonIterations, result.Goal.LimitReason)
@@ -85,7 +85,7 @@ func TestGoalTokenUsageUnavailableFailsClosed(t *testing.T) {
 	require.NoError(t, err)
 	_, attemptID, _, err := s.PrepareGoalInvocation(ctx, claimed.ID, now)
 	require.NoError(t, err)
-	result, err := s.FinalizeGoalInvocation(ctx, store.GoalFinalization{TaskID: claimed.ID, AttemptID: attemptID, Succeeded: true, TokensAvailable: false, Now: now.Add(time.Second)})
+	result, err := s.FinalizeGoalInvocation(ctx, store.GoalFinalization{TaskID: claimed.ID, AttemptID: attemptID, WorkerID: "worker", Succeeded: true, TokensAvailable: false, Now: now.Add(time.Second)})
 	require.NoError(t, err)
 	require.True(t, result.Limited)
 	require.Equal(t, store.LimitReasonUsageUnavailable, result.Goal.LimitReason)
@@ -109,7 +109,7 @@ func TestGoalTokenLimitAccountsParsedUsage(t *testing.T) {
 	require.NoError(t, err)
 	_, attemptID, _, err := s.PrepareGoalInvocation(ctx, claimed.ID, now)
 	require.NoError(t, err)
-	result, err := s.FinalizeGoalInvocation(ctx, store.GoalFinalization{TaskID: claimed.ID, AttemptID: attemptID, Succeeded: true, TokensUsed: 10, TokensAvailable: true, Now: now.Add(time.Second)})
+	result, err := s.FinalizeGoalInvocation(ctx, store.GoalFinalization{TaskID: claimed.ID, AttemptID: attemptID, WorkerID: "worker", Succeeded: true, TokensUsed: 10, TokensAvailable: true, Now: now.Add(time.Second)})
 	require.NoError(t, err)
 	require.True(t, result.Limited)
 	require.Equal(t, int64(10), result.Goal.TokensUsed)
@@ -212,9 +212,38 @@ func TestGoalStaleFinalizationCannotOverwriteResumedAttempt(t *testing.T) {
 	require.Empty(t, attempts[1].Finished)
 
 	finalized, err := s.FinalizeGoalInvocation(ctx, store.GoalFinalization{
-		TaskID: claimed.ID, AttemptID: newAttemptID, Succeeded: true, TokensAvailable: true, Now: now.Add(4 * time.Second),
+		TaskID: claimed.ID, AttemptID: newAttemptID, WorkerID: "new-worker", Succeeded: true, TokensAvailable: true, Now: now.Add(4 * time.Second),
 	})
 	require.NoError(t, err)
 	require.False(t, finalized.Replay)
 	require.Equal(t, int64(1), finalized.Goal.IterationsUsed)
+}
+
+func TestGoalFinalizationRejectsExpiredWorkerLease(t *testing.T) {
+	t.Parallel()
+	s := newRetirementStore(t)
+	ctx := context.Background()
+	now := time.Date(2026, 7, 13, 1, 0, 0, 0, time.UTC)
+	created := now.Format(time.RFC3339)
+	require.NoError(t, s.CreateGoal(ctx, task.GoalGroup{
+		ID: "g", GroupID: "g", Status: "active", CreatedAt: created,
+	}, []task.Task{{ID: "one", GroupID: "g", Status: task.StatusTodo, Body: "one", Created: created}}))
+
+	claimed, err := s.ClaimNextForWorker(ctx, now, now.Add(time.Minute), "worker", "agent")
+	require.NoError(t, err)
+	_, attemptID, limited, err := s.PrepareGoalInvocation(ctx, claimed.ID, now)
+	require.NoError(t, err)
+	require.False(t, limited)
+
+	_, err = s.FinalizeGoalInvocation(ctx, store.GoalFinalization{
+		TaskID: claimed.ID, AttemptID: attemptID, WorkerID: "worker", Succeeded: true,
+		TokensAvailable: true, Now: now.Add(2 * time.Minute),
+	})
+	require.ErrorIs(t, err, store.ErrWorkerMismatch)
+	member, err := s.Get(ctx, claimed.ID)
+	require.NoError(t, err)
+	require.Equal(t, task.StatusDoing, member.Status)
+	goal, err := s.GetGoalGroup(ctx, "g")
+	require.NoError(t, err)
+	require.Zero(t, goal.IterationsUsed)
 }

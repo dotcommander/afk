@@ -30,6 +30,7 @@ func newServiceWithNow(t *testing.T, now func() time.Time) *app.Service {
 	})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, s.Close()) })
+	s.SetClock(now)
 	return app.NewService(s, now)
 }
 
@@ -218,6 +219,9 @@ func TestServiceStatusSnapshotUsesCanonicalTodoDoing(t *testing.T) {
 	require.Equal(t, doingID, snapshot.Todo[0].ID)
 	require.Len(t, snapshot.Doing, 1)
 	require.Equal(t, todoID, snapshot.Doing[0].ID)
+	require.Equal(t, int64(86400), snapshot.Health.WindowSeconds)
+	require.NotNil(t, snapshot.Health.OldestReadyAgeSeconds)
+	require.NotNil(t, snapshot.Health.OldestActiveAgeSeconds)
 }
 
 // Duplicate-ID retry tests were removed when addValidated switched to UUID-

@@ -70,6 +70,26 @@ func TestCommandsLifecycleThroughRoot(t *testing.T) {
 	require.Contains(t, run("tasks", "--status", "deleted"), failedID)
 }
 
+func TestAddAvailableAtIsPersistedAndDefersTake(t *testing.T) {
+	t.Parallel()
+	queuePath := filepath.Join(t.TempDir(), "tasks.sqlite")
+	stdout, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	d := testDepsWithWriters(stdout, stderr)
+	run := func(args ...string) string {
+		t.Helper()
+		stdout.Reset()
+		stderr.Reset()
+		root := newTestCLI(d, "test")
+		root.SetArgs(append([]string{"--queue", queuePath}, args...))
+		require.NoError(t, root.Execute(), "stderr: %s", stderr.String())
+		return stdout.String()
+	}
+
+	id := strings.TrimSpace(run("add", "--no-cwd", "--available-at", "2099-01-01T00:00:00Z", "future task"))
+	require.Contains(t, run("task", id, "--json"), `"available_at":"2099-01-01T00:00:00Z"`)
+	require.NotContains(t, run("take", "--dry-run", "--json"), id)
+}
+
 func TestFormatVybeImportReportIsCompleteAndDeterministic(t *testing.T) {
 	t.Parallel()
 	report := store.VybeImportReport{
@@ -466,7 +486,7 @@ func TestRetryCommandCreatesRetryAttempt(t *testing.T) {
 	run("take")
 	run("set", id, "failed", "workspace permission blocked")
 
-	require.JSONEq(t, `{"id":"`+id+`","status":"doing","note":"retrying: workspace permission approved"}`, run("retry", id, "--reason", "workspace permission approved", "--json"))
+	require.JSONEq(t, `{"id":"`+id+`","status":"doing","note":"retrying: workspace permission approved","disposition":"manual"}`, run("retry", id, "--reason", "workspace permission approved", "--json"))
 	run("set", id, "done", "--force")
 
 	var doc map[string]any
@@ -502,6 +522,31 @@ func TestRetryCommandDefaultReason(t *testing.T) {
 	require.Contains(t, run("task", id), "retrying")
 }
 
+func TestRetryCommandDeferredDispositionReturnsTaskToFutureTodo(t *testing.T) {
+	t.Parallel()
+
+	queuePath := filepath.Join(t.TempDir(), "tasks.sqlite")
+	stdout, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	d := testDepsWithWriters(stdout, stderr)
+	run := func(args ...string) string {
+		t.Helper()
+		stdout.Reset()
+		stderr.Reset()
+		root := newTestCLI(d, "test")
+		root.SetArgs(append([]string{"--queue", queuePath}, args...))
+		require.NoError(t, root.Execute(), "stderr: %s", stderr.String())
+		return stdout.String()
+	}
+
+	id := strings.TrimSpace(run("add", "--no-cwd", "deferred retry task"))
+	run("take")
+	run("set", id, "failed", "temporary blocker")
+	availableAt := "2099-01-01T00:00:00Z"
+	require.JSONEq(t, `{"id":"`+id+`","status":"todo","note":"retry deferred until `+availableAt+`: wait for window","disposition":"deferred","available_at":"`+availableAt+`"}`,
+		run("retry", id, "--disposition", "deferred", "--available-at", availableAt, "--reason", "wait for window", "--json"))
+	require.NotContains(t, run("take", "--dry-run", "--json"), id)
+}
+
 func TestSnapshotCommandJSONAndOutputFile(t *testing.T) {
 	t.Parallel()
 
@@ -535,6 +580,9 @@ func TestSnapshotCommandJSONAndOutputFile(t *testing.T) {
 	require.Equal(t, float64(1), counts["doing"])
 	require.Equal(t, float64(2), counts["total"])
 	require.Equal(t, float64(1), counts["ready"])
+	health, ok := doc["health"].(map[string]any)
+	require.True(t, ok, "snapshot must include queue health")
+	require.Equal(t, float64(86400), health["window_seconds"])
 
 	tasks, ok := doc["tasks"].(map[string]any)
 	require.True(t, ok, "snapshot must include task lists")
@@ -585,6 +633,7 @@ func TestStatusSummaryJSON(t *testing.T) {
 	require.Equal(t, float64(1), doc["done"])
 	require.Equal(t, float64(0), doc["failed"])
 	require.Equal(t, float64(0), doc["deleted"])
+	require.Len(t, doc, 5, "summary wire shape must remain counts-only")
 }
 
 func TestStatusShowsClaimDiagnostics(t *testing.T) {

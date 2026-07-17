@@ -209,7 +209,8 @@ func TestWriteStatusTextAndJSONUseTodoDoing(t *testing.T) {
 	now := time.Date(2025, 1, 2, 3, 5, 6, 0, time.UTC)
 
 	var text bytes.Buffer
-	require.NoError(t, output.WriteStatus(&text, tally, todo, doing, nil, false, now))
+	health := task.QueueHealth{WindowSeconds: int64((24 * time.Hour) / time.Second)}
+	require.NoError(t, output.WriteStatus(&text, tally, todo, doing, nil, health, false, now))
 	require.Contains(t, text.String(), "todo: 1")
 	require.Contains(t, text.String(), "doing: 1")
 	require.Contains(t, text.String(), "Todo:")
@@ -217,14 +218,16 @@ func TestWriteStatusTextAndJSONUseTodoDoing(t *testing.T) {
 	require.Contains(t, text.String(), "todo-1")
 	require.Contains(t, text.String(), "doing-1")
 	require.Contains(t, text.String(), "age=1m0s")
+	require.Contains(t, text.String(), "Health (24h0m0s):")
 
 	var jsonOut bytes.Buffer
-	require.NoError(t, output.WriteStatus(&jsonOut, tally, todo, doing, nil, true, now))
+	require.NoError(t, output.WriteStatus(&jsonOut, tally, todo, doing, nil, health, true, now))
 	var got struct {
-		Todo  int `json:"todo"`
-		Doing int `json:"doing"`
-		Done  int `json:"done"`
-		Tasks struct {
+		Todo   int              `json:"todo"`
+		Doing  int              `json:"doing"`
+		Done   int              `json:"done"`
+		Health task.QueueHealth `json:"health"`
+		Tasks  struct {
 			Todo  []task.Task `json:"todo"`
 			Doing []struct {
 				task.Task
@@ -236,6 +239,7 @@ func TestWriteStatusTextAndJSONUseTodoDoing(t *testing.T) {
 	require.Equal(t, 1, got.Todo)
 	require.Equal(t, 1, got.Doing)
 	require.Equal(t, 2, got.Done)
+	require.Equal(t, int64(86400), got.Health.WindowSeconds)
 	require.Len(t, got.Tasks.Todo, 1)
 	require.Equal(t, "todo-1", got.Tasks.Todo[0].ID)
 	require.Len(t, got.Tasks.Doing, 1)
@@ -318,8 +322,8 @@ func TestWriteOutputPropagatesWriterErrors(t *testing.T) {
 		{name: "list table", err: output.WriteList(w, []task.Task{tk}, false)},
 		{name: "list json", err: output.WriteList(w, []task.Task{tk}, true)},
 		{name: "count text", err: output.WriteCount(w, map[task.Status]int{})},
-		{name: "status text", err: output.WriteStatus(w, map[task.Status]int{}, nil, nil, nil, false, time.Now())},
-		{name: "status json", err: output.WriteStatus(w, map[task.Status]int{}, nil, nil, nil, true, time.Now())},
+		{name: "status text", err: output.WriteStatus(w, map[task.Status]int{}, nil, nil, nil, task.QueueHealth{}, false, time.Now())},
+		{name: "status json", err: output.WriteStatus(w, map[task.Status]int{}, nil, nil, nil, task.QueueHealth{}, true, time.Now())},
 		{name: "task json", err: output.WriteTaskJSONLine(w, tk, "task")},
 		{name: "explain text", err: output.WriteExplain(w, tk, []task.Event{event}, []task.Attempt{attempt}, false)},
 		{name: "explain json", err: output.WriteExplain(w, tk, []task.Event{event}, []task.Attempt{attempt}, true)},

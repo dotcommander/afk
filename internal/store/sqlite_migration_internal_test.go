@@ -76,7 +76,7 @@ func TestMigrationAppliesOnFreshDBMissingMetadataRow(t *testing.T) {
 	require.Equal(t, currentSchemaVersion, version)
 }
 
-func TestSchemaV11RejectsNewerDatabaseBeforeBootstrapMutation(t *testing.T) {
+func TestSchemaV12RejectsNewerDatabaseBeforeBootstrapMutation(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	path := filepath.Join(t.TempDir(), "tasks.sqlite")
@@ -166,7 +166,7 @@ func TestMigrationV5ToV6(t *testing.T) {
 	version, err := s2.readSchemaVersion(ctx)
 	require.NoError(t, err)
 	require.Equal(t, currentSchemaVersion, version)
-	require.Equal(t, 11, currentSchemaVersion)
+	require.Equal(t, 13, currentSchemaVersion)
 }
 
 // TestMigrationV7ToV8FTSUpdateScope confirms that a DB recorded at schema
@@ -194,7 +194,7 @@ func TestMigrationV7ToV8FTSUpdateScope(t *testing.T) {
 	version, err := s2.readSchemaVersion(ctx)
 	require.NoError(t, err)
 	require.Equal(t, currentSchemaVersion, version)
-	require.Equal(t, 11, currentSchemaVersion)
+	require.Equal(t, 13, currentSchemaVersion)
 
 	// Drive raw UPDATEs through a probe connection and assert FTS contents
 	// via the matchinfo-free count of rows whose body matches.
@@ -230,6 +230,70 @@ VALUES ('v8', '2026-01-01T00:00:00Z', 'todo', 'alpha keyword body', 1)`)
 	require.NoError(t, err)
 	require.Equal(t, 0, countMatch("alpha"))
 	require.Equal(t, 1, countMatch("omega"))
+}
+
+func TestMigrationV11ToV12AddsAvailableAtAndPreservesIntegrity(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "tasks.sqlite")
+	s, err := NewSQLite(ctx, Paths{SQLitePath: path})
+	require.NoError(t, err)
+	require.NoError(t, s.Add(ctx, task.Task{ID: "legacy", Status: task.StatusTodo, Body: "legacy"}))
+	require.NoError(t, s.writeSchemaVersion(ctx, 11))
+	_, err = s.db.ExecContext(ctx, `DROP INDEX tasks_status_available_order_idx; ALTER TABLE tasks DROP COLUMN available_at`)
+	require.NoError(t, err)
+	require.NoError(t, s.Close())
+
+	reopened, err := NewSQLite(ctx, Paths{SQLitePath: path})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = reopened.Close() })
+	got, err := reopened.Get(ctx, "legacy")
+	require.NoError(t, err)
+	require.Empty(t, got.AvailableAt)
+	version, err := reopened.readSchemaVersion(ctx)
+	require.NoError(t, err)
+	require.Equal(t, currentSchemaVersion, version)
+	var integrity string
+	require.NoError(t, reopened.db.QueryRowContext(ctx, `PRAGMA integrity_check`).Scan(&integrity))
+	require.Equal(t, "ok", integrity)
+}
+
+func TestMigrationV12ToV13AddsQueueHealthIndexes(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "tasks.sqlite")
+	s, err := NewSQLite(ctx, Paths{SQLitePath: path})
+	require.NoError(t, err)
+	require.NoError(t, s.writeSchemaVersion(ctx, 12))
+	for _, name := range []string{
+		"tasks_status_created_idx",
+		"tasks_status_started_idx",
+		"task_events_stale_requeue_at_idx",
+		"task_attempts_started_idx",
+		"task_attempts_status_finished_idx",
+	} {
+		_, err = s.db.ExecContext(ctx, `DROP INDEX `+name)
+		require.NoError(t, err)
+	}
+	require.NoError(t, s.Close())
+
+	reopened, err := NewSQLite(ctx, Paths{SQLitePath: path})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = reopened.Close() })
+	version, err := reopened.readSchemaVersion(ctx)
+	require.NoError(t, err)
+	require.Equal(t, 13, version)
+	for _, name := range []string{
+		"tasks_status_created_idx",
+		"tasks_status_started_idx",
+		"task_events_stale_requeue_at_idx",
+		"task_attempts_started_idx",
+		"task_attempts_status_finished_idx",
+	} {
+		var count int
+		require.NoError(t, reopened.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name=?`, name).Scan(&count))
+		require.Equal(t, 1, count, name)
+	}
 }
 
 func TestMigrationIsDuplicateColumnTypedError(t *testing.T) {

@@ -107,6 +107,16 @@ func TestValidateAddOptionsRejectsInvalidPriority(t *testing.T) {
 	}
 }
 
+func TestValidateAddOptionsCanonicalAvailableAt(t *testing.T) {
+	t.Parallel()
+	canonical, err := task.CanonicalAvailableAt("2026-07-17T12:00:00-04:00")
+	require.NoError(t, err)
+	require.Equal(t, "2026-07-17T16:00:00Z", canonical)
+	require.NoError(t, task.ValidateAddOptions(task.AddOptions{Body: "valid software task", AvailableAt: canonical}))
+	err = task.ValidateAddOptions(task.AddOptions{Body: "valid software task", AvailableAt: "tomorrow"})
+	require.ErrorIs(t, err, task.ErrInvalidAvailableAt)
+}
+
 func TestValidateAddOptionsRequiresDiscoveryPrefixAndScopeForGeneratedTasks(t *testing.T) {
 	t.Parallel()
 

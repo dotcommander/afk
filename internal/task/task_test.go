@@ -178,6 +178,7 @@ func TestAddOptionsFromTask(t *testing.T) {
 		Agent:       "codex",
 		GroupID:     "group",
 		ResourceKey: "repo:/tmp/repo",
+		AvailableAt: "2026-07-17T16:00:00Z",
 	}
 
 	opts := task.AddOptionsFromTask(tk)
@@ -189,6 +190,26 @@ func TestAddOptionsFromTask(t *testing.T) {
 	require.Equal(t, tk.Agent, opts.Agent)
 	require.Equal(t, tk.GroupID, opts.GroupID)
 	require.Equal(t, tk.ResourceKey, opts.ResourceKey)
+	require.Equal(t, tk.AvailableAt, opts.AvailableAt)
+}
+
+func TestRetryDispositionDefaultsToManual(t *testing.T) {
+	t.Parallel()
+	got, err := task.ParseRetryDisposition("")
+	require.NoError(t, err)
+	require.Equal(t, task.RetryDispositionManual, got)
+	got, err = task.ParseRetryDisposition("deferred")
+	require.NoError(t, err)
+	require.Equal(t, task.RetryDispositionDeferred, got)
+	_, err = task.ParseRetryDisposition("automatic")
+	require.ErrorIs(t, err, task.ErrInvalidRetryDisposition)
+	canonical, err := task.ValidateRetryDisposition(task.RetryDispositionDeferred, "2026-07-17T12:00:00-04:00")
+	require.NoError(t, err)
+	require.Equal(t, "2026-07-17T16:00:00Z", canonical)
+	_, err = task.ValidateRetryDisposition(task.RetryDispositionDeferred, "")
+	require.ErrorIs(t, err, task.ErrDeferredRetryRequiresAvailableAt)
+	_, err = task.ValidateRetryDisposition(task.RetryDispositionManual, "2026-07-17T16:00:00Z")
+	require.ErrorIs(t, err, task.ErrManualRetryWithAvailableAt)
 }
 
 func TestAllStatusesMatchesOrderedStatuses(t *testing.T) {
