@@ -198,6 +198,37 @@ func (s *Service) RequeueStale(ctx context.Context, olderThan time.Duration) ([]
 	return s.store.RequeueStale(ctx, olderThan, s.now())
 }
 
+// Retry applies an explicit immediate or deferred retry disposition. Manual
+// retries open an attempt now; deferred retries return the task to todo with a
+// durable eligibility time so normal readiness rules own the later claim.
+func (s *Service) Retry(ctx context.Context, id string, disposition task.RetryDisposition, availableAt, message string) (task.Task, error) {
+	canonical, err := task.ValidateRetryDisposition(disposition, availableAt)
+	if err != nil {
+		return task.Task{}, err
+	}
+	if disposition == task.RetryDispositionDeferred {
+		availableTime, _ := time.Parse(time.RFC3339, canonical)
+		if !availableTime.After(s.now()) {
+			return task.Task{}, task.ErrDeferredRetryNotFuture
+		}
+	}
+	status := task.StatusDoing
+	if disposition == task.RetryDispositionDeferred {
+		status = task.StatusTodo
+	}
+	if err := s.store.Update(ctx, id, eventForStatus(status), message, func(t *task.Task) bool {
+		changed := s.applyStatusAndStage(t, status, message, nil)
+		if t.AvailableAt != canonical {
+			t.AvailableAt = canonical
+			changed = true
+		}
+		return changed
+	}); err != nil {
+		return task.Task{}, err
+	}
+	return s.store.Get(ctx, id)
+}
+
 // eventForStatus maps a validated task.Status to its lifecycle event via the
 // task package's single status-metadata table. All callers MUST validate via
 // task.ParseStatus first (setStatus does at service_lifecycle.go:42).

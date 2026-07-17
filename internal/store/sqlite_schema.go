@@ -17,7 +17,7 @@ const sqliteBusyRetryDelay = 25 * time.Millisecond
 // migration function is added below.
 const (
 	schemaVersionKey     = "schema_version"
-	currentSchemaVersion = 11
+	currentSchemaVersion = 13
 	schemaTableTasks     = "tasks"
 	canonicalStatusTodo  = "todo"
 	canonicalStatusDoing = "doing"
@@ -56,11 +56,14 @@ CREATE TABLE IF NOT EXISTS tasks (
 	group_id TEXT NOT NULL DEFAULT '',
 	resource_key TEXT NOT NULL DEFAULT '',
 	stage TEXT NOT NULL DEFAULT '',
+	available_at TEXT NOT NULL DEFAULT '',
 	ordinal INTEGER NOT NULL,
 	revision INTEGER NOT NULL DEFAULT 1
 );
 CREATE INDEX IF NOT EXISTS tasks_status_order_idx ON tasks(status, ordinal);
 CREATE INDEX IF NOT EXISTS tasks_group_id_status_idx ON tasks(group_id, status);
+CREATE INDEX IF NOT EXISTS tasks_status_created_idx ON tasks(status, created);
+CREATE INDEX IF NOT EXISTS tasks_status_started_idx ON tasks(status, started);
 CREATE TABLE IF NOT EXISTS metadata (
 	key TEXT PRIMARY KEY,
 	value TEXT NOT NULL
@@ -73,6 +76,7 @@ CREATE TABLE IF NOT EXISTS task_events (
 	message TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS task_events_task_idx ON task_events(task_id, id);
+CREATE INDEX IF NOT EXISTS task_events_stale_requeue_at_idx ON task_events(at) WHERE type='requeued' AND message='stale';
 CREATE TABLE IF NOT EXISTS task_attempts (
 	id INTEGER PRIMARY KEY AUTOINCREMENT,
 	task_id TEXT NOT NULL,
@@ -84,6 +88,8 @@ CREATE TABLE IF NOT EXISTS task_attempts (
 	agent TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS task_attempts_task_idx ON task_attempts(task_id, id);
+CREATE INDEX IF NOT EXISTS task_attempts_started_idx ON task_attempts(started, task_id, id);
+CREATE INDEX IF NOT EXISTS task_attempts_status_finished_idx ON task_attempts(status, finished);
 CREATE TABLE IF NOT EXISTS task_dependencies (
 	task_id TEXT NOT NULL,
 	depends_on_id TEXT NOT NULL,
@@ -248,7 +254,35 @@ func (s *SQLiteStore) runMigrationsIfNeeded(ctx context.Context) error {
 	if err := s.migrateV11DurableGoals(ctx); err != nil {
 		return err
 	}
+	if err := s.migrateV12AvailableAt(ctx); err != nil {
+		return err
+	}
+	if err := s.migrateV13QueueHealthIndexes(ctx); err != nil {
+		return err
+	}
 	return s.writeSchemaVersion(ctx, currentSchemaVersion)
+}
+
+func (s *SQLiteStore) migrateV13QueueHealthIndexes(ctx context.Context) error {
+	if _, err := s.db.ExecContext(ctx, `
+CREATE INDEX IF NOT EXISTS tasks_status_created_idx ON tasks(status, created);
+CREATE INDEX IF NOT EXISTS tasks_status_started_idx ON tasks(status, started);
+CREATE INDEX IF NOT EXISTS task_events_stale_requeue_at_idx ON task_events(at) WHERE type='requeued' AND message='stale';
+CREATE INDEX IF NOT EXISTS task_attempts_started_idx ON task_attempts(started, task_id, id);
+CREATE INDEX IF NOT EXISTS task_attempts_status_finished_idx ON task_attempts(status, finished);`); err != nil {
+		return fmt.Errorf("store: migrate queue health indexes: %w", err)
+	}
+	return nil
+}
+
+func (s *SQLiteStore) migrateV12AvailableAt(ctx context.Context) error {
+	if _, err := s.db.ExecContext(ctx, `ALTER TABLE tasks ADD COLUMN available_at TEXT NOT NULL DEFAULT ''`); err != nil && !isDuplicateColumn(err) {
+		return fmt.Errorf("store: migrate available_at: %w", err)
+	}
+	if _, err := s.db.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS tasks_status_available_order_idx ON tasks(status, available_at, ordinal)`); err != nil {
+		return fmt.Errorf("store: migrate available_at index: %w", err)
+	}
+	return nil
 }
 
 // rejectNewerSchema runs before bootstrap DDL so opening a database produced by

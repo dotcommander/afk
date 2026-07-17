@@ -11,11 +11,168 @@ import (
 	"syscall"
 	"text/template"
 	"time"
+
+	sqlite3 "modernc.org/sqlite/lib"
 )
 
 // ErrAgentTimeout is returned by runAgent when the child process exceeds its
 // allotted timeout.
 var ErrAgentTimeout = errors.New("agent process timed out")
+
+// ErrLeaseLost reports that loop execution stopped because its worker no
+// longer held a renewable lease. The task is deliberately left unfinalized so
+// a new owner can recover it without a stale worker overwriting that result.
+var ErrLeaseLost = errors.New("task lease lost")
+
+type heartbeatMonitor struct {
+	cancel context.CancelFunc
+	done   chan struct{}
+	lost   chan error
+}
+
+type leaseWatch struct {
+	deadline time.Time
+	timer    *time.Timer
+}
+
+func newLeaseWatch(now func() time.Time, lease time.Duration, persisted string) (*leaseWatch, error) {
+	if lease <= 0 {
+		return nil, nil
+	}
+	persistedDeadline, err := time.Parse(time.RFC3339, persisted)
+	if err != nil {
+		return nil, fmt.Errorf("invalid persisted lease deadline %q", persisted)
+	}
+	remaining := persistedDeadline.Sub(now())
+	return &leaseWatch{
+		deadline: time.Now().Add(remaining),
+		timer:    time.NewTimer(remaining),
+	}, nil
+}
+
+func (w *leaseWatch) expired() <-chan time.Time {
+	if w == nil {
+		return nil
+	}
+	return w.timer.C
+}
+
+func (w *leaseWatch) valid() bool {
+	return w == nil || time.Now().Before(w.deadline)
+}
+
+func (w *leaseWatch) renewed(lease time.Duration) {
+	if w == nil {
+		return
+	}
+	w.deadline = time.Now().Add(lease)
+	w.timer.Reset(lease)
+}
+
+func (w *leaseWatch) stop() {
+	if w != nil {
+		w.timer.Stop()
+	}
+}
+
+func (m *heartbeatMonitor) stop() error {
+	if m == nil {
+		return nil
+	}
+	m.cancel()
+	<-m.done
+	select {
+	case err := <-m.lost:
+		return err
+	default:
+		return nil
+	}
+}
+
+// startHeartbeat maintains the worker's lease and cancels execution when the
+// lease is definitively lost. SQLite busy/locked errors are transient while
+// the last confirmed lease remains valid; other renewal errors fail closed.
+func (s *Service) startHeartbeat(ctx context.Context, cfg LoopConfig, taskID, worker, claimedLeaseExpires string, cancelExecution context.CancelFunc) *heartbeatMonitor {
+	if cfg.HeartbeatInterval <= 0 && cfg.Lease <= 0 {
+		return nil
+	}
+	hbCtx, hbCancel := context.WithCancel(ctx)
+	monitor := &heartbeatMonitor{
+		cancel: hbCancel,
+		done:   make(chan struct{}),
+		lost:   make(chan error, 1),
+	}
+	go s.monitorHeartbeat(hbCtx, cfg, taskID, worker, claimedLeaseExpires, cancelExecution, monitor)
+	return monitor
+}
+
+func (s *Service) monitorHeartbeat(ctx context.Context, cfg LoopConfig, taskID, worker, claimedLeaseExpires string, cancelExecution context.CancelFunc, monitor *heartbeatMonitor) {
+	defer close(monitor.done)
+	var heartbeat <-chan time.Time
+	var ticker *time.Ticker
+	if cfg.HeartbeatInterval > 0 {
+		ticker = time.NewTicker(cfg.HeartbeatInterval)
+		heartbeat = ticker.C
+		defer ticker.Stop()
+	}
+	watch, err := newLeaseWatch(s.now, cfg.Lease, claimedLeaseExpires)
+	if err != nil {
+		reportLeaseLoss(monitor, cancelExecution, err)
+		return
+	}
+	defer watch.stop()
+	for {
+		select {
+		case <-heartbeat:
+			err := s.renewHeartbeat(ctx, cfg.Lease, taskID, worker, watch)
+			if ctx.Err() != nil {
+				return
+			}
+			if err == nil {
+				watch.renewed(cfg.Lease)
+				continue
+			}
+			if isSQLiteContention(err) && watch.valid() {
+				continue
+			}
+			reportLeaseLoss(monitor, cancelExecution, err)
+			return
+		case <-watch.expired():
+			reportLeaseLoss(monitor, cancelExecution, context.DeadlineExceeded)
+			return
+		case <-ctx.Done():
+			return
+		}
+	}
+}
+
+func (s *Service) renewHeartbeat(ctx context.Context, lease time.Duration, taskID, worker string, watch *leaseWatch) error {
+	renewCtx := ctx
+	cancel := func() {}
+	if watch != nil {
+		renewCtx, cancel = context.WithDeadline(ctx, watch.deadline)
+	}
+	defer cancel()
+	return s.Heartbeat(renewCtx, taskID, worker, lease)
+}
+
+func reportLeaseLoss(monitor *heartbeatMonitor, cancelExecution context.CancelFunc, err error) {
+	monitor.lost <- fmt.Errorf("%w: %w", ErrLeaseLost, err)
+	cancelExecution()
+}
+
+func isSQLiteContention(err error) bool {
+	var coded interface{ Code() int }
+	if !errors.As(err, &coded) {
+		return false
+	}
+	switch coded.Code() & 0xff {
+	case sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED:
+		return true
+	default:
+		return false
+	}
+}
 
 // runAgent builds argv from commandTmpl with .Prompt = prompt, spawns the
 // resulting command as a child process, and waits for it to exit. stdout and

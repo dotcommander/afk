@@ -166,7 +166,7 @@ func (s *SQLiteStore) UpdateCAS(ctx context.Context, id string, expectedRevision
 	if !mutate(&t) {
 		return current, nil
 	}
-	res, err := tx.ExecContext(ctx, `UPDATE tasks SET created=?, status=?, body=?, started=?, lease_expires=?, finished=?, error=?, priority=?, tags=?, cwd=?, source=?, agent=?, group_id=?, resource_key=?, stage=?, revision=revision+1 WHERE id=? AND revision=?`, t.Created, t.Status, t.Body, t.Started, t.LeaseExpires, t.Finished, t.Error, t.Priority, encodeTags(t.Tags), t.CWD, t.Source, t.Agent, t.GroupID, t.ResourceKey, t.Stage, id, expectedRevision)
+	res, err := tx.ExecContext(ctx, `UPDATE tasks SET created=?, status=?, body=?, started=?, lease_expires=?, finished=?, error=?, priority=?, tags=?, cwd=?, source=?, agent=?, group_id=?, resource_key=?, stage=?, available_at=?, revision=revision+1 WHERE id=? AND revision=?`, t.Created, t.Status, t.Body, t.Started, t.LeaseExpires, t.Finished, t.Error, t.Priority, encodeTags(t.Tags), t.CWD, t.Source, t.Agent, t.GroupID, t.ResourceKey, t.Stage, t.AvailableAt, id, expectedRevision)
 	if err != nil {
 		return current, fmt.Errorf("store: CAS update: %w", err)
 	}

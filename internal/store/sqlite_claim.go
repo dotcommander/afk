@@ -39,8 +39,8 @@ WHERE id = (
 	LIMIT 1
 )
 RETURNING id, created, status, body, started, lease_expires, finished, error,
-	priority, tags, cwd, source, agent, group_id, resource_key, stage`,
-		string(task.StatusDoing), started, lease, string(task.StatusTodo), string(task.StatusDone), string(task.StatusDoing))
+	priority, tags, cwd, source, agent, group_id, resource_key, stage, available_at`,
+		string(task.StatusDoing), started, lease, string(task.StatusTodo), started, string(task.StatusDone), string(task.StatusDoing))
 	t, err := scanTask(row)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -89,8 +89,8 @@ UPDATE tasks
 SET status=?, started=?, lease_expires=?, revision=revision+1
 WHERE id=? AND status=?`+readyWhereSQL+`
 RETURNING id, created, status, body, started, lease_expires, finished, error,
-	priority, tags, cwd, source, agent, group_id, resource_key, stage`,
-		string(task.StatusDoing), started, lease, id, string(task.StatusTodo), string(task.StatusDone), string(task.StatusDoing))
+	priority, tags, cwd, source, agent, group_id, resource_key, stage, available_at`,
+		string(task.StatusDoing), started, lease, id, string(task.StatusTodo), started, string(task.StatusDone), string(task.StatusDoing))
 	claimed, err := scanTask(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		existing, replayErr := explicitClaimReplay(ctx, tx, id, workerID)
@@ -191,7 +191,7 @@ func (s *SQLiteStore) RequeueStale(ctx context.Context, olderThan time.Duration,
 	nowText := now.UTC().Format(time.RFC3339)
 	rows, err := s.db.QueryContext(ctx, `
 SELECT id, created, status, body, started, lease_expires, finished, error,
-	priority, tags, cwd, source, agent, group_id, resource_key, stage
+	priority, tags, cwd, source, agent, group_id, resource_key, stage, available_at
 FROM tasks
 WHERE status = ?
 AND (
@@ -254,10 +254,10 @@ func (s *SQLiteStore) requeueIfStillStale(ctx context.Context, id, cutoff, nowTe
 	if _, err := tx.ExecContext(ctx, `
 UPDATE tasks
 SET created = ?, status = ?, body = ?, started = ?, lease_expires = ?, finished = ?, error = ?,
-	priority = ?, tags = ?, cwd = ?, source = ?, agent = ?, group_id = ?, resource_key = ?, stage = ?, revision = revision + 1
+	priority = ?, tags = ?, cwd = ?, source = ?, agent = ?, group_id = ?, resource_key = ?, stage = ?, available_at = ?, revision = revision + 1
 WHERE id = ?`,
 		t.Created, string(t.Status), t.Body, t.Started, t.LeaseExpires, t.Finished, t.Error,
-		t.Priority, encodeTags(t.Tags), t.CWD, t.Source, t.Agent, t.GroupID, t.ResourceKey, t.Stage, t.ID); err != nil {
+		t.Priority, encodeTags(t.Tags), t.CWD, t.Source, t.Agent, t.GroupID, t.ResourceKey, t.Stage, t.AvailableAt, t.ID); err != nil {
 		return staleRequeueResult{}, fmt.Errorf("store: requeue stale task %s: %w", id, err)
 	}
 	at := s.eventTime(t)

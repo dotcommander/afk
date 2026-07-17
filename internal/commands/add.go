@@ -23,6 +23,7 @@ type AddCmd struct {
 	Agent       string   `help:"Preferred agent."`
 	GroupID     string   `name:"group" help:"Task group id."`
 	ResourceKey string   `name:"resource" help:"Task resource key (defaults to repo:<git-root>; use none to disable)."`
+	AvailableAt string   `name:"available-at" help:"Do not make the task claimable before this RFC3339 timestamp."`
 	Stage       string   `help:"Free-form pipeline stage label."`
 	BlockedBy   string   `name:"blocked-by" help:"Task id this task is blocked by, or none."`
 	JSON        bool     `help:"Emit JSON output."`
@@ -33,7 +34,7 @@ type AddCmd struct {
 }
 
 func (c *AddCmd) Run(d *Deps, ctx context.Context) error {
-	return runAddCommand(ctx, d, addCommandInput{args: c.Body, tags: c.Tags, priority: c.Priority, cwd: c.CWD, noCWD: c.NoCWD, source: c.Source, agent: c.Agent, groupID: c.GroupID, resourceKey: c.ResourceKey, stage: c.Stage, blockedBy: c.BlockedBy, requestID: c.RequestID}, addCommandMode{asJSON: c.JSON, dryRun: c.DryRun, diagnose: c.Diagnose, force: c.Force})
+	return runAddCommand(ctx, d, addCommandInput{args: c.Body, tags: c.Tags, priority: c.Priority, cwd: c.CWD, noCWD: c.NoCWD, source: c.Source, agent: c.Agent, groupID: c.GroupID, resourceKey: c.ResourceKey, availableAt: c.AvailableAt, stage: c.Stage, blockedBy: c.BlockedBy, requestID: c.RequestID}, addCommandMode{asJSON: c.JSON, dryRun: c.DryRun, diagnose: c.Diagnose, force: c.Force})
 }
 
 type addCommandInput struct {
@@ -46,6 +47,7 @@ type addCommandInput struct {
 	agent       string
 	groupID     string
 	resourceKey string
+	availableAt string
 	stage       string
 	blockedBy   string
 	requestID   string

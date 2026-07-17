@@ -18,6 +18,8 @@ import (
 // recentPathLimit caps how many distinct working directories RecentPaths returns.
 const recentPathLimit = 10
 
+const queueHealthWindow = 24 * time.Hour
+
 // statusFilterAll is the List/Find status filter that spans every status.
 const statusFilterAll = "all"
 
@@ -295,6 +297,9 @@ func (s *Service) addValidatedWithDependency(ctx context.Context, opts task.AddO
 
 func (s *Service) newTask(opts task.AddOptions) task.Task {
 	now := s.now()
+	// Every path to newTask validates AddOptions first, including force-add,
+	// which only bypasses ErrInvalidTask body checks.
+	availableAt, _ := task.CanonicalAvailableAt(opts.AvailableAt)
 	return task.Task{
 		ID:          s.newID(),
 		Created:     formatTime(now),
@@ -307,6 +312,7 @@ func (s *Service) newTask(opts task.AddOptions) task.Task {
 		Agent:       opts.Agent,
 		GroupID:     opts.GroupID,
 		ResourceKey: opts.ResourceKey,
+		AvailableAt: availableAt,
 		Stage:       opts.Stage,
 	}
 }
@@ -393,6 +399,7 @@ type StatusSnapshot struct {
 	Counts map[task.Status]int `json:"counts"`
 	Todo   []task.Task         `json:"todo"`
 	Doing  []task.Task         `json:"doing"`
+	Health task.QueueHealth    `json:"health"`
 }
 
 // Status returns a single queue snapshot: per-status tallies plus the todo
@@ -407,13 +414,17 @@ func (s *Service) Status(ctx context.Context) (StatusSnapshot, error) {
 	if err != nil {
 		return StatusSnapshot{}, err
 	}
+	health, err := s.store.QueueHealth(ctx, s.now(), queueHealthWindow)
+	if err != nil {
+		return StatusSnapshot{}, err
+	}
 	// Fold legacy aliases ("pending" → todo, "working" → doing) into canonical
 	// buckets so the snapshot key shape matches the pre-SQL behavior.
 	counts := make(map[task.Status]int, len(raw))
 	for status, n := range raw {
 		counts[task.NormalizeStatus(status)] += n
 	}
-	return StatusSnapshot{Counts: counts, Todo: todo, Doing: doing}, nil
+	return StatusSnapshot{Counts: counts, Todo: todo, Doing: doing, Health: health}, nil
 }
 
 // Next returns the first ready task without mutation.

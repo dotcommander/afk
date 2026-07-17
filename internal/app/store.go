@@ -15,6 +15,7 @@ type Store interface {
 	Get(ctx context.Context, id string) (task.Task, error)
 	Counts(ctx context.Context) (map[task.Status]int, error)
 	ActiveLists(ctx context.Context) (todo, doing []task.Task, err error)
+	QueueHealth(ctx context.Context, now time.Time, window time.Duration) (task.QueueHealth, error)
 	ListByStatus(ctx context.Context, status task.Status) ([]task.Task, error)
 	Ready(ctx context.Context) ([]task.Task, error)
 	ExplainNotReady(ctx context.Context) (store.NotReadyExplanation, error)

@@ -63,7 +63,7 @@ func (s *SQLiteStore) UpdateRequested(ctx context.Context, actor, requestID, ope
 }
 
 func (s *SQLiteStore) applyRequestedUpdate(ctx context.Context, tx *sql.Tx, t task.Task, event task.EventType, message string) error {
-	if _, err := tx.ExecContext(ctx, `UPDATE tasks SET created=?, status=?, body=?, started=?, lease_expires=?, finished=?, error=?, priority=?, tags=?, cwd=?, source=?, agent=?, group_id=?, resource_key=?, stage=?, revision=revision+1 WHERE id=?`, t.Created, t.Status, t.Body, t.Started, t.LeaseExpires, t.Finished, t.Error, t.Priority, encodeTags(t.Tags), t.CWD, t.Source, t.Agent, t.GroupID, t.ResourceKey, t.Stage, t.ID); err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE tasks SET created=?, status=?, body=?, started=?, lease_expires=?, finished=?, error=?, priority=?, tags=?, cwd=?, source=?, agent=?, group_id=?, resource_key=?, stage=?, available_at=?, revision=revision+1 WHERE id=?`, t.Created, t.Status, t.Body, t.Started, t.LeaseExpires, t.Finished, t.Error, t.Priority, encodeTags(t.Tags), t.CWD, t.Source, t.Agent, t.GroupID, t.ResourceKey, t.Stage, t.AvailableAt, t.ID); err != nil {
 		return fmt.Errorf("store: requested update: %w", err)
 	}
 	at := s.eventTime(t)

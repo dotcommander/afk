@@ -23,6 +23,7 @@ const (
 type GoalFinalization struct {
 	TaskID          string
 	AttemptID       int64
+	WorkerID        string
 	Succeeded       bool
 	Error           string
 	TokensUsed      int64
@@ -137,6 +138,19 @@ func (s *SQLiteStore) FinalizeGoalInvocation(ctx context.Context, in GoalFinaliz
 	}
 	if member.Status != task.StatusDoing {
 		return GoalFinalizeResult{}, ErrInvalidState
+	}
+	var attemptWorker string
+	if err := tx.QueryRowContext(ctx, `SELECT worker_id FROM task_attempts WHERE id=? AND task_id=?`, in.AttemptID, in.TaskID).Scan(&attemptWorker); err != nil {
+		return GoalFinalizeResult{}, fmt.Errorf("store: find goal attempt owner: %w", err)
+	}
+	if in.WorkerID == "" || attemptWorker != in.WorkerID {
+		return GoalFinalizeResult{}, ErrWorkerMismatch
+	}
+	if member.LeaseExpires != "" {
+		deadline, parseErr := time.Parse(time.RFC3339, member.LeaseExpires)
+		if parseErr != nil || !deadline.After(in.Now.UTC()) {
+			return GoalFinalizeResult{}, ErrWorkerMismatch
+		}
 	}
 	nowText := in.Now.UTC().Format(time.RFC3339Nano)
 	if err := s.finishGoalMember(ctx, tx, &member, in, nowText); err != nil {
@@ -374,7 +388,7 @@ func (s *SQLiteStore) requeueBudgetLimitedTasks(ctx context.Context, tx *sql.Tx,
 }
 
 func updateTaskRow(ctx context.Context, tx *sql.Tx, t task.Task) error {
-	_, err := tx.ExecContext(ctx, `UPDATE tasks SET created=?,status=?,body=?,started=?,lease_expires=?,finished=?,error=?,priority=?,tags=?,cwd=?,source=?,agent=?,group_id=?,resource_key=?,stage=?,revision=revision+1 WHERE id=?`, t.Created, t.Status, t.Body, t.Started, t.LeaseExpires, t.Finished, t.Error, t.Priority, encodeTags(t.Tags), t.CWD, t.Source, t.Agent, t.GroupID, t.ResourceKey, t.Stage, t.ID)
+	_, err := tx.ExecContext(ctx, `UPDATE tasks SET created=?,status=?,body=?,started=?,lease_expires=?,finished=?,error=?,priority=?,tags=?,cwd=?,source=?,agent=?,group_id=?,resource_key=?,stage=?,available_at=?,revision=revision+1 WHERE id=?`, t.Created, t.Status, t.Body, t.Started, t.LeaseExpires, t.Finished, t.Error, t.Priority, encodeTags(t.Tags), t.CWD, t.Source, t.Agent, t.GroupID, t.ResourceKey, t.Stage, t.AvailableAt, t.ID)
 	if err != nil {
 		return fmt.Errorf("store: update goal task %s: %w", t.ID, err)
 	}

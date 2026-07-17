@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
 )
 
 // ErrInvalidTask reports a task body that AFK should not schedule or execute.
@@ -22,6 +23,7 @@ var (
 	ErrMissingRejectIf        = errors.New("generated task must include reject-if criteria")
 	ErrMissingCwd             = errors.New("generated task must include cwd metadata or an absolute path")
 	ErrInvalidPriority        = errors.New("priority must be urgent, high, normal, or low")
+	ErrInvalidAvailableAt     = errors.New("available-at must be an RFC3339 timestamp")
 )
 
 // ErrMissingCompletionNote reports that a terminal `set` transition (done or
@@ -59,6 +61,9 @@ func ValidateAddOptions(opts AddOptions) error {
 	if err := ValidatePriority(opts.Priority); err != nil {
 		return err
 	}
+	if _, err := CanonicalAvailableAt(opts.AvailableAt); err != nil {
+		return err
+	}
 	if !IsGeneratedCandidate(opts.Source, opts.Tags) {
 		return nil
 	}
@@ -81,6 +86,9 @@ func ValidateAddOptionsAll(opts AddOptions) error {
 	if err := ValidatePriority(opts.Priority); err != nil {
 		return err
 	}
+	if _, err := CanonicalAvailableAt(opts.AvailableAt); err != nil {
+		return err
+	}
 	if !IsGeneratedCandidate(opts.Source, opts.Tags) {
 		return nil
 	}
@@ -101,6 +109,19 @@ func ValidateAddOptionsAll(opts AddOptions) error {
 func ValidatePriority(priority Priority) error {
 	_, err := ParsePriority(string(priority))
 	return err
+}
+
+// CanonicalAvailableAt validates an optional eligibility timestamp and
+// normalizes it to UTC for deterministic SQLite ordering comparisons.
+func CanonicalAvailableAt(value string) (string, error) {
+	if strings.TrimSpace(value) == "" {
+		return "", nil
+	}
+	parsed, err := time.Parse(time.RFC3339, value)
+	if err != nil {
+		return "", fmt.Errorf("%w: %q", ErrInvalidAvailableAt, value)
+	}
+	return parsed.UTC().Format(time.RFC3339), nil
 }
 
 // generatedCandidateChecks runs every generated-candidate validation check in

@@ -123,7 +123,7 @@ func (s *Service) RunLoop(
 		var buf bytes.Buffer
 		if tmplErr := tmpl.Execute(&buf, t); tmplErr != nil {
 			// Template render failure is a task-level error, not a loop error.
-			_ = s.Fail(ctx, t.ID, fmt.Sprintf("prompt render: %v", tmplErr))
+			_ = s.SetStatusWithStageWorker(ctx, t.ID, task.StatusFailed, fmt.Sprintf("prompt render: %v", tmplErr), nil, worker)
 			consecutiveFailures++
 			r := LoopResult{
 				TaskID:   t.ID,
@@ -146,8 +146,10 @@ func (s *Service) RunLoop(
 		prompt := buf.String()
 
 		// --- Heartbeat goroutine ---
-		// Exit condition: hbCtx cancelled (via hbCancel called below).
-		hbCancel := s.startHeartbeat(ctx, cfg, t.ID, worker)
+		// The child runs under its own context so lease loss can stop this
+		// invocation without cancelling the caller's whole loop context.
+		runCtx, cancelRun := context.WithCancel(ctx)
+		heartbeat := s.startHeartbeat(ctx, cfg, t.ID, worker, t.LeaseExpires, cancelRun)
 
 		// --- Spawn agent ---
 		stdout, stderr := agentOut, agentErr
@@ -157,15 +159,18 @@ func (s *Service) RunLoop(
 			stderrTail = newTailWriter(agentErr, goalOutputTailLimit)
 			stdout, stderr = stdoutTail, stderrTail
 		}
-		runErr := runAgent(ctx, cfg.Command, prompt, cfg.TaskTimeout, stdout, stderr)
+		runErr := runAgent(runCtx, cfg.Command, prompt, cfg.TaskTimeout, stdout, stderr)
 
-		// Stop heartbeat immediately when the task finishes.
-		if hbCancel != nil {
-			hbCancel()
+		// Stop heartbeat immediately when the task finishes. A recorded lease
+		// loss wins the race with child exit and forbids terminal finalization.
+		leaseErr := heartbeat.stop()
+		cancelRun()
+		if leaseErr != nil {
+			return fmt.Errorf("task %s: %w", t.ID, leaseErr)
 		}
 
 		// --- Classify result ---
-		classification, tokens, goalLimited, err := s.finalizeLoopInvocation(ctx, t.ID, goalAttemptID, runErr, goal, budgeted, stdoutTail, stderrTail)
+		classification, tokens, goalLimited, err := s.finalizeLoopInvocation(ctx, t.ID, worker, goalAttemptID, runErr, goal, budgeted, stdoutTail, stderrTail)
 		if err != nil {
 			return err
 		}
@@ -205,9 +210,9 @@ func (s *Service) RunLoop(
 	}
 }
 
-func (s *Service) finalizeLoopInvocation(ctx context.Context, taskID string, attemptID int64, runErr error, goal task.GoalGroup, budgeted bool, stdoutTail, stderrTail *tailWriter) (runClassification, int64, bool, error) {
+func (s *Service) finalizeLoopInvocation(ctx context.Context, taskID, worker string, attemptID int64, runErr error, goal task.GoalGroup, budgeted bool, stdoutTail, stderrTail *tailWriter) (runClassification, int64, bool, error) {
 	if !budgeted {
-		classification, err := s.classifyRun(ctx, taskID, runErr)
+		classification, err := s.classifyRun(ctx, taskID, worker, runErr)
 		return classification, 0, false, err
 	}
 	classification := classifyAgentResult(runErr)
@@ -216,39 +221,13 @@ func (s *Service) finalizeLoopInvocation(ctx context.Context, taskID string, att
 		tokens, available = parseGoalTokens(goal.TokenRegex, stdoutTail.Bytes(), stderrTail.Bytes())
 	}
 	finalized, err := s.store.FinalizeGoalInvocation(ctx, store.GoalFinalization{
-		TaskID: taskID, AttemptID: attemptID, Succeeded: !classification.failed, Error: classification.errText,
+		TaskID: taskID, AttemptID: attemptID, WorkerID: worker, Succeeded: !classification.failed, Error: classification.errText,
 		TokensUsed: tokens, TokensAvailable: available, Now: s.now(),
 	})
 	if err != nil {
 		return runClassification{}, 0, false, fmt.Errorf("finalize goal task %s: %w", taskID, err)
 	}
 	return classification, tokens, finalized.Limited, nil
-}
-
-// startHeartbeat launches a best-effort lease-heartbeat goroutine when
-// cfg.HeartbeatInterval > 0 and returns its cancel func; returns nil when
-// heartbeats are disabled. Exit condition: the returned cancel is invoked
-// (cancels the goroutine's context).
-func (s *Service) startHeartbeat(ctx context.Context, cfg LoopConfig, taskID, worker string) context.CancelFunc {
-	if cfg.HeartbeatInterval <= 0 {
-		return nil
-	}
-	hbCtx, hbCancel := context.WithCancel(ctx)
-	go func() {
-		ticker := time.NewTicker(cfg.HeartbeatInterval)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-ticker.C:
-				// Best-effort: heartbeat errors are logged nowhere intentionally.
-				// The lease will expire naturally if heartbeats fail consistently.
-				_ = s.Heartbeat(hbCtx, taskID, worker, cfg.Lease)
-			case <-hbCtx.Done():
-				return
-			}
-		}
-	}()
-	return hbCancel
 }
 
 type runClassification struct {
@@ -260,19 +239,19 @@ type runClassification struct {
 // classifyRun records the task's terminal state for this attempt. failed=true
 // means it should count toward the consecutive-failure breaker. A non-nil
 // error is fatal to the loop (store write failed).
-func (s *Service) classifyRun(ctx context.Context, taskID string, runErr error) (runClassification, error) {
+func (s *Service) classifyRun(ctx context.Context, taskID, worker string, runErr error) (runClassification, error) {
 	classification := classifyAgentResult(runErr)
 	switch classification.status {
 	case "done":
-		if doneErr := s.Done(ctx, taskID, "completed by afk loop"); doneErr != nil {
+		if doneErr := s.SetStatusWithStageWorker(ctx, taskID, task.StatusDone, "completed by afk loop", nil, worker); doneErr != nil {
 			return runClassification{}, fmt.Errorf("mark done %s: %w", taskID, doneErr)
 		}
 	case "timeout":
-		if failErr := s.Fail(ctx, taskID, "timeout"); failErr != nil {
+		if failErr := s.SetStatusWithStageWorker(ctx, taskID, task.StatusFailed, "timeout", nil, worker); failErr != nil {
 			return runClassification{}, fmt.Errorf("mark failed %s: %w", taskID, failErr)
 		}
 	default:
-		if failErr := s.Fail(ctx, taskID, runErr.Error()); failErr != nil {
+		if failErr := s.SetStatusWithStageWorker(ctx, taskID, task.StatusFailed, runErr.Error(), nil, worker); failErr != nil {
 			return runClassification{}, fmt.Errorf("mark failed %s: %w", taskID, failErr)
 		}
 	}

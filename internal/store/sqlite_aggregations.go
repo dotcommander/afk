@@ -89,7 +89,7 @@ func (s *SQLiteStore) ListByStatus(ctx context.Context, status task.Status) ([]t
 	//nolint:gosec // G202: bind-marker concat only, args are parameters
 	query := `
 SELECT id, created, status, body, started, lease_expires, finished, error,
-	priority, tags, cwd, source, agent, group_id, resource_key, stage
+	priority, tags, cwd, source, agent, group_id, resource_key, stage, available_at
 FROM tasks
 WHERE status IN (` + placeholders + `)
 ORDER BY ordinal, rowid`
@@ -116,7 +116,7 @@ ORDER BY ordinal, rowid`
 func (s *SQLiteStore) listByStatuses(ctx context.Context, statuses ...string) ([]task.Task, error) {
 	rows, err := s.db.QueryContext(ctx, `
 SELECT id, created, status, body, started, lease_expires, finished, error,
-	priority, tags, cwd, source, agent, group_id, resource_key, stage
+	priority, tags, cwd, source, agent, group_id, resource_key, stage, available_at
 FROM tasks
 WHERE status IN (?, ?)
 ORDER BY ordinal, rowid`, statuses[0], statuses[1])

@@ -112,6 +112,7 @@ func Execute(ctx context.Context, args []string, stdout, stderr io.Writer, d *De
 		if err != nil {
 			return err
 		}
+		sqliteStore.SetClock(d.Now)
 		d.Service = app.NewService(sqliteStore, d.Now, app.WithSidecarPath(app.SidecarPath(paths)))
 	}
 	return parsed.Run()

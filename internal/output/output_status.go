@@ -90,6 +90,7 @@ type statusDoc struct {
 	QueueCounts
 	Tasks   statusTasksJSON    `json:"tasks"`
 	Blocked *[]blockedTaskJSON `json:"blocked,omitempty"`
+	Health  task.QueueHealth   `json:"health"`
 }
 
 type statusData struct {
@@ -97,6 +98,7 @@ type statusData struct {
 	todo    []task.Task
 	doing   []task.Task
 	blocked []task.BlockedTask
+	health  task.QueueHealth
 	now     time.Time
 }
 
@@ -121,12 +123,13 @@ const unleasedStaleAfter = time.Hour
 
 // WriteStatus renders a queue snapshot: per-status tallies plus todo/doing task
 // lists, with optional dependency blocker details.
-func WriteStatus(w io.Writer, tally map[task.Status]int, todo, doing []task.Task, blocked []task.BlockedTask, asJSON bool, now time.Time) error {
+func WriteStatus(w io.Writer, tally map[task.Status]int, todo, doing []task.Task, blocked []task.BlockedTask, health task.QueueHealth, asJSON bool, now time.Time) error {
 	data := statusData{
 		tally:   tally,
 		todo:    todo,
 		doing:   doing,
 		blocked: blocked,
+		health:  health,
 		now:     now,
 	}
 	if asJSON {
@@ -204,6 +207,7 @@ func writeStatusJSON(w io.Writer, data statusData) error {
 			Doing: statusDoingListJSON(data.doing, data.now),
 		},
 		Blocked: blockedDoc,
+		Health:  data.health,
 	}, "status")
 }
 
@@ -218,7 +222,32 @@ func writeStatusText(w io.Writer, data statusData) error {
 		return err
 	}
 	if data.blocked != nil {
-		return writeBlockedSection(w, data.blocked)
+		if err := writeBlockedSection(w, data.blocked); err != nil {
+			return err
+		}
+	}
+	return writeHealthSection(w, data.health)
+}
+
+func writeHealthSection(w io.Writer, health task.QueueHealth) error {
+	const notAvailable = "n/a"
+	oldestReady := notAvailable
+	if health.OldestReadyAgeSeconds != nil {
+		oldestReady = (time.Duration(*health.OldestReadyAgeSeconds) * time.Second).String()
+	}
+	oldestActive := notAvailable
+	if health.OldestActiveAgeSeconds != nil {
+		oldestActive = (time.Duration(*health.OldestActiveAgeSeconds) * time.Second).String()
+	}
+	failureRate := notAvailable
+	if health.TerminalFailureRate != nil {
+		failureRate = fmt.Sprintf("%.1f%%", *health.TerminalFailureRate*100)
+	}
+	_, err := fmt.Fprintf(w, "\nHealth (%s):\n  oldest ready: %s\n  oldest active: %s\n  stale requeues: %d\n  retry attempts: %d\n  terminal failure rate: %s (%d/%d)\n",
+		(time.Duration(health.WindowSeconds) * time.Second).String(), oldestReady, oldestActive,
+		health.StaleRequeues, health.RetryAttempts, failureRate, health.TerminalFailures, health.TerminalAttempts)
+	if err != nil {
+		return fmt.Errorf("status health: write: %w", err)
 	}
 	return nil
 }

@@ -121,24 +121,44 @@ func applySetMutation(ctx context.Context, d *Deps, opts setCommandOptions, id s
 }
 
 type RetryCmd struct {
-	ID     string `arg:"" required:""`
-	Reason string `help:"One-line reason the task is ready to retry."`
-	JSON   bool   `help:"Emit JSON output."`
+	ID          string `arg:"" required:""`
+	Reason      string `help:"One-line reason the task is ready to retry."`
+	Disposition string `help:"Retry disposition: manual opens an attempt now; deferred returns it to todo." default:"manual"`
+	AvailableAt string `name:"available-at" help:"RFC3339 eligibility time required for a deferred retry."`
+	JSON        bool   `help:"Emit JSON output."`
 }
 
 func (c *RetryCmd) Run(d *Deps, ctx context.Context) error {
+	disposition, err := task.ParseRetryDisposition(c.Disposition)
+	if err != nil {
+		return err
+	}
+	canonicalAvailableAt, err := task.ValidateRetryDisposition(disposition, c.AvailableAt)
+	if err != nil {
+		return err
+	}
 	note := retryNote(c.Reason)
-	if err := d.Service.SetStatus(ctx, c.ID, task.StatusDoing, note); err != nil {
+	if disposition == task.RetryDispositionDeferred {
+		note = deferredRetryNote(c.Reason, canonicalAvailableAt)
+	}
+	updated, err := d.Service.Retry(ctx, c.ID, disposition, canonicalAvailableAt, note)
+	if err != nil {
 		return err
 	}
 	if c.JSON {
 		return output.WriteJSONLine(d.Stdout, setResult{
-			ID:     c.ID,
-			Status: task.StatusDoing,
-			Note:   note,
+			ID:          c.ID,
+			Status:      updated.Status,
+			Note:        note,
+			Disposition: disposition,
+			AvailableAt: updated.AvailableAt,
 		}, "retry")
 	}
-	_, err := fmt.Fprintf(d.Stdout, "retry %s doing\n", c.ID)
+	if disposition == task.RetryDispositionDeferred {
+		_, err = fmt.Fprintf(d.Stdout, "retry %s todo available_at=%s\n", c.ID, updated.AvailableAt)
+		return err
+	}
+	_, err = fmt.Fprintf(d.Stdout, "retry %s doing\n", c.ID)
 	return err
 }
 
@@ -150,12 +170,23 @@ func retryNote(reason string) string {
 	return "retrying: " + reason
 }
 
+func deferredRetryNote(reason, availableAt string) string {
+	note := "retry deferred until " + availableAt
+	reason = strings.TrimSpace(reason)
+	if reason != "" {
+		note += ": " + reason
+	}
+	return note
+}
+
 type setResult struct {
-	ID     string              `json:"id"`
-	Status task.Status         `json:"status"`
-	Title  string              `json:"title,omitzero"`
-	Note   string              `json:"note,omitzero"`
-	Queue  *output.QueueCounts `json:"queue,omitempty"`
+	ID          string                `json:"id"`
+	Status      task.Status           `json:"status"`
+	Title       string                `json:"title,omitzero"`
+	Note        string                `json:"note,omitzero"`
+	Disposition task.RetryDisposition `json:"disposition,omitzero"`
+	AvailableAt string                `json:"available_at,omitzero"`
+	Queue       *output.QueueCounts   `json:"queue,omitempty"`
 }
 
 const maxNoteBytes = 64 * 1024

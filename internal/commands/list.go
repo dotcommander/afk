@@ -77,7 +77,7 @@ func (c *StatusCmd) Run(d *Deps, ctx context.Context) error {
 			blocked = []task.BlockedTask{}
 		}
 	}
-	return output.WriteStatus(d.Stdout, snapshot.Counts, snapshot.Todo, snapshot.Doing, blocked, c.JSON, d.Now())
+	return output.WriteStatus(d.Stdout, snapshot.Counts, snapshot.Todo, snapshot.Doing, blocked, snapshot.Health, c.JSON, d.Now())
 }
 
 type TaskCmd struct {

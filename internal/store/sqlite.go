@@ -24,10 +24,11 @@ CASE lower(trim(priority))
 END, ordinal, rowid`
 
 // readyWhereSQL is the single readiness predicate shared by Ready() and
-// ClaimNextForWorker(). Use after `WHERE status = ?` (todo). Two additional
-// `?` placeholders follow, in order: prerequisite-status (done) and
-// active-claim status (doing). Keep parameter order in sync with both callers.
+// ClaimNextForWorker(). Use after `WHERE status = ?` (todo). Three additional
+// `?` placeholders follow, in order: current time, prerequisite-status (done),
+// and active-claim status (doing). Keep parameter order in sync with callers.
 const readyWhereSQL = `
+AND (available_at = '' OR available_at <= ?)
 AND NOT EXISTS (
 	SELECT 1
 	FROM task_dependencies d
@@ -123,7 +124,7 @@ func (s *SQLiteStore) Close() error {
 func (s *SQLiteStore) List(ctx context.Context) ([]task.Task, error) {
 	rows, err := s.db.QueryContext(ctx, `
 SELECT id, created, status, body, started, lease_expires, finished, error,
-	priority, tags, cwd, source, agent, group_id, resource_key, stage
+	priority, tags, cwd, source, agent, group_id, resource_key, stage, available_at
 FROM tasks
 ORDER BY ordinal, rowid`)
 	if err != nil {
@@ -209,11 +210,11 @@ func (s *SQLiteStore) insertTask(ctx context.Context, tx *sql.Tx, t task.Task) e
 	if _, err := tx.ExecContext(ctx, `
 INSERT INTO tasks (
 	id, created, status, body, started, finished, error, ordinal,
-	priority, tags, cwd, source, agent, group_id, resource_key, stage
+	priority, tags, cwd, source, agent, group_id, resource_key, available_at, stage
 )
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		t.ID, t.Created, string(t.Status), t.Body, t.Started, t.Finished, t.Error, ordinal,
-		t.Priority, encodeTags(t.Tags), t.CWD, t.Source, t.Agent, t.GroupID, t.ResourceKey, t.Stage); err != nil {
+		t.Priority, encodeTags(t.Tags), t.CWD, t.Source, t.Agent, t.GroupID, t.ResourceKey, t.AvailableAt, t.Stage); err != nil {
 		if isDuplicateTaskID(err) {
 			return fmt.Errorf("store: add task %s: %w", t.ID, ErrDuplicateTask)
 		}
@@ -256,6 +257,12 @@ func (s *SQLiteStore) updateImpl(ctx context.Context, update taskUpdate) (task.T
 		if t.Status != task.StatusDoing {
 			return task.Task{}, ErrWorkerMismatch
 		}
+		if t.LeaseExpires != "" {
+			deadline, parseErr := time.Parse(time.RFC3339, t.LeaseExpires)
+			if parseErr != nil || !deadline.After(s.now().UTC()) {
+				return task.Task{}, ErrWorkerMismatch
+			}
+		}
 		var owner string
 		err := tx.QueryRowContext(ctx, `SELECT worker_id FROM task_attempts WHERE task_id = ? AND finished = '' ORDER BY id DESC LIMIT 1`, update.id).Scan(&owner)
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {
@@ -271,10 +278,10 @@ func (s *SQLiteStore) updateImpl(ctx context.Context, update taskUpdate) (task.T
 	if _, err := tx.ExecContext(ctx, `
 UPDATE tasks
 SET created = ?, status = ?, body = ?, started = ?, lease_expires = ?, finished = ?, error = ?,
-	priority = ?, tags = ?, cwd = ?, source = ?, agent = ?, group_id = ?, resource_key = ?, stage = ?, revision = revision + 1
+	priority = ?, tags = ?, cwd = ?, source = ?, agent = ?, group_id = ?, resource_key = ?, stage = ?, available_at = ?, revision = revision + 1
 WHERE id = ?`,
 		t.Created, string(t.Status), t.Body, t.Started, t.LeaseExpires, t.Finished, t.Error,
-		t.Priority, encodeTags(t.Tags), t.CWD, t.Source, t.Agent, t.GroupID, t.ResourceKey, t.Stage, t.ID); err != nil {
+		t.Priority, encodeTags(t.Tags), t.CWD, t.Source, t.Agent, t.GroupID, t.ResourceKey, t.Stage, t.AvailableAt, t.ID); err != nil {
 		return task.Task{}, fmt.Errorf("store: update task %s: %w", update.id, err)
 	}
 	at := s.eventTime(t)

@@ -22,6 +22,7 @@ type SnapshotData struct {
 	Ready   []task.Task
 	Todo    []task.Task
 	Doing   []task.Task
+	Health  task.QueueHealth
 	Detail  *SnapshotTaskDetail
 	Now     time.Time
 }
@@ -50,6 +51,7 @@ type snapshotDoc struct {
 	Created string              `json:"created"`
 	Counts  snapshotCounts      `json:"counts"`
 	Tasks   snapshotTasks       `json:"tasks"`
+	Health  task.QueueHealth    `json:"health"`
 	Task    *snapshotTaskDetail `json:"task,omitzero"`
 }
 
@@ -67,6 +69,7 @@ func WriteSnapshot(w io.Writer, data SnapshotData) error {
 			Todo:  statusListJSON(data.Todo),
 			Doing: statusDoingListJSON(data.Doing, data.Now),
 		},
+		Health: data.Health,
 	}
 	if data.Detail != nil {
 		events, eventsOmitted := limitEvents(data.Detail.Events)

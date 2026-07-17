@@ -34,6 +34,7 @@ func buildAddCommandOptions(input addCommandInput) (task.AddOptions, string, err
 		Agent:       input.agent,
 		GroupID:     input.groupID,
 		ResourceKey: normalizeResourceKey(input.resourceKey, defaults.ResourceKey),
+		AvailableAt: input.availableAt,
 		Stage:       input.stage,
 	}, dependsOnID, nil
 }

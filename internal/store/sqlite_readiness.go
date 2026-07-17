@@ -13,7 +13,7 @@ import (
 type NotReadyExplanation struct {
 	TodoTotal int // todo tasks in the queue
 	Ready     int // todo tasks that satisfy readyWhereSQL
-	Blocked   int // todo tasks that do NOT satisfy readyWhereSQL (deps/locks/gates)
+	Blocked   int // todo tasks that do NOT satisfy readyWhereSQL (time/deps/locks/gates)
 }
 
 // ExplainNotReady reports why the queue has no claimable task, deriving every
@@ -26,7 +26,7 @@ SELECT
 	(SELECT COUNT(*) FROM tasks WHERE status = ?) AS todo_total,
 	(SELECT COUNT(*) FROM tasks WHERE status = ?`+readyWhereSQL+`) AS ready`,
 		string(task.StatusTodo),
-		string(task.StatusTodo), string(task.StatusDone), string(task.StatusDoing),
+		string(task.StatusTodo), s.nowString(), string(task.StatusDone), string(task.StatusDoing),
 	).Scan(&e.TodoTotal, &e.Ready); err != nil {
 		return NotReadyExplanation{}, fmt.Errorf("store: explain not ready: %w", err)
 	}

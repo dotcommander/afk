@@ -801,6 +801,14 @@ function age(ts) {
   return `T+${Math.floor(diff/86400)}d`;
 }
 
+function durationAge(seconds) {
+  if (seconds == null) return '—';
+  if (seconds < 60) return `${seconds}s`;
+  if (seconds < 3600) return `${Math.floor(seconds/60)}m`;
+  if (seconds < 86400) return `${Math.floor(seconds/3600)}h`;
+  return `${Math.floor(seconds/86400)}d`;
+}
+
 function fmtTs(ts) {
   if (!ts) return '—';
   try { return new Date(ts).toLocaleString(); } catch { return ts; }
@@ -1079,6 +1087,27 @@ registerView('home', async (container, _route) => {
     gauges.appendChild(g);
   }
   container.appendChild(gauges);
+
+  const health = snap.health || {};
+  const healthLabel = el('div', { class: 'section-heading' }, txt('QUEUE HEALTH · 24H'));
+  container.appendChild(healthLabel);
+  const healthGrid = el('div', { class: 'meta-grid panel' });
+  const terminalRate = health.terminal_failure_rate == null
+    ? '—'
+    : `${(health.terminal_failure_rate * 100).toFixed(1)}% (${health.terminal_failures}/${health.terminal_attempts})`;
+  const healthFields = [
+    { label: 'OLDEST READY', value: durationAge(health.oldest_ready_age_seconds) },
+    { label: 'OLDEST ACTIVE', value: durationAge(health.oldest_active_age_seconds) },
+    { label: 'STALE REQUEUES', value: String(health.stale_requeues || 0) },
+    { label: 'RETRY ATTEMPTS', value: String(health.retry_attempts || 0) },
+    { label: 'TERMINAL FAILURE RATE', value: terminalRate },
+  ];
+  for (const field of healthFields) {
+    healthGrid.appendChild(el('div', { class: 'meta-item' },
+      el('div', { class: 'meta-label' }, txt(field.label)),
+      el('div', { class: 'meta-value' }, txt(field.value))));
+  }
+  container.appendChild(healthGrid);
 
   // Twin panels: launch window + in orbit
   const twin = el('div', { class: 'twin-panels' });

@@ -58,6 +58,7 @@ func writeSnapshot(ctx context.Context, d *Deps, w io.Writer, label, taskID stri
 		Ready:   ready,
 		Todo:    snapshot.Todo,
 		Doing:   snapshot.Doing,
+		Health:  snapshot.Health,
 		Detail:  detail,
 		Now:     now,
 	})

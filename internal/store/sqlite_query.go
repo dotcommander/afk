@@ -22,7 +22,7 @@ func (s *SQLiteStore) Find(ctx context.Context, query string) ([]task.Task, erro
 	}
 	rows, err := s.db.QueryContext(ctx, `
 SELECT t.id, t.created, t.status, t.body, t.started, t.lease_expires, t.finished, t.error,
-	t.priority, t.tags, t.cwd, t.source, t.agent, t.group_id, t.resource_key, t.stage
+	t.priority, t.tags, t.cwd, t.source, t.agent, t.group_id, t.resource_key, t.stage, t.available_at
 FROM tasks t
 JOIN tasks_fts f ON f.id = t.id
 WHERE tasks_fts MATCH ?
@@ -50,10 +50,10 @@ ORDER BY t.ordinal, t.rowid`, match)
 func (s *SQLiteStore) Ready(ctx context.Context) ([]task.Task, error) {
 	rows, err := s.db.QueryContext(ctx, `
 SELECT id, created, status, body, started, lease_expires, finished, error,
-	priority, tags, cwd, source, agent, group_id, resource_key, stage
+	priority, tags, cwd, source, agent, group_id, resource_key, stage, available_at
 FROM tasks
 WHERE status = ?`+readyWhereSQL+`
-ORDER BY `+schedulerOrderSQL, string(task.StatusTodo), string(task.StatusDone), string(task.StatusDoing))
+ORDER BY `+schedulerOrderSQL, string(task.StatusTodo), s.nowString(), string(task.StatusDone), string(task.StatusDoing))
 	if err != nil {
 		return nil, fmt.Errorf("store: ready: %w", err)
 	}
