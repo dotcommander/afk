@@ -98,7 +98,7 @@ an idea.
 4. Convert evidence into queueable mini-specs.
 5. Rank strong candidates by impact and reject weak leads.
 6. Validate generated task bodies with `afk add --dry-run`.
-7. Ask one enqueue confirmation.
+7. Ask one enqueue confirmation only when a candidate survives.
 
 Choose and report review depth before candidate generation:
 
@@ -122,6 +122,11 @@ Quality gates are mandatory before a candidate is shown:
   contract surface proves current impact.
 - Non-stale validation: old audits, reports, `.work/` notes, and TODOs must be
   rechecked against current code before use.
+- Resolve before promote: test the strongest plausible benign, stale,
+  already-fixed, duplicate, prior-art, or intentional explanation. When source,
+  runtime, docs, tests, generated artifacts, or config disagree, name the
+  authority for the disputed behavior and resolve the conflict before accepting
+  the lead.
 - Atomic scope: one behavior, one package, one docs/source mismatch, or one
   measured duplication cluster.
 - Exact verification: a worker must be able to prove success with explicit
@@ -284,9 +289,20 @@ Prefer 3-7 strong candidates. Up to 10 is acceptable; do not pad with weak work.
 Queue candidates with strong current proof after the user confirms. Otherwise
 present the ranked candidates for review and do not mutate the queue.
 
-If every lead is low-impact or uncorroborated, say `no strong candidate` and
-explain what was inspected. Do not pad the output with easy TODO cleanup, docs
-polish, dependency drift, or generic tests.
+Classify every lead exactly once as `accepted`, `prior-art`, `refuted`,
+`rejected`, or `residual`. The five counts must equal the total leads examined.
+Use `residual` only when a named environment or evidence gap prevents
+resolution. Classification is exclusive: `prior-art` takes precedence when an
+existing artifact or queue entry already handles the same observable change;
+use `refuted` only when no prior-art match exists and the resolving check shows
+the hypothesis is false.
+
+If no lead is accepted, say `no strong candidate` affirmatively, list the
+checks performed and all five lead counts, and do not show an enqueue question.
+Do not pad the output with easy TODO cleanup, docs polish, dependency drift, or
+generic tests. Before a zero result, or before completing a broad pass, run one
+adversarial second pass against the highest-risk assumption or
+least-corroborated surface and report what it tried to refute.
 
 If a declared local gate fails, first ask whether a small fix can make the gate
 pass without product choices or broad refactoring. Broken declared checks are
@@ -294,9 +310,9 @@ often better AFK candidates than TODO markers because they have exact
 verification.
 
 If a TODO or product promise points at a missing behavior but the
-destination/provider/architecture is absent, reject or mark it provisional rather
-than forcing an ambiguous task. Prefer the narrower failing check when one
-exists.
+destination/provider/architecture is absent, reject it, or classify it
+`residual` when a named evidence gap prevents resolution, rather than forcing an
+ambiguous task. Prefer the narrower failing check when one exists.
 
 ## dedupe and rejection
 
@@ -315,6 +331,13 @@ Before suggesting or enqueueing a task:
    a known maintenance hazard, or add focused coverage around existing behavior.
 7. Drop candidates based only on old reports, vague TODOs, or style preference.
 8. Drop pure test or docs polish while higher-impact codebase work is available.
+
+Immediately before dry-run and enqueue, recheck current evidence, prior-art and
+queue duplicate state, and the `Reject-if` condition. Changed task metadata,
+worktree evidence, or duplicate context invalidates the earlier validation.
+If material evidence, body, scope, success, or verification changes after
+presentation, re-present the candidate and require fresh confirmation before
+mutation.
 
 ## task body shape
 
@@ -416,16 +439,21 @@ Interactive discovery reports should use:
 - `<item>` — stale, broad, duplicate, unverified, too risky, low-value churn, or
   HITL-dependent.
 
+## Lead Accounting
+
+- Total: `<n>`
+- Accepted / prior-art / refuted / rejected / residual: `<counts whose sum is n>`
+
 ## Add To AFK?
 
 Reply `add all`, `add 1 3`, or `no`.
 ```
 
-Batch discovery reports must also include:
+Omit `Add To AFK?` when accepted is zero. Batch discovery reports must also include:
 
 - target count and artifact count
 - accepted candidate count and no-strong-candidate count
-- rejected or provisional lead count
+- accepted, prior-art, refuted, rejected, and residual counts
 - deterministic checks run and checks skipped with reasons
 - low-confidence or triage-only targets
 - whether validation covered task shape only, artifact shape only, or actual
