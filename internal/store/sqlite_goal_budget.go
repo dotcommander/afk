@@ -268,6 +268,9 @@ func (s *SQLiteStore) limitGoalTasks(ctx context.Context, tx *sql.Tx, goalID, re
 	if err := rows.Close(); err != nil {
 		return fmt.Errorf("store: close goal limit rows: %w", err)
 	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("store: iterate goal tasks to limit: %w", err)
+	}
 	for _, id := range ids {
 		member, err := getTask(ctx, tx, id)
 		if err != nil {
