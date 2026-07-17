@@ -71,7 +71,7 @@ The `Store` interface is defined in `internal/app/store.go` (package `app`, not 
 
 ### Storage
 
-modernc.org/sqlite (pure Go — no CGO). Six tables created idempotently at `NewSQLite()` open: `tasks`, `metadata`, `task_events`, `task_attempts`, `task_dependencies`, `task_gates`. Schema lives inline in `internal/store/sqlite_schema.go` (the `CREATE TABLE` statements). No goose / no migration framework.
+modernc.org/sqlite (pure Go — no CGO). Base tables are created idempotently at `NewSQLite()` open: `tasks`, `metadata`, `task_events`, `task_attempts`, `task_dependencies`, `task_gates`, `request_ledger`, `task_checkpoints`, `task_artifacts`, `vybe_imports`, `goal_groups`, `goal_iterations`, plus the `tasks_fts` FTS5 virtual table with sync triggers. Schema DDL lives inline in `internal/store/sqlite_schema.go`. Additive changes for existing DBs are applied by a lightweight in-process versioned migration runner (`runMigrationsIfNeeded` dispatching e.g. `migrateV7GoalOutcome`, `migrateV8FTSUpdateScope`, `backfillTasksFTS`) — not goose or any external framework; migrations are idempotent (duplicate-column errors absorbed, triggers dropped and recreated).
 
 SQLite is the only queue backend. A `--queue`/`AFK_QUEUE` path with a non-`.sqlite` extension (including a stale `.jsonl` path) is normalized to a sibling `.sqlite` database; it is never read as JSONL.
 
