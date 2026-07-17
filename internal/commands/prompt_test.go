@@ -207,7 +207,6 @@ func TestWorkNotesWithOldAFKCommandsAreArchived(t *testing.T) {
 		"afk done",
 		"afk fail",
 		"afk run",
-		"afk import",
 		"afk ready",
 		"blocked_by",
 		"`pending`",
