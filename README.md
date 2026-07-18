@@ -25,6 +25,22 @@ status output also shows claim age and stale lease diagnostics. Counts-only
 `--stage` is a free-form human pipeline state (e.g. `triage`, `in-review`),
 independent of execution state; it does not affect readiness.
 
+## install
+
+Requires Go 1.26+.
+
+```sh
+go install github.com/dotcommander/afk/cmd/afk@latest
+```
+
+Or build from source:
+
+```sh
+git clone https://github.com/dotcommander/afk
+cd afk
+go build -o afk ./cmd/afk
+```
+
 ## core commands
 
 | Command | Purpose |
@@ -172,3 +188,7 @@ fi
 - [`docs/configuration.md`](docs/configuration.md)
 - [`docs/using-goal.md`](docs/using-goal.md) — step-by-step guide to `afk goal`
 - [`docs/using-loop.md`](docs/using-loop.md) — step-by-step guide to `afk loop`
+
+## license
+
+MIT — see [LICENSE](LICENSE).
