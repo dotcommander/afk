@@ -62,8 +62,9 @@ AND NOT EXISTS (
 // here keeps the test-injectable Service.now from escaping into wall-clock
 // reads inside the store layer.
 type SQLiteStore struct {
-	db  *sql.DB
-	now func() time.Time
+	db         *sql.DB
+	now        func() time.Time
+	schemaExec executor
 }
 
 // Paths identifies the SQLite DB path.

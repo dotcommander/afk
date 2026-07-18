@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"strings"
 	"time"
@@ -10,9 +11,27 @@ import (
 	sqlite3 "modernc.org/sqlite/lib"
 )
 
+// executor is satisfied by both *sql.DB and *sql.Tx, letting schema-setup
+// statements run on a transaction during init so concurrent openers serialize
+// on the database write lock. Outside init it resolves to the connection pool.
+type executor interface {
+	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
+	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
+}
+
+// schemaExecer returns the executor for schema-setup statements: the migration
+// transaction during init, otherwise the connection pool.
+func (s *SQLiteStore) schemaExecer() executor {
+	if s.schemaExec != nil {
+		return s.schemaExec
+	}
+	return s.db
+}
+
 func (s *SQLiteStore) execWithBusyRetry(ctx context.Context, query string, args ...any) error {
 	return retrySQLiteBusy(ctx, func(ctx context.Context) error {
-		_, err := s.db.ExecContext(ctx, query, args...)
+		_, err := s.schemaExecer().ExecContext(ctx, query, args...)
 		return err
 	})
 }

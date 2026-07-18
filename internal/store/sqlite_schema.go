@@ -264,7 +264,7 @@ func (s *SQLiteStore) runMigrationsIfNeeded(ctx context.Context) error {
 }
 
 func (s *SQLiteStore) migrateV13QueueHealthIndexes(ctx context.Context) error {
-	if _, err := s.db.ExecContext(ctx, `
+	if _, err := s.schemaExecer().ExecContext(ctx, `
 CREATE INDEX IF NOT EXISTS tasks_status_created_idx ON tasks(status, created);
 CREATE INDEX IF NOT EXISTS tasks_status_started_idx ON tasks(status, started);
 CREATE INDEX IF NOT EXISTS task_events_stale_requeue_at_idx ON task_events(at) WHERE type='requeued' AND message='stale';
@@ -276,10 +276,10 @@ CREATE INDEX IF NOT EXISTS task_attempts_status_finished_idx ON task_attempts(st
 }
 
 func (s *SQLiteStore) migrateV12AvailableAt(ctx context.Context) error {
-	if _, err := s.db.ExecContext(ctx, `ALTER TABLE tasks ADD COLUMN available_at TEXT NOT NULL DEFAULT ''`); err != nil && !isDuplicateColumn(err) {
+	if _, err := s.schemaExecer().ExecContext(ctx, `ALTER TABLE tasks ADD COLUMN available_at TEXT NOT NULL DEFAULT ''`); err != nil && !isDuplicateColumn(err) {
 		return fmt.Errorf("store: migrate available_at: %w", err)
 	}
-	if _, err := s.db.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS tasks_status_available_order_idx ON tasks(status, available_at, ordinal)`); err != nil {
+	if _, err := s.schemaExecer().ExecContext(ctx, `CREATE INDEX IF NOT EXISTS tasks_status_available_order_idx ON tasks(status, available_at, ordinal)`); err != nil {
 		return fmt.Errorf("store: migrate available_at index: %w", err)
 	}
 	return nil
@@ -318,11 +318,11 @@ func (s *SQLiteStore) migrateV11DurableGoals(ctx context.Context) error {
 		`ALTER TABLE goal_groups ADD COLUMN limited_at TEXT NOT NULL DEFAULT ''`,
 	}
 	for _, statement := range columns {
-		if _, err := s.db.ExecContext(ctx, statement); err != nil && !isDuplicateColumn(err) {
+		if _, err := s.schemaExecer().ExecContext(ctx, statement); err != nil && !isDuplicateColumn(err) {
 			return fmt.Errorf("store: migrate durable goal column: %w", err)
 		}
 	}
-	if _, err := s.db.ExecContext(ctx, `
+	if _, err := s.schemaExecer().ExecContext(ctx, `
 CREATE TABLE IF NOT EXISTS goal_iterations (
 	goal_id TEXT NOT NULL,
 	attempt_id INTEGER NOT NULL,
@@ -352,7 +352,7 @@ func (s *SQLiteStore) migrateV10RetirementState(ctx context.Context) error {
 		`CREATE TABLE IF NOT EXISTS vybe_imports (source_sha256 TEXT PRIMARY KEY, cutover_id TEXT NOT NULL, report_json TEXT NOT NULL, imported_at TEXT NOT NULL)`,
 	}
 	for i, statement := range statements {
-		if _, err := s.db.ExecContext(ctx, statement); err != nil && (i != 0 || !strings.Contains(err.Error(), "duplicate column name")) {
+		if _, err := s.schemaExecer().ExecContext(ctx, statement); err != nil && (i != 0 || !strings.Contains(err.Error(), "duplicate column name")) {
 			return fmt.Errorf("store: migrate retirement state: %w", err)
 		}
 	}
@@ -360,7 +360,7 @@ func (s *SQLiteStore) migrateV10RetirementState(ctx context.Context) error {
 }
 
 func (s *SQLiteStore) migrateV9RequestLedger(ctx context.Context) error {
-	if _, err := s.db.ExecContext(ctx, `
+	if _, err := s.schemaExecer().ExecContext(ctx, `
 CREATE TABLE IF NOT EXISTS request_ledger (
 	actor TEXT NOT NULL,
 	request_id TEXT NOT NULL,
@@ -380,7 +380,7 @@ CREATE TABLE IF NOT EXISTS request_ledger (
 // returns 0, which is the "run every historical migration once" sentinel.
 func (s *SQLiteStore) readSchemaVersion(ctx context.Context) (int, error) {
 	var raw string
-	err := s.db.QueryRowContext(ctx, `SELECT value FROM metadata WHERE key = ?`, schemaVersionKey).Scan(&raw)
+	err := s.schemaExecer().QueryRowContext(ctx, `SELECT value FROM metadata WHERE key = ?`, schemaVersionKey).Scan(&raw)
 	if errors.Is(err, sql.ErrNoRows) {
 		return 0, nil
 	}
@@ -395,7 +395,7 @@ func (s *SQLiteStore) readSchemaVersion(ctx context.Context) (int, error) {
 }
 
 func (s *SQLiteStore) writeSchemaVersion(ctx context.Context, version int) error {
-	if _, err := s.db.ExecContext(ctx,
+	if _, err := s.schemaExecer().ExecContext(ctx,
 		`INSERT INTO metadata (key, value) VALUES (?, ?)
 		 ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
 		schemaVersionKey, strconv.Itoa(version)); err != nil {
@@ -423,7 +423,7 @@ func (s *SQLiteStore) migrateTaskMetadata(ctx context.Context) error {
 		{"task_dependencies.relation_type", `ALTER TABLE task_dependencies ADD COLUMN relation_type TEXT NOT NULL DEFAULT 'blocks'`},
 	}
 	for _, col := range columns {
-		if _, err := s.db.ExecContext(ctx, col.sql); err != nil && !isDuplicateColumn(err) {
+		if _, err := s.schemaExecer().ExecContext(ctx, col.sql); err != nil && !isDuplicateColumn(err) {
 			return fmt.Errorf("store: migrate %s: %w", col.name, err)
 		}
 	}
@@ -437,7 +437,7 @@ func (s *SQLiteStore) migrateTaskMetadata(ctx context.Context) error {
 // after that ALTER — avoids a "no such column: relation_type" failure on open.
 // CREATE INDEX IF NOT EXISTS keeps it idempotent for fresh and re-run DBs.
 func (s *SQLiteStore) migrateTaskDependencyTypeIndex(ctx context.Context) error {
-	if _, err := s.db.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS task_dependencies_type_idx ON task_dependencies(task_id, relation_type)`); err != nil {
+	if _, err := s.schemaExecer().ExecContext(ctx, `CREATE INDEX IF NOT EXISTS task_dependencies_type_idx ON task_dependencies(task_id, relation_type)`); err != nil {
 		return fmt.Errorf("store: migrate task_dependencies_type_idx: %w", err)
 	}
 	return nil
@@ -448,7 +448,7 @@ func (s *SQLiteStore) migrateTaskDependencyTypeIndex(ctx context.Context) error 
 // the goal_groups table. CREATE TABLE IF NOT EXISTS keeps it idempotent so
 // fresh-DB init and an upgrade from v5 both converge to the same schema.
 func (s *SQLiteStore) migrateV6BudgetLimited(ctx context.Context) error {
-	if _, err := s.db.ExecContext(ctx, `
+	if _, err := s.schemaExecer().ExecContext(ctx, `
 CREATE TABLE IF NOT EXISTS goal_groups (
 	id TEXT PRIMARY KEY,
 	objective TEXT NOT NULL DEFAULT '',
@@ -474,7 +474,7 @@ func (s *SQLiteStore) migrateStatusNames(ctx context.Context) error {
 		{table: "task_attempts", from: legacyStatusWorking, to: canonicalStatusDoing, query: `UPDATE task_attempts SET status = ? WHERE status = ?`},
 	}
 	for _, update := range updates {
-		if _, err := s.db.ExecContext(ctx, update.query, update.to, update.from); err != nil {
+		if _, err := s.schemaExecer().ExecContext(ctx, update.query, update.to, update.from); err != nil {
 			return fmt.Errorf("store: migrate %s status %s: %w", update.table, update.from, err)
 		}
 	}
@@ -484,7 +484,7 @@ func (s *SQLiteStore) migrateStatusNames(ctx context.Context) error {
 // migrateV7GoalOutcome adds the outcome column to goal_groups for existing DBs.
 // Idempotent: isDuplicateColumn absorbs the error when the column already exists.
 func (s *SQLiteStore) migrateV7GoalOutcome(ctx context.Context) error {
-	if _, err := s.db.ExecContext(ctx, `ALTER TABLE goal_groups ADD COLUMN outcome TEXT NOT NULL DEFAULT ''`); err != nil && !isDuplicateColumn(err) {
+	if _, err := s.schemaExecer().ExecContext(ctx, `ALTER TABLE goal_groups ADD COLUMN outcome TEXT NOT NULL DEFAULT ''`); err != nil && !isDuplicateColumn(err) {
 		return fmt.Errorf("store: migrate goal_groups outcome: %w", err)
 	}
 	return nil
@@ -496,10 +496,10 @@ func (s *SQLiteStore) migrateV7GoalOutcome(ctx context.Context) error {
 // (lease_expires) and other non-content edits no longer trigger an FTS
 // delete+insert. Idempotent: DROP TRIGGER IF EXISTS then recreate.
 func (s *SQLiteStore) migrateV8FTSUpdateScope(ctx context.Context) error {
-	if _, err := s.db.ExecContext(ctx, `DROP TRIGGER IF EXISTS tasks_fts_au`); err != nil {
+	if _, err := s.schemaExecer().ExecContext(ctx, `DROP TRIGGER IF EXISTS tasks_fts_au`); err != nil {
 		return fmt.Errorf("store: drop tasks_fts_au: %w", err)
 	}
-	if _, err := s.db.ExecContext(ctx, `
+	if _, err := s.schemaExecer().ExecContext(ctx, `
 CREATE TRIGGER IF NOT EXISTS tasks_fts_au AFTER UPDATE ON tasks
 WHEN (old.status<>new.status OR old.body<>new.body OR old.priority<>new.priority OR old.cwd<>new.cwd OR old.source<>new.source OR old.agent<>new.agent OR old.group_id<>new.group_id OR old.resource_key<>new.resource_key OR old.error<>new.error OR old.tags<>new.tags)
 BEGIN
@@ -517,10 +517,10 @@ END;`); err != nil {
 // bump on an existing DB whose tasks_fts was created empty by IF NOT EXISTS)
 // converge to one row per task. Idempotent: safe to run on every migration.
 func (s *SQLiteStore) backfillTasksFTS(ctx context.Context) error {
-	if _, err := s.db.ExecContext(ctx, `DELETE FROM tasks_fts`); err != nil {
+	if _, err := s.schemaExecer().ExecContext(ctx, `DELETE FROM tasks_fts`); err != nil {
 		return fmt.Errorf("store: clear tasks_fts: %w", err)
 	}
-	if _, err := s.db.ExecContext(ctx, `
+	if _, err := s.schemaExecer().ExecContext(ctx, `
 INSERT INTO tasks_fts(id, status, body, priority, cwd, source, agent, group_id, resource_key, error, tags)
 SELECT id, status, body, priority, cwd, source, agent, group_id, resource_key, error, tags
 FROM tasks`); err != nil {
