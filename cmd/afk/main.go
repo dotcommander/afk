@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"runtime/debug"
 	"syscall"
 	"time"
 
@@ -43,5 +44,21 @@ func execute(ctx context.Context, args []string, stdout, stderr io.Writer) error
 		Stderr: stderr,
 		Now:    time.Now,
 	}
-	return commands.Execute(ctx, args, stdout, stderr, d, version)
+	return commands.Execute(ctx, args, stdout, stderr, d, resolvedVersion())
+}
+
+// resolvedVersion returns the ldflags-injected version when set; otherwise it
+// derives the version from the build info so a `go install
+// github.com/dotcommander/afk/cmd/afk@vX.Y.Z` build reports its real version
+// without ldflags. A local `go build` still reports "dev".
+func resolvedVersion() string {
+	if version != "dev" && version != "" {
+		return version
+	}
+	if bi, ok := debug.ReadBuildInfo(); ok {
+		if v := bi.Main.Version; v != "" && v != "(devel)" {
+			return v
+		}
+	}
+	return version
 }
