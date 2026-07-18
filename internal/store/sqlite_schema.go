@@ -24,13 +24,34 @@ const (
 )
 
 func (s *SQLiteStore) init(ctx context.Context) error {
-	if err := s.rejectNewerSchema(ctx); err != nil {
+	if err := retrySQLiteBusy(ctx, s.rejectNewerSchema); err != nil {
 		return err
 	}
-	if err := s.createBaseSchema(ctx); err != nil {
-		return err
-	}
-	return retrySQLiteBusy(ctx, s.runMigrationsIfNeeded)
+	// Serialize schema setup across concurrent openers — in-process goroutines
+	// and separate afk processes — with one IMMEDIATE transaction (_txlock).
+	// Concurrent openers block on the write lock until the first commits; the
+	// version short-circuit in runMigrationsIfNeeded then makes them run zero
+	// migrations, so concurrent first-open cannot interleave DDL or backfill the
+	// FTS index twice. busy_timeout(5000) + retrySQLiteBusy absorb lock waits.
+	return retrySQLiteBusy(ctx, func(ctx context.Context) error {
+		tx, err := s.db.BeginTx(ctx, nil)
+		if err != nil {
+			return fmt.Errorf("store: begin schema tx: %w", err)
+		}
+		s.schemaExec = tx
+		defer func() { s.schemaExec = nil }()
+		defer tx.Rollback() // no-op after a successful Commit
+		if err := s.createBaseSchema(ctx); err != nil {
+			return err
+		}
+		if err := s.runMigrationsIfNeeded(ctx); err != nil {
+			return err
+		}
+		if err := tx.Commit(); err != nil {
+			return fmt.Errorf("store: commit schema tx: %w", err)
+		}
+		return nil
+	})
 }
 
 // createBaseSchema runs the bootstrap CREATE TABLE/INDEX/TRIGGER DDL in a single
