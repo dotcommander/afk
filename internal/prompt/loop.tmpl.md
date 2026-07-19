@@ -96,8 +96,9 @@ On failure:
 Rules:
 
 - Finalize every claimed task exactly once.
-- Use `set <id> done --note "<verification evidence>"` only when the requested work was completed or no-op completed.
-- Use `set <id> failed --note "<one-line reason>"` when blocked, unsafe, cancelled, impossible, or verification fails.
+- Use `set <id> done --note "<verification evidence>" --worker <name>` only when the requested work was completed or no-op completed.
+- Use `set <id> failed --note "<one-line reason>" --worker <name>` when blocked, unsafe, cancelled, impossible, or verification fails.
+- Replace `<name>` with the exact worker id used by `take`; an unqualified terminal set cannot close another worker's active attempt.
 - The failure reason must be one line.
 - Use `--note-file -` instead of `--note` when evidence contains quotes, shell operators, or multiple lines.
 - To retry one specific failed task in a later run, inspect it first, then use `{{.RetryCmd}}` to open a new attempt before doing work.

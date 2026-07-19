@@ -75,67 +75,6 @@ func AddOptionsFromTask(t Task) AddOptions {
 	}
 }
 
-// RetryDisposition names the operator-selected outcome for a failed attempt.
-// It is a bounded vocabulary only; AFK does not automatically retry tasks.
-type RetryDisposition string
-
-const (
-	// RetryDispositionManual opens a new attempt immediately.
-	RetryDispositionManual RetryDisposition = "manual"
-	// RetryDispositionDeferred returns work to todo until available_at.
-	RetryDispositionDeferred RetryDisposition = "deferred"
-)
-
-// ErrInvalidRetryDisposition reports an unsupported retry outcome.
-var ErrInvalidRetryDisposition = errors.New("retry disposition must be manual or deferred")
-
-// ErrDeferredRetryRequiresAvailableAt reports a deferred retry without a
-// future eligibility timestamp.
-var ErrDeferredRetryRequiresAvailableAt = errors.New("deferred retry requires available-at")
-
-// ErrDeferredRetryNotFuture reports a deferred retry whose eligibility time
-// has already arrived.
-var ErrDeferredRetryNotFuture = errors.New("deferred retry available-at must be in the future")
-
-// ErrManualRetryWithAvailableAt reports an ambiguous immediate retry request.
-var ErrManualRetryWithAvailableAt = errors.New("manual retry does not accept available-at")
-
-// ParseRetryDisposition returns a known retry disposition. Empty input uses
-// the manual default so callers must opt in to deferred scheduling.
-func ParseRetryDisposition(value string) (RetryDisposition, error) {
-	if value == "" {
-		return RetryDispositionManual, nil
-	}
-	switch RetryDisposition(value) {
-	case RetryDispositionManual, RetryDispositionDeferred:
-		return RetryDisposition(value), nil
-	default:
-		return "", ErrInvalidRetryDisposition
-	}
-}
-
-// ValidateRetryDisposition validates disposition-specific scheduling input
-// and returns a canonical UTC eligibility timestamp.
-func ValidateRetryDisposition(disposition RetryDisposition, availableAt string) (string, error) {
-	canonical, err := CanonicalAvailableAt(availableAt)
-	if err != nil {
-		return "", err
-	}
-	switch disposition {
-	case RetryDispositionManual:
-		if canonical != "" {
-			return "", ErrManualRetryWithAvailableAt
-		}
-	case RetryDispositionDeferred:
-		if canonical == "" {
-			return "", ErrDeferredRetryRequiresAvailableAt
-		}
-	default:
-		return "", ErrInvalidRetryDisposition
-	}
-	return canonical, nil
-}
-
 // EventType is a durable lifecycle event name.
 type EventType string
 
@@ -332,28 +271,6 @@ func (t *Task) MarkBudgetLimited(now time.Time, reason string) bool {
 	t.LeaseExpires = ""
 	t.Error = reason
 	return true
-}
-
-// GoalGroup is the durable record of a compiled goal: its objective, current
-// status, and the group id that links its member tasks. No I/O — the store
-// owns persistence.
-type GoalGroup struct {
-	ID        string `json:"id"`
-	Objective string `json:"objective"`
-	// Outcome is the contract's restated outcome, kept for reference; Objective is the raw user objective.
-	Outcome            string        `json:"outcome"`
-	Status             string        `json:"status"`
-	CreatedAt          string        `json:"created_at"`
-	GroupID            string        `json:"group_id"`
-	MaxTokens          int64         `json:"max_tokens"`
-	MaxIterations      int64         `json:"max_iterations"`
-	MaxDuration        time.Duration `json:"max_duration_ns"`
-	TokenRegex         string        `json:"token_regex"`
-	BudgetEpochStarted string        `json:"epoch_started"`
-	TokensUsed         int64         `json:"tokens_used"`
-	IterationsUsed     int64         `json:"iterations_used"`
-	LimitReason        string        `json:"reason"`
-	LimitedAt          string        `json:"limited_at"`
 }
 
 // Reset returns the task to todo and clears lifecycle/error fields.

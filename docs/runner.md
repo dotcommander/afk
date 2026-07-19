@@ -59,9 +59,9 @@ id=$(printf '%s\n' "$task_json" | jq -r .task.id)
 body=$(printf '%s\n' "$task_json" | jq -r .task.body)
 
 if agent-command "$body"; then
-  afk set "$id" done --note "agent-command completed" --summary
+  afk set "$id" done --note "agent-command completed" --worker "$USER:$$" --summary
 else
-  afk set "$id" failed --note "agent-command failed" --summary
+  afk set "$id" failed --note "agent-command failed" --worker "$USER:$$" --summary
 fi
 ```
 

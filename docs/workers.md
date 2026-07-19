@@ -50,7 +50,7 @@ Recover abandoned claims by inspecting first, then closing the stale attempt:
 ```sh
 afk tasks --status doing --json
 afk task 1
-afk set 1 failed --note "orphaned doing claim" --summary
+afk set 1 failed --note "orphaned doing claim" --force --summary
 afk add "resume the abandoned work from task 1"
 ```
 
@@ -70,6 +70,7 @@ while task_json=$(afk take --lease 30m --worker "$worker" --summary); do
 done
 ```
 
-`--force` bypasses only the terminal completion-note requirement. When
-`--worker` is supplied, ownership fencing remains mandatory even with
-`--force`.
+`--force` bypasses the terminal completion-note requirement and, when used
+without `--worker`, is the explicit administrative override for an owned
+attempt. When `--worker` is supplied, ownership fencing remains mandatory even
+with `--force`.

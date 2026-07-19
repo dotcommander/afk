@@ -20,6 +20,16 @@ type requestResult struct {
 // UpdateRequested performs one task mutation and records its result in the
 // same transaction as the event/attempt writes.
 func (s *SQLiteStore) UpdateRequested(ctx context.Context, actor, requestID, operation, id string, event task.EventType, message string, mutate func(*task.Task) bool) (task.Task, bool, error) {
+	return s.updateRequested(ctx, actor, requestID, operation, id, event, message, false, mutate)
+}
+
+// UpdateRequestedGuarded is UpdateRequested with the same active-worker
+// protection used by ordinary terminal set commands.
+func (s *SQLiteStore) UpdateRequestedGuarded(ctx context.Context, actor, requestID, operation, id string, event task.EventType, message string, mutate func(*task.Task) bool) (task.Task, bool, error) {
+	return s.updateRequested(ctx, actor, requestID, operation, id, event, message, true, mutate)
+}
+
+func (s *SQLiteStore) updateRequested(ctx context.Context, actor, requestID, operation, id string, event task.EventType, message string, guardOwned bool, mutate func(*task.Task) bool) (task.Task, bool, error) {
 	actor, requestID, err := canonicalRequestKey(actor, requestID)
 	if err != nil {
 		return task.Task{}, false, err
@@ -42,6 +52,9 @@ func (s *SQLiteStore) UpdateRequested(ctx context.Context, actor, requestID, ope
 	}
 	t, err := getTask(ctx, tx, id)
 	if err != nil {
+		return task.Task{}, false, err
+	}
+	if err := s.checkUpdateFence(ctx, tx, t, "", event, guardOwned); err != nil {
 		return task.Task{}, false, err
 	}
 	if mutate(&t) {

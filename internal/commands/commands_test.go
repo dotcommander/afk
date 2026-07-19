@@ -369,8 +369,8 @@ func TestSetDoingCreatesRetryAttempt(t *testing.T) {
 	}
 
 	id := strings.TrimSpace(run("add", "--no-cwd", "retry task"))
-	run("take")
-	run("set", id, "failed", "blocked")
+	run("take", "--worker", "retry-worker")
+	run("set", id, "failed", "blocked", "--worker", "retry-worker")
 	run("set", id, "doing", "retrying")
 	run("set", id, "done", "--force")
 
@@ -451,6 +451,30 @@ func TestSetForcePreservesWorkerFenceAndReceipt(t *testing.T) {
 	require.JSONEq(t, `{"id":"`+id+`","status":"done","title":"worker task"}`, stdout.String())
 }
 
+func TestSetRequiresWorkerForOwnedTerminalAttempt(t *testing.T) {
+	t.Parallel()
+	queuePath := filepath.Join(t.TempDir(), "tasks.sqlite")
+	stdout, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	d := testDepsWithWriters(stdout, stderr)
+	exec := func(args ...string) error {
+		stdout.Reset()
+		stderr.Reset()
+		root := newTestCLI(d, "test")
+		root.SetArgs(append([]string{"--queue", queuePath}, args...))
+		return root.Execute()
+	}
+	require.NoError(t, exec("add", "--no-cwd", "owned task"))
+	id := strings.TrimSpace(stdout.String())
+	require.NoError(t, exec("take", "--worker", "owner", "--lease", "30m"))
+
+	require.ErrorIs(t, exec("set", id, "done", "--note", "late", "--json"), store.ErrWorkerMismatch)
+	require.ErrorIs(t, exec("set", id, "failed", "--note", "late", "--request-id", "req-1", "--json"), store.ErrWorkerMismatch)
+	require.Equal(t, "doing", currentStatus(t, d, queuePath, id))
+
+	require.NoError(t, exec("set", id, "done", "--force", "--json"))
+	require.Equal(t, "done", currentStatus(t, d, queuePath, id))
+}
+
 func currentStatus(t *testing.T, d *Deps, queuePath, id string) string {
 	t.Helper()
 	buf := &bytes.Buffer{}
@@ -483,8 +507,8 @@ func TestRetryCommandCreatesRetryAttempt(t *testing.T) {
 	}
 
 	id := strings.TrimSpace(run("add", "--no-cwd", "retry command task"))
-	run("take")
-	run("set", id, "failed", "workspace permission blocked")
+	run("take", "--worker", "retry-worker")
+	run("set", id, "failed", "workspace permission blocked", "--worker", "retry-worker")
 
 	require.JSONEq(t, `{"id":"`+id+`","status":"doing","note":"retrying: workspace permission approved","disposition":"manual"}`, run("retry", id, "--reason", "workspace permission approved", "--json"))
 	run("set", id, "done", "--force")
@@ -539,8 +563,8 @@ func TestRetryCommandDeferredDispositionReturnsTaskToFutureTodo(t *testing.T) {
 	}
 
 	id := strings.TrimSpace(run("add", "--no-cwd", "deferred retry task"))
-	run("take")
-	run("set", id, "failed", "temporary blocker")
+	run("take", "--worker", "retry-worker")
+	run("set", id, "failed", "temporary blocker", "--worker", "retry-worker")
 	availableAt := "2099-01-01T00:00:00Z"
 	require.JSONEq(t, `{"id":"`+id+`","status":"todo","note":"retry deferred until `+availableAt+`: wait for window","disposition":"deferred","available_at":"`+availableAt+`"}`,
 		run("retry", id, "--disposition", "deferred", "--available-at", availableAt, "--reason", "wait for window", "--json"))
@@ -1258,6 +1282,9 @@ func (s *commandErrorStore) ActiveLists(context.Context) ([]task.Task, []task.Ta
 }
 func (s *commandErrorStore) Ready(context.Context) ([]task.Task, error) { return nil, s.err }
 func (s *commandErrorStore) Update(context.Context, string, task.EventType, string, func(*task.Task) bool) error {
+	return s.err
+}
+func (s *commandErrorStore) UpdateGuarded(context.Context, string, task.EventType, string, func(*task.Task) bool) error {
 	return s.err
 }
 func (s *commandErrorStore) ClaimNextForWorker(context.Context, time.Time, time.Time, string, string) (*task.Task, error) {

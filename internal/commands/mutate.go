@@ -21,7 +21,7 @@ type SetCmd struct {
 	NoteFile  string   `name:"note-file" help:"Read status note from file, or '-' for stdin."`
 	Stage     *string  `help:"Set the free-form pipeline stage label (omit to leave unchanged)."`
 	Worker    string   `help:"Worker id that owns the claim; fences a terminal set against a stale lease."`
-	Force     bool     `help:"Allow done/failed without a completion note."`
+	Force     bool     `help:"Allow an administrative done/failed without a completion note or worker id."`
 	RequestID string   `name:"request-id" help:"Idempotency key for this mutation."`
 }
 

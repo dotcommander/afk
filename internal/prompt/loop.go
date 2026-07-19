@@ -194,11 +194,11 @@ func Loop(opts LoopOptions) string {
 		StatusCmd:      joinCmd(exe, "status --summary"),
 		LsPendingCmd:   joinCmd(exe, "tasks --status todo --json"),
 		LsWorkingCmd:   joinCmd(exe, "tasks --status doing --json"),
-		DoneCmd:        joinCmd(exe, `set <id> done --note "<verification evidence>" --summary`),
-		FailCmd:        joinCmd(exe, `set <id> failed --note "<one-line reason>" --summary`),
+		DoneCmd:        joinCmd(exe, `set <id> done --note "<verification evidence>" --worker <name> --summary`),
+		FailCmd:        joinCmd(exe, `set <id> failed --note "<one-line reason>" --worker <name> --summary`),
 		RetryCmd:       joinCmd(exe, `retry <id> --reason "<why retrying now>"`),
 		ExplainCmd:     joinCmd(exe, "task <id>"),
-		RecoverFailCmd: joinCmd(exe, `set <id> failed --note "orphaned doing claim"`),
+		RecoverFailCmd: joinCmd(exe, `set <id> failed --note "orphaned doing claim" --force`),
 		RecoverAddCmd:  joinCmd(exe, `add "replacement task body, if still needed"`),
 	}
 

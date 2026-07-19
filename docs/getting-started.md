@@ -28,13 +28,13 @@ claimed=$(afk take --lease 30m --worker codex:1 --summary)
 id=$(printf '%s\n' "$claimed" | jq -r .task.id)
 
 # do the work
-afk set "$id" done --note "verified" --summary
+afk set "$id" done --note "verified" --worker codex:1 --summary
 ```
 
 Record failure without losing history:
 
 ```sh
-afk set "$id" failed --note "missing credentials" --summary
+afk set "$id" failed --note "missing credentials" --worker codex:1 --summary
 ```
 
 Hide obsolete work without deleting history:

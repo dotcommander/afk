@@ -70,13 +70,13 @@ func TestServiceLifecycle(t *testing.T) {
 	require.NotNil(t, next)
 	require.Equal(t, id, next.ID)
 
-	popped, err := svc.Take(ctx, 0, "", "")
+	popped, err := svc.Take(ctx, 0, "lifecycle-worker", "")
 	require.NoError(t, err)
 	require.NotNil(t, popped)
 	require.Equal(t, task.StatusDoing, popped.Status)
 	require.Equal(t, fixed.Format(time.RFC3339), popped.Started)
 
-	require.NoError(t, svc.Done(ctx, id, "verified"))
+	require.NoError(t, svc.SetStatusWithStageWorker(ctx, id, task.StatusDone, "verified", nil, "lifecycle-worker"))
 	got, err := svc.Show(ctx, id)
 	require.NoError(t, err)
 	require.Equal(t, task.StatusDone, got.Status)
@@ -491,12 +491,12 @@ func TestServiceRequeueStale(t *testing.T) {
 	require.Len(t, requeued, 1)
 	require.Equal(t, stale, requeued[0].ID)
 
-	claimed, err = svc.Take(ctx, 0, "", "")
+	claimed, err = svc.Take(ctx, 0, "recovery-worker", "")
 	require.NoError(t, err)
 	require.NotNil(t, claimed)
 	require.Equal(t, stale, claimed.ID)
 
-	require.NoError(t, svc.Done(ctx, stale, "stale recovery verified"))
+	require.NoError(t, svc.SetStatusWithStageWorker(ctx, stale, task.StatusDone, "stale recovery verified", nil, "recovery-worker"))
 	got, err := svc.Show(ctx, stale)
 	require.NoError(t, err)
 	require.Equal(t, task.StatusDone, got.Status)
@@ -889,9 +889,6 @@ func TestDone_WithNote(t *testing.T) {
 
 	id, err := svc.Add(ctx, "task with note")
 	require.NoError(t, err)
-	_, err = svc.Take(ctx, 0, "", "")
-	require.NoError(t, err)
-
 	require.NoError(t, svc.Done(ctx, id, "completed the thing"))
 
 	data, err := svc.Explain(ctx, id)
@@ -949,6 +946,10 @@ func (s *errorStore) ActiveLists(context.Context) ([]task.Task, []task.Task, err
 func (s *errorStore) Ready(context.Context) ([]task.Task, error) { return nil, s.err }
 func (s *errorStore) Add(context.Context, task.Task) error       { return s.err }
 func (s *errorStore) Update(context.Context, string, task.EventType, string, func(*task.Task) bool) error {
+	return s.err
+}
+
+func (s *errorStore) UpdateGuarded(context.Context, string, task.EventType, string, func(*task.Task) bool) error {
 	return s.err
 }
 func (s *errorStore) Delete(context.Context, string) error              { return s.err }

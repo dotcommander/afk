@@ -19,7 +19,7 @@ func (s *Service) Done(ctx context.Context, id, note string) error {
 	if strings.TrimSpace(note) == "" {
 		return task.ErrMissingCompletionNote
 	}
-	return s.store.Update(ctx, id, task.EventDone, note, func(t *task.Task) bool {
+	return s.store.UpdateGuarded(ctx, id, task.EventDone, note, func(t *task.Task) bool {
 		return t.MarkDone(s.now())
 	})
 }
@@ -29,7 +29,7 @@ func (s *Service) Fail(ctx context.Context, id, reason string) error {
 	if strings.TrimSpace(reason) == "" {
 		return task.ErrMissingCompletionNote
 	}
-	return s.store.Update(ctx, id, task.EventFailed, reason, func(t *task.Task) bool {
+	return s.store.UpdateGuarded(ctx, id, task.EventFailed, reason, func(t *task.Task) bool {
 		return t.MarkFailed(s.now(), reason)
 	})
 }
@@ -112,6 +112,17 @@ func (s *Service) SetStatusWithRequest(ctx context.Context, actor, requestID, id
 	if err != nil {
 		return task.Task{}, false, err
 	}
+	if !force && isTerminalStatus(status) {
+		guarded, ok := s.store.(interface {
+			UpdateRequestedGuarded(context.Context, string, string, string, string, task.EventType, string, func(*task.Task) bool) (task.Task, bool, error)
+		})
+		if !ok {
+			return task.Task{}, false, errors.New("guarded request id is unsupported by this store")
+		}
+		return guarded.UpdateRequestedGuarded(ctx, actor, requestID, operation, id, eventForStatus(status), message, func(t *task.Task) bool {
+			return s.applyStatusAndStage(t, status, message, stage)
+		})
+	}
 	return requested.UpdateRequested(ctx, actor, requestID, operation, id, eventForStatus(status), message, func(t *task.Task) bool {
 		return s.applyStatusAndStage(t, status, message, stage)
 	})
@@ -128,6 +139,11 @@ func (s *Service) setStatus(ctx context.Context, id string, status task.Status, 
 	event := eventForStatus(status)
 	if workerID != "" {
 		return s.store.UpdateFenced(ctx, id, workerID, event, message, func(t *task.Task) bool {
+			return s.applyStatusAndStage(t, status, message, stage)
+		})
+	}
+	if !force && isTerminalStatus(status) {
+		return s.store.UpdateGuarded(ctx, id, event, message, func(t *task.Task) bool {
 			return s.applyStatusAndStage(t, status, message, stage)
 		})
 	}

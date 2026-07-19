@@ -636,6 +636,34 @@ func TestUpdateFencedRejectsStaleWorker(t *testing.T) {
 	require.Equal(t, task.StatusDone, thirdTask.Status)
 }
 
+func TestUpdateGuardedRejectsTerminalWriteAfterReclaim(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	s := newStore(t)
+	claimedAt := time.Date(2025, 1, 2, 3, 4, 5, 0, time.UTC)
+
+	require.NoError(t, s.Add(ctx, task.Task{ID: "reclaimed", Status: task.StatusTodo, Body: "task"}))
+	_, err := s.ClaimNextForWorker(ctx, claimedAt, time.Time{}, "worker-A", "agent")
+	require.NoError(t, err)
+	_, err = s.RequeueStale(ctx, time.Minute, claimedAt.Add(2*time.Minute))
+	require.NoError(t, err)
+	_, err = s.ClaimNextForWorker(ctx, claimedAt.Add(3*time.Minute), time.Time{}, "worker-B", "agent")
+	require.NoError(t, err)
+
+	markDone := func(tk *task.Task) bool { return tk.MarkDone(claimedAt.Add(4 * time.Minute)) }
+	require.ErrorIs(t, s.UpdateGuarded(ctx, "reclaimed", task.EventDone, "late completion", markDone), store.ErrWorkerMismatch)
+	got, err := s.Get(ctx, "reclaimed")
+	require.NoError(t, err)
+	require.Equal(t, task.StatusDoing, got.Status)
+	attempts, err := s.Attempts(ctx, "reclaimed")
+	require.NoError(t, err)
+	require.Equal(t, "worker-B", attempts[len(attempts)-1].WorkerID)
+	require.Empty(t, attempts[len(attempts)-1].Finished)
+
+	require.ErrorIs(t, s.UpdateFenced(ctx, "reclaimed", "worker-A", task.EventDone, "stale owner", markDone), store.ErrWorkerMismatch)
+	require.NoError(t, s.UpdateFenced(ctx, "reclaimed", "worker-B", task.EventDone, "current owner", markDone))
+}
+
 func TestUpdateFencedRejectsExpiredLease(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()

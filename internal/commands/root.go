@@ -41,7 +41,7 @@ type CLI struct {
 	Task         TaskCmd         `cmd:"" help:"Show task state, events, and attempts."`
 	Status       StatusCmd       `cmd:"" help:"Print queue status."`
 	Find         FindCmd         `cmd:"" help:"Search tasks."`
-	Take         TakeCmd         `cmd:"" help:"Claim the first ready task.\n\nAgent loop:\n  afk take --worker <name> --lease 60m --summary\n  # execute exactly one returned task\n  afk set <id> done --note \"<verification>\"\n  # or\n  afk set <id> failed --note \"<one-line reason>\"\n\nUse --dry-run to preview ready tasks without claiming. If preview output shows body_truncated=true, add --full to inspect complete task bodies."`
+	Take         TakeCmd         `cmd:"" help:"Claim the first ready task.\n\nAgent loop:\n  afk take --worker <name> --lease 60m --summary\n  # execute exactly one returned task\n  afk set <id> done --note \"<verification>\" --worker <name>\n  # or\n  afk set <id> failed --note \"<one-line reason>\" --worker <name>\n\nUse --dry-run to preview ready tasks without claiming. If preview output shows body_truncated=true, add --full to inspect complete task bodies."`
 	Set          SetCmd          `cmd:"" help:"Set task status."`
 	Retry        RetryCmd        `cmd:"" help:"Open a new attempt for a failed task."`
 	Gate         GateCmd         `cmd:"" help:"Manage task gates."`
@@ -84,7 +84,13 @@ func Execute(ctx context.Context, args []string, stdout, stderr io.Writer, d *De
 		kong.Description("AFK task queue"),
 		kong.Vars{"version": "afk version " + version},
 		kong.Writers(stdout, stderr),
-		kong.ConfigureHelp(kong.HelpOptions{Compact: false, NoExpandSubcommands: true}),
+		kong.ConfigureHelp(kong.HelpOptions{
+			Compact:             true,
+			Tree:                true,
+			Summary:             true,
+			FlagsLast:           true,
+			NoExpandSubcommands: true,
+		}),
 		kong.Help(afkHelp),
 		kong.Exit(func(int) { exited = true }),
 		kong.Bind(d),

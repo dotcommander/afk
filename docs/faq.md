@@ -51,8 +51,8 @@ afk task "$id"
 afk find queue --json
 afk take --dry-run --limit 5 --json --full
 afk take --lease 30m --worker codex:1 --summary
-afk set "$id" done --note "verified" --summary
-afk set "$id" failed --note "missing credentials" --summary
+afk set "$id" done --note "verified" --worker codex:1 --summary
+afk set "$id" failed --note "missing credentials" --worker codex:1 --summary
 afk set "$id" deleted --note "superseded"
 afk snapshot --label after --task "$id"
 ```
@@ -528,7 +528,7 @@ If the original worker is gone and the work should not remain active, close the
 attempt explicitly:
 
 ```sh
-afk set "$id" failed --note "orphaned doing claim" --summary
+afk set "$id" failed --note "orphaned doing claim" --force --summary
 ```
 
 Then either add a fresh task or retry the same one:
@@ -585,9 +585,9 @@ id=$(printf '%s\n' "$task_json" | jq -r .task.id)
 body=$(printf '%s\n' "$task_json" | jq -r .task.body)
 
 if agent-command "$body"; then
-  afk set "$id" done --note "agent-command completed" --summary
+  afk set "$id" done --note "agent-command completed" --worker "$USER:$$" --summary
 else
-  afk set "$id" failed --note "agent-command failed" --summary
+  afk set "$id" failed --note "agent-command failed" --worker "$USER:$$" --summary
 fi
 ```
 
@@ -824,7 +824,7 @@ test -n "$task_json" || exit 0
 id=$(printf '%s\n' "$task_json" | jq -r .task.id)
 afk task "$id"
 # do the work
-afk set "$id" done --note "verified" --summary
+afk set "$id" done --note "verified" --worker "$USER:$$" --summary
 ```
 
 ### Retry a specific failed task

@@ -262,6 +262,10 @@ func (s *goalStoreStub) Update(_ context.Context, id string, _ task.EventType, _
 	return nil
 }
 
+func (s *goalStoreStub) UpdateGuarded(ctx context.Context, id string, event task.EventType, message string, fn func(*task.Task) bool) error {
+	return s.Update(ctx, id, event, message, fn)
+}
+
 func (s *goalStoreStub) Delete(_ context.Context, id string) error {
 	s.ensure()
 	s.statuses[id] = task.StatusDeleted

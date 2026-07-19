@@ -17,7 +17,7 @@ The public command surface is intentionally small.
 | `afk status [--summary] [--blocked] [--json]` | Print queue counts; without `--summary`, also includes `todo` and `doing` task lists plus bounded queue-health signals. `--blocked` adds dependency blocker details. |
 | `afk find <query> [--status STATUS] [--json]` | Search id, body, status, cwd, source, tags, resource, agent, group, and error text. |
 | `afk take [--dry-run] [--task ID] [--satisfy-gate NAME] [--limit N] [--lease DURATION] [--worker ID] [--json] [--summary] [--full] [--envelope]` | Preview or atomically claim ready work; exact owner claims can satisfy approved gates in the claim transaction. |
-| `afk set <id> <status> [note...] [--note TEXT] [--note-file PATH|-] [--stage VALUE] [--json] [--summary] [--request-id ID]` | Move a task to `todo`, `doing`, `done`, `failed`, or `deleted`. `--request-id` cannot be combined with `--summary` or any worker-fenced update. |
+| `afk set <id> <status> [note...] [--note TEXT] [--note-file PATH|-] [--stage VALUE] [--worker ID] [--force] [--json] [--summary] [--request-id ID]` | Move a task to `todo`, `doing`, `done`, `failed`, or `deleted`. Carry a claim's worker id into terminal `set`; an unqualified terminal update cannot close a named worker's active attempt. `--force` without `--worker` is the administrative override. `--request-id` cannot be combined with `--summary` or worker-fenced updates. |
 | `afk relate <task-id> <related-id> [--type TYPE]` | Record a typed relation between two tasks. |
 | `afk gate add <task-id> <name>` | Add a named boolean precondition to a task. |
 | `afk gate satisfy <task-id> <name>` | Mark a named precondition satisfied. |
@@ -376,7 +376,9 @@ will admit it after the future UTC eligibility time.
 
 `afk set <id> done` and `afk set <id> failed` always leave attempt history
 coherent. If there is no open attempt, AFK records a synthetic terminal attempt
-so direct manual finalization remains auditable.
+so direct manual finalization remains auditable. If a named worker owns the open
+attempt, terminal finalization requires that worker id. Use an unqualified
+`--force` only for an intentional administrative recovery.
 
 ## evidence snapshots
 

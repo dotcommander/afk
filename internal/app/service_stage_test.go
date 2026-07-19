@@ -37,11 +37,11 @@ func TestSetStatusWithStageSetsStatusAndStage(t *testing.T) {
 	id, err := svc.Add(ctx, "task to finish with stage")
 	require.NoError(t, err)
 	// Claim it so Done is a valid transition.
-	_, err = svc.Take(ctx, 0, "", "")
+	_, err = svc.Take(ctx, 0, "stage-worker", "")
 	require.NoError(t, err)
 
 	stage := "shipped"
-	require.NoError(t, svc.SetStatusWithStage(ctx, id, task.StatusDone, "evidence noted", &stage))
+	require.NoError(t, svc.SetStatusWithStageWorker(ctx, id, task.StatusDone, "evidence noted", &stage, "stage-worker"))
 
 	got, err := svc.Show(ctx, id)
 	require.NoError(t, err)
@@ -62,11 +62,11 @@ func TestSetStatusWithStageNilStagePreservesExistingStage(t *testing.T) {
 	})
 	require.NoError(t, err)
 	// Claim it so Done is a valid transition.
-	_, err = svc.Take(ctx, 0, "", "")
+	_, err = svc.Take(ctx, 0, "stage-worker", "")
 	require.NoError(t, err)
 
 	// Transition status but pass nil stage (Flags().Changed contract: flag not supplied).
-	require.NoError(t, svc.SetStatusWithStage(ctx, id, task.StatusDone, "stage preserved", nil))
+	require.NoError(t, svc.SetStatusWithStageWorker(ctx, id, task.StatusDone, "stage preserved", nil, "stage-worker"))
 
 	got, err := svc.Show(ctx, id)
 	require.NoError(t, err)
