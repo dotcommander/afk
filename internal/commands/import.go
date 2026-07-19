@@ -16,7 +16,7 @@ type ImportCmd struct {
 	Vybe ImportVybeCmd `cmd:"" help:"Reconcile and import operational state from a frozen Vybe archive."`
 }
 type ImportVybeCmd struct {
-	Source string `required:"" help:"Vybe archive directory."`
+	Source string `arg:"" required:"" help:"Vybe archive directory."`
 	DryRun bool   `name:"dry-run" help:"Validate and reconcile, then roll back."`
 	Apply  bool   `help:"Apply the import atomically."`
 	JSON   bool   `help:"Emit JSON reconciliation output."`

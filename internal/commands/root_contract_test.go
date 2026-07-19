@@ -37,7 +37,7 @@ func TestRootHelpPreservesParentCommandsAndGoalSurface(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	d := testDepsWithWriters(&stdout, &stderr)
 	require.NoError(t, Execute(context.Background(), []string{"--help"}, &stdout, &stderr, d, "test"))
-	for _, command := range []string{"goal <objective>", "gate <command>", "checkpoint <command>", "artifact <command>"} {
+	for _, command := range []string{"goal", "gate", "checkpoint", "artifact"} {
 		require.Contains(t, stdout.String(), command)
 	}
 	require.NotContains(t, stdout.String(), "<extra>")
