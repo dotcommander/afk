@@ -60,6 +60,17 @@ func TestLoopIncludesCurrentQueueInstructions(t *testing.T) {
 	require.NotContains(t, out, "Migration Note")
 }
 
+func TestLoopIncludesPollingDiscipline(t *testing.T) {
+	t.Parallel()
+
+	out := prompt.Loop(prompt.LoopOptions{})
+
+	require.Contains(t, out, "Minimum interval >= 60s.")
+	require.Contains(t, out, "Summary-only poller, gated on change.")
+	require.Contains(t, out, "Full JSON only on state change.")
+	require.Contains(t, out, "No timer loops.")
+}
+
 func TestLoopFallsBackToAfkExecutable(t *testing.T) {
 	t.Parallel()
 

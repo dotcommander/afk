@@ -1,10 +1,15 @@
 # Changelog
 
-## Unreleased
+## v0.6.1 (2026-07-22)
 
-### Features
+### Fixes
 
-- feat(goal): add afk goal command with contract compilation, auditor, and budget caps
+- Harden worker-fencing rules and CLI help so worker identity and lifecycle guidance remain clear and safe.
+
+### Other
+
+- Complete post-v0.6.0 public documentation, cleanup, and regression-test coverage.
+- Add polling discipline to the worker prompt: wait at least 60 seconds between read-only probes, poll summary counts only until state changes, and avoid timer loops.
 
 ## v0.4.1 (2026-05-22)
 

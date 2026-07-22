@@ -23,6 +23,24 @@ Use the `afk` queue CLI. The queue is SQLite-backed{{if .SQLitePath}} at the con
 
 Do not read, write, patch, edit, or repair the queue database directly.
 
+## Polling Discipline (cost control)
+
+Re-injecting `{{.StatusCmd}} --json` on every heartbeat is the dominant agent
+cost (hundreds of identical status blobs per session). Follow this floor:
+
+- **Minimum interval >= 60s.** Do not run any read-only probe (`afk status`,
+  `afk tasks`, `afk take --dry-run`, `afk find`, `afk goal status`) more than
+  once per 60 seconds.
+- **Summary-only poller, gated on change.** Poll with `{{.StatusCmd}} --json`;
+  it returns the five-count envelope only (todo/doing/done/failed/deleted) and
+  never re-emits task bodies. Cache the last output and only inject it when the
+  counts changed; otherwise say "queue unchanged" and skip.
+- **Full JSON only on state change.** Run `afk status --json`, `afk tasks --json`,
+  or `afk task <id> --json` only when the summary counts changed or when about
+  to claim/execute. These emit the whole queue and are not poll commands.
+- **No timer loops.** If you must wait on readiness or an `--available-at`
+  deadline, do one poll after the deadline rather than rechecking on a timer.
+
 Useful inspection commands:
 
 ```bash

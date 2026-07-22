@@ -40,4 +40,4 @@ Follow standard Go style and the workspace conventions: `log/slog` for logging, 
 3. Keep commits focused with `type(scope): description` subjects (feat, fix, refactor, docs, test, chore).
 4. Open a pull request against `main`.
 
-Security-sensitive reports: see [SECURITY.md](SECURITY.md).
+Security-sensitive reports: see [SECURITY.md](.github/SECURITY.md).
