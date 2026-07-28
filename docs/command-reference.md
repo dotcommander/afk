@@ -260,12 +260,16 @@ without changing the queue.
 
 Full text and JSON status also include a `health` section over a fixed 24-hour
 window: oldest currently-ready and active ages, stale requeue count, retry
-attempt count, and terminal failure rate. Empty age/rate values are `null` in
-JSON and `n/a` in text. `stale_requeues` counts the existing `requeued`/`stale`
-ledger event, which can represent an expired lease or an age-based unleased
-requeue; it is deliberately not labeled as exact lease loss. Retry attempts are
-attempts beyond a task's first attempt. `--summary` and `--summary --json`
-remain counts-only.
+attempt count, terminal failure rate, and terminal-attempt duration
+distribution. `health.terminal_attempt_duration_seconds` reports valid sample
+`count`, `avg`, `p50`, and `p90`; percentiles use nearest rank. The attempt and
+failure totals retain every terminal attempt in the window, while malformed or
+negative timestamp pairs are excluded only from the duration distribution.
+Empty age/rate/duration statistics are `null` in JSON and `n/a` in text.
+`stale_requeues` counts the existing `requeued`/`stale` ledger event, which can
+represent an expired lease or an age-based unleased requeue; it is deliberately
+not labeled as exact lease loss. Retry attempts are attempts beyond a task's
+first attempt. `--summary` and `--summary --json` remain counts-only.
 
 In text output, doing rows include fields such as:
 

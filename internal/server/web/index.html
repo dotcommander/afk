@@ -1095,12 +1095,15 @@ registerView('home', async (container, _route) => {
   const terminalRate = health.terminal_failure_rate == null
     ? '—'
     : `${(health.terminal_failure_rate * 100).toFixed(1)}% (${health.terminal_failures}/${health.terminal_attempts})`;
+  const terminalDuration = health.terminal_attempt_duration_seconds || {};
   const healthFields = [
     { label: 'OLDEST READY', value: durationAge(health.oldest_ready_age_seconds) },
     { label: 'OLDEST ACTIVE', value: durationAge(health.oldest_active_age_seconds) },
     { label: 'STALE REQUEUES', value: String(health.stale_requeues || 0) },
     { label: 'RETRY ATTEMPTS', value: String(health.retry_attempts || 0) },
     { label: 'TERMINAL FAILURE RATE', value: terminalRate },
+    { label: 'TERMINAL DURATION P50', value: durationAge(terminalDuration.p50) },
+    { label: 'TERMINAL DURATION P90', value: durationAge(terminalDuration.p90) },
   ];
   for (const field of healthFields) {
     healthGrid.appendChild(el('div', { class: 'meta-item' },

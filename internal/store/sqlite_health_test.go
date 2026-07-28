@@ -46,6 +46,10 @@ INSERT INTO task_attempts(task_id,started,finished,status) VALUES
 	require.Equal(t, 1, health.TerminalFailures)
 	require.NotNil(t, health.TerminalFailureRate)
 	require.Equal(t, 0.5, *health.TerminalFailureRate)
+	require.Equal(t, 2, health.TerminalAttemptDurationSeconds.Count)
+	require.Equal(t, float64(30*time.Minute/time.Second), *health.TerminalAttemptDurationSeconds.Avg)
+	require.Equal(t, float64(30*time.Minute/time.Second), *health.TerminalAttemptDurationSeconds.P50)
+	require.Equal(t, float64(30*time.Minute/time.Second), *health.TerminalAttemptDurationSeconds.P90)
 }
 
 func TestQueueHealthEmptyQueueUsesNulls(t *testing.T) {
@@ -60,6 +64,39 @@ func TestQueueHealthEmptyQueueUsesNulls(t *testing.T) {
 	require.Nil(t, health.OldestReadyAgeSeconds)
 	require.Nil(t, health.OldestActiveAgeSeconds)
 	require.Nil(t, health.TerminalFailureRate)
+	require.Zero(t, health.TerminalAttemptDurationSeconds.Count)
+	require.Nil(t, health.TerminalAttemptDurationSeconds.Avg)
+	require.Nil(t, health.TerminalAttemptDurationSeconds.P50)
+	require.Nil(t, health.TerminalAttemptDurationSeconds.P90)
+}
+
+func TestQueueHealthTerminalDurationsIgnoreInvalidSamples(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	s, err := NewSQLite(ctx, Paths{SQLitePath: filepath.Join(t.TempDir(), "tasks.sqlite")})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, s.Close()) })
+
+	_, err = s.db.ExecContext(ctx, `
+INSERT INTO task_attempts(task_id,started,finished,status) VALUES
+ ('valid-10','2025-01-02T11:00:00Z','2025-01-02T11:00:10Z','done'),
+ ('valid-20','2025-01-02T11:10:00Z','2025-01-02T11:10:20Z','failed'),
+ ('valid-30','2025-01-02T11:20:00Z','2025-01-02T11:20:30Z','done'),
+ ('malformed','not-a-time','2025-01-02T11:30:00Z','done'),
+ ('negative','2025-01-02T11:40:00Z','2025-01-02T11:39:00Z','failed'),
+ ('before-window','2025-01-01T11:00:00Z','2025-01-01T11:59:59Z','failed'),
+ ('after-window','2099-01-01T00:00:00Z','2099-01-01T00:01:00Z','done');`)
+	require.NoError(t, err)
+
+	health, err := s.QueueHealth(ctx, time.Date(2025, 1, 2, 12, 0, 0, 0, time.UTC), 24*time.Hour)
+	require.NoError(t, err)
+	require.Equal(t, 5, health.TerminalAttempts)
+	require.Equal(t, 2, health.TerminalFailures)
+	require.Equal(t, 0.4, *health.TerminalFailureRate)
+	require.Equal(t, 3, health.TerminalAttemptDurationSeconds.Count)
+	require.Equal(t, 20.0, *health.TerminalAttemptDurationSeconds.Avg)
+	require.Equal(t, 20.0, *health.TerminalAttemptDurationSeconds.P50)
+	require.Equal(t, 30.0, *health.TerminalAttemptDurationSeconds.P90)
 }
 
 func TestQueueHealthIndexesExist(t *testing.T) {
@@ -99,7 +136,7 @@ func TestQueueHealthQueriesUseBoundedIndexes(t *testing.T) {
 		{name: "oldest active", query: oldestActiveHealthSQL, args: []any{"doing"}, wantIndex: "tasks_status_started_idx"},
 		{name: "stale requeues", query: staleRequeuesHealthSQL, args: []any{"2025-01-01T12:00:00Z"}, wantIndex: "task_events_stale_requeue_at_idx"},
 		{name: "retry attempts", query: retryAttemptsHealthSQL, args: []any{"2025-01-01T12:00:00Z"}, wantIndex: "task_attempts_started_idx"},
-		{name: "terminal attempts", query: terminalAttemptsHealthSQL, args: []any{"2025-01-01T12:00:00Z"}, wantIndex: "task_attempts_status_finished_idx"},
+		{name: "terminal attempts", query: terminalAttemptsHealthSQL, args: []any{"2025-01-01T12:00:00Z", "2025-01-02T12:00:00Z"}, wantIndex: "task_attempts_status_finished_idx"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

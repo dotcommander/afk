@@ -207,9 +207,18 @@ func TestWriteStatusTextAndJSONUseTodoDoing(t *testing.T) {
 		Started: "2025-01-02T03:04:06Z",
 	}}
 	now := time.Date(2025, 1, 2, 3, 5, 6, 0, time.UTC)
+	avg, p50, p90 := 125.0, 60.0, 180.0
 
 	var text bytes.Buffer
-	health := task.QueueHealth{WindowSeconds: int64((24 * time.Hour) / time.Second)}
+	health := task.QueueHealth{
+		WindowSeconds: int64((24 * time.Hour) / time.Second),
+		TerminalAttemptDurationSeconds: task.DurationDistribution{
+			Count: 3,
+			Avg:   &avg,
+			P50:   &p50,
+			P90:   &p90,
+		},
+	}
 	require.NoError(t, output.WriteStatus(&text, tally, todo, doing, nil, health, false, now))
 	require.Contains(t, text.String(), "todo: 1")
 	require.Contains(t, text.String(), "doing: 1")
@@ -219,6 +228,8 @@ func TestWriteStatusTextAndJSONUseTodoDoing(t *testing.T) {
 	require.Contains(t, text.String(), "doing-1")
 	require.Contains(t, text.String(), "age=1m0s")
 	require.Contains(t, text.String(), "Health (24h0m0s):")
+	require.Contains(t, text.String(), "terminal attempt duration p50: 1m0s")
+	require.Contains(t, text.String(), "terminal attempt duration p90: 3m0s")
 
 	var jsonOut bytes.Buffer
 	require.NoError(t, output.WriteStatus(&jsonOut, tally, todo, doing, nil, health, true, now))
@@ -240,6 +251,10 @@ func TestWriteStatusTextAndJSONUseTodoDoing(t *testing.T) {
 	require.Equal(t, 1, got.Doing)
 	require.Equal(t, 2, got.Done)
 	require.Equal(t, int64(86400), got.Health.WindowSeconds)
+	require.Equal(t, 3, got.Health.TerminalAttemptDurationSeconds.Count)
+	require.Equal(t, 125.0, *got.Health.TerminalAttemptDurationSeconds.Avg)
+	require.Equal(t, 60.0, *got.Health.TerminalAttemptDurationSeconds.P50)
+	require.Equal(t, 180.0, *got.Health.TerminalAttemptDurationSeconds.P90)
 	require.Len(t, got.Tasks.Todo, 1)
 	require.Equal(t, "todo-1", got.Tasks.Todo[0].ID)
 	require.Len(t, got.Tasks.Doing, 1)

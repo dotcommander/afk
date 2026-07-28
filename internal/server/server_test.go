@@ -71,6 +71,8 @@ func TestGETIndexReturns200AndHTML(t *testing.T) {
 	require.Contains(t, rec.Header().Get("Content-Type"), "text/html")
 	require.Contains(t, rec.Body.String(), "<html")
 	require.Contains(t, rec.Body.String(), "QUEUE HEALTH")
+	require.Contains(t, rec.Body.String(), "TERMINAL DURATION P50")
+	require.Contains(t, rec.Body.String(), "TERMINAL DURATION P90")
 }
 
 func TestGETStatusReturnsCountsAndTasks(t *testing.T) {
@@ -92,6 +94,11 @@ func TestGETStatusReturnsCountsAndTasks(t *testing.T) {
 	require.True(t, hasDoing)
 	health := body["health"].(map[string]any)
 	require.Equal(t, float64(86400), health["window_seconds"])
+	duration := health["terminal_attempt_duration_seconds"].(map[string]any)
+	require.Equal(t, float64(1), duration["count"])
+	require.Equal(t, float64(0), duration["avg"])
+	require.Equal(t, float64(0), duration["p50"])
+	require.Equal(t, float64(0), duration["p90"])
 }
 
 func TestGETTasksStatusAndSearch(t *testing.T) {

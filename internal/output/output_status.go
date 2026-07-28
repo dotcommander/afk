@@ -137,13 +137,23 @@ func writeHealthSection(w io.Writer, health task.QueueHealth) error {
 	if health.TerminalFailureRate != nil {
 		failureRate = fmt.Sprintf("%.1f%%", *health.TerminalFailureRate*100)
 	}
-	_, err := fmt.Fprintf(w, "\nHealth (%s):\n  oldest ready: %s\n  oldest active: %s\n  stale requeues: %d\n  retry attempts: %d\n  terminal failure rate: %s (%d/%d)\n",
+	durationP50 := formatDurationSeconds(health.TerminalAttemptDurationSeconds.P50, notAvailable)
+	durationP90 := formatDurationSeconds(health.TerminalAttemptDurationSeconds.P90, notAvailable)
+	_, err := fmt.Fprintf(w, "\nHealth (%s):\n  oldest ready: %s\n  oldest active: %s\n  stale requeues: %d\n  retry attempts: %d\n  terminal failure rate: %s (%d/%d)\n  terminal attempt duration p50: %s\n  terminal attempt duration p90: %s\n",
 		(time.Duration(health.WindowSeconds) * time.Second).String(), oldestReady, oldestActive,
-		health.StaleRequeues, health.RetryAttempts, failureRate, health.TerminalFailures, health.TerminalAttempts)
+		health.StaleRequeues, health.RetryAttempts, failureRate, health.TerminalFailures, health.TerminalAttempts,
+		durationP50, durationP90)
 	if err != nil {
 		return fmt.Errorf("status health: write: %w", err)
 	}
 	return nil
+}
+
+func formatDurationSeconds(seconds *float64, fallback string) string {
+	if seconds == nil {
+		return fallback
+	}
+	return (time.Duration(*seconds * float64(time.Second))).String()
 }
 
 func writeStatusSection(w io.Writer, title string, tasks []task.Task, now time.Time, includeClaim bool) error {

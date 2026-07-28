@@ -607,6 +607,12 @@ func TestSnapshotCommandJSONAndOutputFile(t *testing.T) {
 	health, ok := doc["health"].(map[string]any)
 	require.True(t, ok, "snapshot must include queue health")
 	require.Equal(t, float64(86400), health["window_seconds"])
+	duration, ok := health["terminal_attempt_duration_seconds"].(map[string]any)
+	require.True(t, ok, "snapshot health must include terminal attempt duration")
+	require.Equal(t, float64(0), duration["count"])
+	require.Nil(t, duration["avg"])
+	require.Nil(t, duration["p50"])
+	require.Nil(t, duration["p90"])
 
 	tasks, ok := doc["tasks"].(map[string]any)
 	require.True(t, ok, "snapshot must include task lists")

@@ -4,6 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"math"
+	"sort"
 	"time"
 
 	"github.com/dotcommander/afk/internal/task"
@@ -30,18 +32,19 @@ AND EXISTS (
 	WHERE prior.task_id = current.task_id AND prior.id < current.id
 )`
 	terminalAttemptsHealthSQL = `
-SELECT COUNT(*), COALESCE(SUM(status='failed'), 0)
+SELECT started, finished, status
 FROM task_attempts
-WHERE status IN ('done', 'failed') AND finished >= ?`
+WHERE status IN ('done', 'failed') AND finished >= ? AND finished <= ?`
 )
 
 // QueueHealth returns queue ages plus lifecycle rates bounded to window.
 func (s *SQLiteStore) QueueHealth(ctx context.Context, now time.Time, window time.Duration) (task.QueueHealth, error) {
 	now = now.UTC()
 	cutoff := now.Add(-window).Format(time.RFC3339)
+	nowText := now.Format(time.RFC3339)
 	health := task.QueueHealth{WindowSeconds: int64(window / time.Second)}
 
-	readyCreated, err := s.oldestReadyCreated(ctx, now.Format(time.RFC3339))
+	readyCreated, err := s.oldestReadyCreated(ctx, nowText)
 	if err != nil {
 		return task.QueueHealth{}, err
 	}
@@ -59,14 +62,70 @@ func (s *SQLiteStore) QueueHealth(ctx context.Context, now time.Time, window tim
 	if err := s.db.QueryRowContext(ctx, retryAttemptsHealthSQL, cutoff).Scan(&health.RetryAttempts); err != nil {
 		return task.QueueHealth{}, fmt.Errorf("store: count retry attempts: %w", err)
 	}
-	if err := s.db.QueryRowContext(ctx, terminalAttemptsHealthSQL, cutoff).Scan(&health.TerminalAttempts, &health.TerminalFailures); err != nil {
-		return task.QueueHealth{}, fmt.Errorf("store: count terminal attempts: %w", err)
+	if err := s.populateTerminalAttemptHealth(ctx, cutoff, nowText, &health); err != nil {
+		return task.QueueHealth{}, err
 	}
 	if health.TerminalAttempts > 0 {
 		rate := float64(health.TerminalFailures) / float64(health.TerminalAttempts)
 		health.TerminalFailureRate = &rate
 	}
 	return health, nil
+}
+
+func (s *SQLiteStore) populateTerminalAttemptHealth(ctx context.Context, cutoff, now string, health *task.QueueHealth) error {
+	rows, err := s.db.QueryContext(ctx, terminalAttemptsHealthSQL, cutoff, now)
+	if err != nil {
+		return fmt.Errorf("store: query terminal attempts: %w", err)
+	}
+	defer rows.Close() //nolint:errcheck
+
+	durations := make([]float64, 0)
+	for rows.Next() {
+		var started, finished, status string
+		if err := rows.Scan(&started, &finished, &status); err != nil {
+			return fmt.Errorf("store: scan terminal attempt: %w", err)
+		}
+		health.TerminalAttempts++
+		if status == string(task.StatusFailed) {
+			health.TerminalFailures++
+		}
+		startedAt, startedErr := time.Parse(time.RFC3339, started)
+		finishedAt, finishedErr := time.Parse(time.RFC3339, finished)
+		if startedErr != nil || finishedErr != nil || finishedAt.Before(startedAt) {
+			continue
+		}
+		durations = append(durations, finishedAt.Sub(startedAt).Seconds())
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("store: iterate terminal attempts: %w", err)
+	}
+	health.TerminalAttemptDurationSeconds = summarizeDurations(durations)
+	return nil
+}
+
+func summarizeDurations(samples []float64) task.DurationDistribution {
+	distribution := task.DurationDistribution{Count: len(samples)}
+	if len(samples) == 0 {
+		return distribution
+	}
+
+	var total float64
+	for _, sample := range samples {
+		total += sample
+	}
+	sort.Float64s(samples)
+	avg := total / float64(len(samples))
+	p50 := nearestRank(samples, 0.50)
+	p90 := nearestRank(samples, 0.90)
+	distribution.Avg = &avg
+	distribution.P50 = &p50
+	distribution.P90 = &p90
+	return distribution
+}
+
+func nearestRank(sortedSamples []float64, percentile float64) float64 {
+	rank := int(math.Ceil(percentile*float64(len(sortedSamples)))) - 1
+	return sortedSamples[rank]
 }
 
 func (s *SQLiteStore) oldestReadyCreated(ctx context.Context, now string) (string, error) {

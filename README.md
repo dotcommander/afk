@@ -17,10 +17,11 @@ goal-only suspension state `budget-limited`.
 Readiness is narrower than `todo`: a task is claimable only when every
 `blocks` relation is `done`, no other active `doing` task holds its resource
 key, no gate is unsatisfied, and its optional `available_at` time has arrived.
-Full `afk status` includes a bounded 24-hour health summary and active task
-details. `afk status --blocked` explains dependency blockers; `doing` task
-status output also shows claim age and stale lease diagnostics. Counts-only
-`afk status --summary` keeps its compact contract.
+Full `afk status` includes a bounded 24-hour health summary, terminal-attempt
+duration p50/p90, and active task details. `afk status --blocked` explains
+dependency blockers; `doing` task status output also shows claim age and stale
+lease diagnostics. Counts-only `afk status --summary` keeps its compact
+contract.
 
 `--stage` is a free-form human pipeline state (e.g. `triage`, `in-review`),
 independent of execution state; it does not affect readiness.
